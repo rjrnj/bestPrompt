@@ -46,3 +46,33 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+
+  # Non-publishing `tauri build` on every platform, so "compiles on Windows,
+  # fails on Linux/macOS" is caught here instead of at release time.
+  # Windows and Linux build full installers; macOS (unsupported, untested) is
+  # a compile check only.
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2025, macos-15]
+    steps:
+      - uses: actions/checkout@v7
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/linux-deps
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: Build installers
+        if: runner.os != 'macOS'
+        run: npm run tauri build
+      - name: Compile check (macOS, no bundling)
+        if: runner.os == 'macOS'
+        run: npm run tauri build -- --no-bundle
