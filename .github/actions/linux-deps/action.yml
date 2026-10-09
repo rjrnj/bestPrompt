@@ -1,0 +1,20 @@
+name: Install Tauri Linux dependencies
+description: System libraries needed to compile Tauri on Debian/Ubuntu runners.
+# Package list from https://v2.tauri.app/start/prerequisites/ (Debian/Ubuntu).
+runs:
+  using: composite
+  steps:
+    - name: Install system libraries
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libwebkit2gtk-4.1-dev \
+          build-essential \
+          curl \
+          wget \
+          file \
+          libxdo-dev \
+          libssl-dev \
+          libayatana-appindicator3-dev \
+          librsvg2-dev
