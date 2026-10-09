@@ -30,15 +30,23 @@ jobs:
       - run: npm run test
       - run: npm run build
 
+  # Runs on both supported OSes: the riskiest Rust code (CLI detection via
+  # PATHEXT/.cmd shims, ConPTY) is Windows-only, so its tests never execute
+  # on a Linux runner.
   rust:
-    name: rust
-    runs-on: ubuntu-22.04
+    name: rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2025]
     defaults:
       run:
         working-directory: src-tauri
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/linux-deps
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/linux-deps
       # The Rust version comes from rust-toolchain.toml; rustup installs it on first use.
       - uses: Swatinem/rust-cache@v2
         with:
@@ -76,3 +84,18 @@ jobs:
       - name: Compile check (macOS, no bundling)
         if: runner.os == 'macOS'
         run: npm run tauri build -- --no-bundle
+      # Installers are kept briefly so a build can be downloaded and tried on
+      # the other supported OS without a local toolchain there.
+      - name: Upload installers
+        if: runner.os != 'macOS'
+        uses: actions/upload-artifact@v7
+        with:
+          name: installers-${{ matrix.os }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
