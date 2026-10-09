@@ -14,4 +14,41 @@ Built with Tauri 2, React, TypeScript, and a local SQLite database. Windows and 
 
 ## Commands
 
-Commands will be documented here as the project is scaffolded.
+Run all commands from the repository root.
+
+### Run the app
+
+| Command               | What it does                                                    |
+| --------------------- | --------------------------------------------------------------- |
+| `npm install`         | Installs dependencies                                           |
+| `npm run tauri dev`   | Runs the desktop app in development mode with hot reload        |
+| `npm run tauri build` | Builds the release app and installers for your OS               |
+| `npm run dev`         | Runs only the Vite dev server (frontend in a browser, no Tauri) |
+| `npm run build`       | Builds the frontend for production                              |
+
+### Checks
+
+| Command                | What it does                                                                      |
+| ---------------------- | --------------------------------------------------------------------------------- |
+| `npm run verify`       | Runs all checks below, the build, and the Rust checks; stops at the first failure |
+| `npm run typecheck`    | TypeScript type-check                                                             |
+| `npm run lint`         | ESLint                                                                            |
+| `npm run format:check` | Verifies formatting with Prettier                                                 |
+| `npm run format`       | Rewrites files with Prettier                                                      |
+| `npm run test`         | Runs frontend tests once (Vitest)                                                 |
+| `npm run test:watch`   | Runs frontend tests in watch mode                                                 |
+
+`npm run verify` also runs the Rust checks, which you can run on their own from inside `src-tauri/`:
+
+```
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
+
+`verify` does not run `tauri build`, which is slow; CI covers it.
+
+### Where tests live
+
+- **Frontend:** `*.test.ts` files next to the code they test, using Vitest.
+- **Rust:** `#[cfg(test)]` modules inside the source file they test.
