@@ -1,0 +1,128 @@
+[
+  {
+    "id": "costar",
+    "name": "CO-STAR",
+    "description": "Context, Objective, Style, Tone, Audience, Response. Suited to writing tasks where voice and audience matter.",
+    "source": "GovTech Singapore's Data Science & AI team (https://www.tech.gov.sg/technews/mastering-the-art-of-prompt-engineering-with-empower/), made widely known by Sheila Teo's write-up of Singapore's GPT-4 prompt engineering competition (https://medium.com/towards-data-science/how-i-won-singapores-gpt-4-prompt-engineering-competition-34c195a93d41).",
+    "sections": [
+      {
+        "key": "context",
+        "label": "Context",
+        "helpText": "Background the model needs to understand the situation. For example: \"I maintain an open-source Python library for parsing CSV files, and I've just added streaming support for large files.\""
+      },
+      {
+        "key": "objective",
+        "label": "Objective",
+        "helpText": "The task you want the model to carry out. For example: \"Write a README section that explains how to use streaming.\""
+      },
+      {
+        "key": "style",
+        "label": "Style",
+        "helpText": "The writing style to follow, such as a particular expert, publication or genre. For example: \"Follow the style of well-regarded project documentation, such as the Django docs.\""
+      },
+      {
+        "key": "tone",
+        "label": "Tone",
+        "helpText": "The attitude of the response, such as formal, friendly or persuasive. For example: \"Friendly and practical.\""
+      },
+      {
+        "key": "audience",
+        "label": "Audience",
+        "helpText": "Who the response is for, so it's pitched at the right level. For example: \"Python developers who already use the library but haven't worked with generators before.\""
+      },
+      {
+        "key": "response",
+        "label": "Response",
+        "helpText": "The format of the response, such as a list, a table, a report or JSON. For example: \"A Markdown section with a heading, two short paragraphs and one runnable code example.\""
+      }
+    ],
+    "template": "{{#context}}# Context\n{{context}}{{/context}}\n\n{{#objective}}# Objective\n{{objective}}{{/objective}}\n\n{{#style}}# Style\n{{style}}{{/style}}\n\n{{#tone}}# Tone\n{{tone}}{{/tone}}\n\n{{#audience}}# Audience\n{{audience}}{{/audience}}\n\n{{#response}}# Response\n{{response}}{{/response}}"
+  },
+  {
+    "id": "risen",
+    "name": "RISEN",
+    "description": "Role, Instructions, Steps, End goal, Narrowing. Suited to multi-step tasks with a clear outcome.",
+    "source": "Kyle Balmer (https://aiwithkyle.com/).",
+    "sections": [
+      {
+        "key": "role",
+        "label": "Role",
+        "helpText": "Who the model should act as, such as an expert in a particular field. For example: \"You are a senior backend engineer with years of experience designing REST APIs.\""
+      },
+      {
+        "key": "instructions",
+        "label": "Instructions",
+        "helpText": "The core task, stated directly. For example: \"Add cursor-based pagination to the GET /orders endpoint.\""
+      },
+      {
+        "key": "steps",
+        "label": "Steps",
+        "helpText": "The steps to follow, in order. For example: \"1. Read the current handler and its tests. 2. Propose a cursor format. 3. Implement it. 4. Add tests for the first, middle and last page.\""
+      },
+      {
+        "key": "end_goal",
+        "label": "End goal",
+        "helpText": "The outcome you want, so the model knows what finished looks like. For example: \"Clients can page through every order with no duplicates or gaps, even while new orders arrive.\""
+      },
+      {
+        "key": "narrowing",
+        "label": "Narrowing",
+        "helpText": "Limits and requirements, such as length, scope, style or format. For example: \"Keep existing response fields unchanged, add no new dependencies, and only touch the handler and its tests.\""
+      }
+    ],
+    "template": "{{#role}}# Role\n{{role}}{{/role}}\n\n{{#instructions}}# Instructions\n{{instructions}}{{/instructions}}\n\n{{#steps}}# Steps\n{{steps}}{{/steps}}\n\n{{#end_goal}}# End goal\n{{end_goal}}{{/end_goal}}\n\n{{#narrowing}}# Narrowing\n{{narrowing}}{{/narrowing}}"
+  },
+  {
+    "id": "race",
+    "name": "RACE",
+    "description": "Role, Action, Context, Execution. Asks a reasoning model to work out its own approach rather than telling it.",
+    "source": "RACE 2.0 by Trust Insights, which created RACE for AI prompting (https://www.trustinsights.ai/blog/2025/04/ai-prompting-frameworks/).",
+    "sections": [
+      {
+        "key": "role",
+        "label": "Role",
+        "helpText": "Ask the model to choose a role for itself, and make sure the role contains superlatives. For example: \"Which expert would handle this database migration best, and how would you describe that role using superlatives?\""
+      },
+      {
+        "key": "action",
+        "label": "Action",
+        "helpText": "Ask the model to think about what it's doing and why. For example: \"What needs to change in this code to fix the bug, and why does that change fix it?\""
+      },
+      {
+        "key": "context",
+        "label": "Context",
+        "helpText": "Give the model a Deep Research report on the topic. For example: a report on the library you're upgrading, plus the relevant source files and the error output."
+      },
+      {
+        "key": "execution",
+        "label": "Execution",
+        "helpText": "Ask the model to think through the outcomes and match it to the Action. For example: \"For each approach you considered, what trade-offs does it make, and which one best fits the change?\""
+      }
+    ],
+    "template": "{{#role}}# Role\n{{role}}{{/role}}\n\n{{#action}}# Action\n{{action}}{{/action}}\n\n{{#context}}# Context\n{{context}}{{/context}}\n\n{{#execution}}# Execution\n{{execution}}{{/execution}}"
+  },
+  {
+    "id": "rtf",
+    "name": "RTF",
+    "description": "Role, Task, Format. The shortest framework, for quick requests.",
+    "source": "No single verifiable origin. Role, Task, Format is the most common expansion; some sources use Request for the R.",
+    "sections": [
+      {
+        "key": "role",
+        "label": "Role",
+        "helpText": "Who the model should act as. For example: \"You are a senior backend engineer who specializes in SQL performance.\""
+      },
+      {
+        "key": "task",
+        "label": "Task",
+        "helpText": "What you want the model to do, stated clearly and specifically. For example: \"Find out why this query is slow and rewrite it to use an index.\""
+      },
+      {
+        "key": "format",
+        "label": "Format",
+        "helpText": "How the output should be laid out, such as a list, a table or a short paragraph. For example: \"Give the rewritten query in one code block, then a bullet list of what changed and why.\""
+      }
+    ],
+    "template": "{{#role}}# Role\n{{role}}{{/role}}\n\n{{#task}}# Task\n{{task}}{{/task}}\n\n{{#format}}# Format\n{{format}}{{/format}}"
+  }
+]
