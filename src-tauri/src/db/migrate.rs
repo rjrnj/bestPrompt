@@ -18,9 +18,7 @@ use super::DbError;
 
 /// The app's migrations, in order. Never edit or reorder a migration that has
 /// shipped; add a new one to the end instead.
-const MIGRATIONS: &[&str] = &[
-    // e.g. include_str!("migrations/001_initial.sql"),
-];
+const MIGRATIONS: &[&str] = &[include_str!("migrations/001_initial.sql")];
 
 /// Brings the database up to the latest schema version.
 pub fn migrate(conn: &mut Connection) -> Result<(), DbError> {
@@ -95,6 +93,7 @@ fn set_user_version(conn: &Connection, version: usize) -> Result<(), DbError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::test_support::{count, foreign_keys_enabled, table_exists};
     use crate::db::{open, open_in_memory};
     use std::thread;
     use std::time::Duration;
@@ -119,24 +118,6 @@ mod tests {
         INSERT INTO cascade_child VALUES ('p'), ('p');
         INSERT INTO set_null_child VALUES ('p');
     ";
-
-    fn table_exists(conn: &Connection, name: &str) -> bool {
-        conn.query_row(
-            "SELECT EXISTS (SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?1)",
-            [name],
-            |row| row.get(0),
-        )
-        .unwrap()
-    }
-
-    fn foreign_keys_enabled(conn: &Connection) -> bool {
-        conn.pragma_query_value(None, "foreign_keys", |row| row.get(0))
-            .unwrap()
-    }
-
-    fn count(conn: &Connection, sql: &str) -> i64 {
-        conn.query_row(sql, [], |row| row.get(0)).unwrap()
-    }
 
     #[test]
     fn app_migrations_apply_to_a_fresh_database() {

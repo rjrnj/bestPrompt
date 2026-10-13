@@ -1,11 +1,16 @@
 //! SQLite data layer. Nothing in here depends on Tauri, so it is tested with
 //! plain `cargo test` against in-memory databases.
 
+pub mod builtins;
 mod error;
 pub mod migrate;
+#[cfg(test)]
+mod schema_tests;
+#[cfg(test)]
+mod test_support;
 
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
 
@@ -39,14 +44,23 @@ fn configure(conn: &Connection) -> Result<(), DbError> {
     Ok(())
 }
 
+/// The current time as the database stores it: UTC Unix milliseconds.
+fn now_millis() -> i64 {
+    unix_millis(SystemTime::now())
+}
+
+/// A clock set before 1970 reads as 0 rather than failing: a wrong timestamp
+/// is better than an app that won't start.
+fn unix_millis(time: SystemTime) -> i64 {
+    time.duration_since(UNIX_EPOCH).map_or(0, |since| {
+        i64::try_from(since.as_millis()).unwrap_or(i64::MAX)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn foreign_keys_enabled(conn: &Connection) -> bool {
-        conn.pragma_query_value(None, "foreign_keys", |row| row.get(0))
-            .unwrap()
-    }
+    use crate::db::test_support::foreign_keys_enabled;
 
     #[test]
     fn in_memory_database_enforces_foreign_keys() {
@@ -72,5 +86,15 @@ mod tests {
             .pragma_query_value(None, "journal_mode", |row| row.get(0))
             .unwrap();
         assert_eq!(mode, "wal");
+    }
+
+    #[test]
+    fn unix_millis_counts_from_1970() {
+        assert_eq!(unix_millis(UNIX_EPOCH + Duration::from_millis(1500)), 1500);
+    }
+
+    #[test]
+    fn clock_set_before_1970_reads_as_zero_instead_of_crashing() {
+        assert_eq!(unix_millis(UNIX_EPOCH - Duration::from_secs(1)), 0);
     }
 }
