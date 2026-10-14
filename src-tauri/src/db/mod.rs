@@ -37,12 +37,27 @@ pub fn open(path: &Path) -> Result<Connection, DbError> {
 pub fn open_app_database(path: &Path) -> Result<Connection, DbError> {
     let existed = path.exists();
     let mut conn = open(path)?;
-    if existed && let Some(version) = migrate::version_before_pending(&conn)? {
+    if existed
+        && let Some(version) = migrate::version_before_pending(&conn)?
+        && has_any_table(&conn)?
+    {
         backup(&conn, path, version)?;
     }
     migrate::migrate(&mut conn)?;
     builtins::seed_builtins(&mut conn)?;
     Ok(conn)
+}
+
+/// Whether the database holds anything at all. A file left behind by a launch
+/// that failed before its first migration has no tables, and backing it up on
+/// every retry would only pile up empty copies.
+fn has_any_table(conn: &Connection) -> Result<bool, DbError> {
+    let any = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sqlite_schema WHERE type = 'table')",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(any)
 }
 
 /// Copies the database to `<name>.v<version>.<time>.bak` in the same directory.
@@ -162,6 +177,20 @@ mod tests {
         let backup = open(&dir.path().join(&names[0])).unwrap();
         assert_eq!(count(&backup, "SELECT id FROM old_stuff"), 7);
         assert_eq!(count(&backup, "PRAGMA user_version"), 0);
+    }
+
+    /// A file left by a launch that failed before its first migration holds
+    /// nothing worth keeping, so it isn't backed up on every retry.
+    #[test]
+    fn an_existing_but_empty_database_is_not_backed_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.db");
+        drop(open(&path).unwrap());
+        assert!(path.exists());
+
+        open_app_database(&path).unwrap();
+
+        assert_eq!(backups(dir.path()), Vec::<String>::new());
     }
 
     #[test]

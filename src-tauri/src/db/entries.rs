@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
@@ -58,7 +58,14 @@ fn insert(
     id: String,
     now: i64,
 ) -> Result<PromptEntry, DbError> {
-    let framework = get_framework(conn, &new.framework_id)?;
+    // One transaction for the read and the write, so the snapshot is of the
+    // framework the entry is linked to. IMMEDIATE takes the write lock before
+    // the read; a deferred transaction would read first and could then find
+    // the framework changed or gone when it came to insert. Unchecked because
+    // the connection is shared as `&Connection`; nothing else runs on it
+    // meanwhile.
+    let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
+    let framework = get_framework(&tx, &new.framework_id)?;
     let entry = PromptEntry {
         id,
         framework_id: Some(framework.id),
@@ -71,7 +78,7 @@ fn insert(
         rendered_prompt: new.rendered_prompt.clone(),
         created_at: now,
     };
-    conn.execute(
+    tx.execute(
         "INSERT INTO prompt_entries
              (id, framework_id, framework_snapshot, section_values, rendered_prompt, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -84,6 +91,7 @@ fn insert(
             entry.created_at,
         ],
     )?;
+    tx.commit()?;
     Ok(entry)
 }
 
@@ -306,6 +314,51 @@ mod tests {
         assert_eq!(
             ids(&list_prompt_entries(&conn, 10, 0).unwrap()),
             [saved.id.as_str()]
+        );
+    }
+
+    /// The framework is read and the entry written in one transaction, so a
+    /// framework deleted meanwhile (by another instance's built-in sync, or
+    /// later by the user) is reported as not found. Reading it first and
+    /// then inserting would instead snapshot a framework that no longer
+    /// exists and fail on the foreign key.
+    #[test]
+    fn saving_while_another_connection_deletes_the_framework_is_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        let mut other = crate::db::open(&path).unwrap();
+        crate::db::migrate::migrate(&mut other).unwrap();
+        insert_framework(&other, "f", false);
+
+        // The other connection holds the write lock while it deletes the framework.
+        let tx = other
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .unwrap();
+        let saver = std::thread::spawn({
+            let path = path.clone();
+            move || {
+                let conn = crate::db::open(&path).unwrap();
+                save_prompt_entry(&conn, &new_entry("f"))
+            }
+        });
+        // Give the save time to reach the lock. If it hasn't yet, the test
+        // still passes, it just doesn't exercise the wait.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        tx.execute("DELETE FROM frameworks WHERE id = 'f'", [])
+            .unwrap();
+        tx.commit().unwrap();
+
+        let result = saver.join().unwrap();
+
+        assert!(
+            matches!(
+                result,
+                Err(DbError::NotFound {
+                    entity: Entity::Framework,
+                    ..
+                })
+            ),
+            "{result:?}"
         );
     }
 

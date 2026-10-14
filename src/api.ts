@@ -19,13 +19,32 @@ export class ApiError extends Error {
   }
 }
 
+const KINDS: readonly DbErrorKind[] = ["database", "notFound"];
+
+/** Only the backend's own `{ kind, message }` shape, with a kind we know. */
 function isDbError(value: unknown): value is DbError {
   return (
     typeof value === "object" &&
     value !== null &&
     "kind" in value &&
-    "message" in value
+    KINDS.includes(value.kind as DbErrorKind) &&
+    "message" in value &&
+    typeof value.message === "string"
   );
+}
+
+/** The best available text for a rejection that isn't the backend's shape. */
+function messageOf(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+  return String(error);
 }
 
 /**
@@ -44,10 +63,7 @@ async function call<T>(
     if (isDbError(error)) {
       throw new ApiError(error.kind, error.message);
     }
-    throw new ApiError(
-      "database",
-      error instanceof Error ? error.message : String(error),
-    );
+    throw new ApiError("database", messageOf(error));
   }
 }
 

@@ -111,6 +111,17 @@ describe("api", () => {
     });
   });
 
+  it("treats a rejection with an unknown kind as a database error, keeping its message", async () => {
+    mockIPC(() => {
+      throw { kind: "somethingElse", message: "from a plugin" };
+    });
+
+    const error = await listFrameworks().catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ kind: "database", message: "from a plugin" });
+  });
+
   it("wraps an unexpected rejection as a database error", async () => {
     mockIPC(() => {
       throw new TypeError("boom");
