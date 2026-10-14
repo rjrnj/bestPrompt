@@ -20,6 +20,13 @@ use super::DbError;
 /// shipped; add a new one to the end instead.
 const MIGRATIONS: &[&str] = &[include_str!("migrations/001_initial.sql")];
 
+/// The schema version of a database that `migrate` would have to change,
+/// or `None` if it is already current (or newer, which `migrate` refuses).
+pub fn version_before_pending(conn: &Connection) -> Result<Option<usize>, DbError> {
+    let current = user_version(conn)?;
+    Ok((current < MIGRATIONS.len()).then_some(current))
+}
+
 /// Brings the database up to the latest schema version.
 pub fn migrate(conn: &mut Connection) -> Result<(), DbError> {
     apply(conn, MIGRATIONS)
