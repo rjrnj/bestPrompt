@@ -19,7 +19,20 @@ export class ApiError extends Error {
   }
 }
 
-const KINDS: readonly DbErrorKind[] = ["database", "notFound"];
+// `satisfies` makes this a compile error when the generated DbErrorKind gains
+// a value that isn't listed here, so a new backend kind can't be silently
+// reclassified as "database".
+const KINDS = { database: true, notFound: true } satisfies Record<
+  DbErrorKind,
+  true
+>;
+
+function isKnownKind(value: unknown): value is DbErrorKind {
+  return (
+    typeof value === "string" &&
+    Object.prototype.hasOwnProperty.call(KINDS, value)
+  );
+}
 
 /** Only the backend's own `{ kind, message }` shape, with a kind we know. */
 function isDbError(value: unknown): value is DbError {
@@ -27,7 +40,7 @@ function isDbError(value: unknown): value is DbError {
     typeof value === "object" &&
     value !== null &&
     "kind" in value &&
-    KINDS.includes(value.kind as DbErrorKind) &&
+    isKnownKind(value.kind) &&
     "message" in value &&
     typeof value.message === "string"
   );

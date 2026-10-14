@@ -47,13 +47,24 @@ enum StartupError {
     Database(#[from] DbError),
 }
 
-/// Opens the database and puts it in managed state. If that fails, the user
-/// sees the error in a dialog and the app exits when they dismiss it. Not a
-/// panic: the release build aborts on panic with no message at all.
+/// Opens the database and puts it in managed state, then shows the main
+/// window, which `tauri.conf.json` creates hidden. If opening fails the
+/// window stays hidden, the user sees the error in a dialog, and the app
+/// exits when they dismiss it, so nothing ever runs against a missing
+/// database. Not a panic: the release build aborts on panic with no message
+/// at all.
 fn open_database_or_exit(app: &mut App) {
     match open_database(app.handle()) {
         Ok(conn) => {
             app.manage(Db(Mutex::new(conn)));
+            match app.get_webview_window("main") {
+                Some(window) => {
+                    if let Err(error) = window.show() {
+                        log::error!("could not show the main window: {error}");
+                    }
+                }
+                None => log::error!("no main window to show"),
+            }
         }
         Err(error) => {
             log::error!("startup failed: {error}");

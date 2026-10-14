@@ -70,8 +70,13 @@ fn backup(conn: &Connection, path: &Path, version: usize) -> Result<(), DbError>
         .unwrap_or_default();
     name.push(format!(".v{version}.{}.bak", now_millis()));
     let backup_path = path.with_file_name(name);
-    log::info!("backing up database to {}", backup_path.display());
-    conn.execute("VACUUM INTO ?1", [backup_path.to_string_lossy().as_ref()])?;
+    // SQLite takes the file name as text; a lossy conversion would write the
+    // backup under a different name than the one reported.
+    let Some(backup_path_text) = backup_path.to_str() else {
+        return Err(DbError::BackupPathNotUnicode { path: backup_path });
+    };
+    log::info!("backing up database to {backup_path_text}");
+    conn.execute("VACUUM INTO ?1", [backup_path_text])?;
     Ok(())
 }
 
@@ -139,11 +144,43 @@ mod tests {
     fn backups(dir: &Path) -> Vec<String> {
         let mut names: Vec<String> = std::fs::read_dir(dir)
             .unwrap()
-            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .filter(|name| name.ends_with(".bak"))
             .collect();
         names.sort();
         names
+    }
+
+    /// A file name the platform allows but that isn't valid Unicode.
+    #[cfg(windows)]
+    fn not_unicode_file_name() -> std::ffi::OsString {
+        use std::os::windows::ffi::OsStringExt;
+        // "a", a lone surrogate, ".db"
+        std::ffi::OsString::from_wide(&[0x61, 0xD800, 0x2E, 0x64, 0x62])
+    }
+
+    #[cfg(unix)]
+    fn not_unicode_file_name() -> std::ffi::OsString {
+        use std::os::unix::ffi::OsStringExt;
+        std::ffi::OsString::from_vec(b"a\xff.db".to_vec())
+    }
+
+    /// SQLite takes the backup's file name as text, so a name that isn't
+    /// Unicode can't be passed faithfully. It is refused outright rather
+    /// than written under a substituted name.
+    #[test]
+    fn backup_refuses_a_file_name_that_is_not_unicode() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open(&dir.path().join("app.db")).unwrap();
+        let path = dir.path().join(not_unicode_file_name());
+
+        let result = backup(&conn, &path, 0);
+
+        assert!(
+            matches!(result, Err(DbError::BackupPathNotUnicode { .. })),
+            "{result:?}"
+        );
+        assert_eq!(backups(dir.path()), Vec::<String>::new());
     }
 
     #[test]

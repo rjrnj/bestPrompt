@@ -19,9 +19,9 @@ pub struct Db(pub Mutex<Connection>);
 impl Db {
     /// Runs `f` on the connection. A thread that panicked while holding the
     /// lock leaves the connection itself intact, so the poison is ignored.
-    fn with<T>(&self, f: impl FnOnce(&Connection) -> Result<T, DbError>) -> Result<T, DbError> {
-        let conn = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        f(&conn)
+    fn with<T>(&self, f: impl FnOnce(&mut Connection) -> Result<T, DbError>) -> Result<T, DbError> {
+        let mut conn = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        f(&mut conn)
     }
 }
 
@@ -38,7 +38,7 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
 
 #[tauri::command(async)]
 fn list_frameworks(db: State<'_, Db>) -> Result<Vec<Framework>, DbError> {
-    db.with(frameworks::list_frameworks)
+    db.with(|conn| frameworks::list_frameworks(conn))
 }
 
 #[tauri::command(async)]

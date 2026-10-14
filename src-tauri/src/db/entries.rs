@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
@@ -48,12 +48,15 @@ pub struct NewPromptEntry {
 }
 
 /// Saves an entry and returns it as stored.
-pub fn save_prompt_entry(conn: &Connection, new: &NewPromptEntry) -> Result<PromptEntry, DbError> {
+pub fn save_prompt_entry(
+    conn: &mut Connection,
+    new: &NewPromptEntry,
+) -> Result<PromptEntry, DbError> {
     insert(conn, new, Uuid::now_v7().to_string(), now_millis())
 }
 
 fn insert(
-    conn: &Connection,
+    conn: &mut Connection,
     new: &NewPromptEntry,
     id: String,
     now: i64,
@@ -61,10 +64,8 @@ fn insert(
     // One transaction for the read and the write, so the snapshot is of the
     // framework the entry is linked to. IMMEDIATE takes the write lock before
     // the read; a deferred transaction would read first and could then find
-    // the framework changed or gone when it came to insert. Unchecked because
-    // the connection is shared as `&Connection`; nothing else runs on it
-    // meanwhile.
-    let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
+    // the framework changed or gone when it came to insert.
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let framework = get_framework(&tx, &new.framework_id)?;
     let entry = PromptEntry {
         id,
@@ -175,13 +176,13 @@ mod tests {
 
     #[test]
     fn saving_snapshots_the_framework_into_the_entry() {
-        let conn = migrated();
+        let mut conn = migrated();
         insert_framework(&conn, "f", false);
         insert_section(&conn, "f", 0, "a");
         insert_section(&conn, "f", 1, "b");
 
         let entry = save_prompt_entry(
-            &conn,
+            &mut conn,
             &NewPromptEntry {
                 framework_id: "f".to_owned(),
                 section_values: values(&[("a", "one"), ("b", "")]),
@@ -224,11 +225,11 @@ mod tests {
 
     #[test]
     fn saving_gives_the_entry_a_lowercase_uuid_v7_id_and_the_current_time() {
-        let conn = migrated();
+        let mut conn = migrated();
         insert_framework(&conn, "f", false);
         let before = now_millis();
 
-        let entry = save_prompt_entry(&conn, &new_entry("f")).unwrap();
+        let entry = save_prompt_entry(&mut conn, &new_entry("f")).unwrap();
 
         let id = Uuid::parse_str(&entry.id).expect("a UUID");
         assert_eq!(id.get_version_num(), 7);
@@ -239,9 +240,9 @@ mod tests {
 
     #[test]
     fn saving_for_an_unknown_framework_is_a_not_found_error_and_stores_nothing() {
-        let conn = migrated();
+        let mut conn = migrated();
 
-        let result = save_prompt_entry(&conn, &new_entry("missing"));
+        let result = save_prompt_entry(&mut conn, &new_entry("missing"));
 
         assert!(matches!(
             result,
@@ -255,10 +256,10 @@ mod tests {
 
     #[test]
     fn a_saved_entry_reads_back_the_same() {
-        let conn = migrated();
+        let mut conn = migrated();
         insert_framework(&conn, "f", false);
         insert_section(&conn, "f", 0, "a");
-        let saved = save_prompt_entry(&conn, &new_entry("f")).unwrap();
+        let saved = save_prompt_entry(&mut conn, &new_entry("f")).unwrap();
 
         let read = get_prompt_entry(&conn, &saved.id).unwrap();
 
@@ -267,7 +268,7 @@ mod tests {
 
     /// Saves entries at times 1, 2 and 3, with ids that sort the other way
     /// round so an order by id would be caught.
-    fn save_three(conn: &Connection) {
+    fn save_three(conn: &mut Connection) {
         insert_framework(conn, "f", false);
         for (id, time) in [("c", 1), ("b", 2), ("a", 3)] {
             insert(conn, &new_entry("f"), id.to_owned(), time).unwrap();
@@ -280,8 +281,8 @@ mod tests {
 
     #[test]
     fn lists_entries_newest_first() {
-        let conn = migrated();
-        save_three(&conn);
+        let mut conn = migrated();
+        save_three(&mut conn);
 
         let entries = list_prompt_entries(&conn, 10, 0).unwrap();
 
@@ -290,8 +291,8 @@ mod tests {
 
     #[test]
     fn lists_a_page_of_entries() {
-        let conn = migrated();
-        save_three(&conn);
+        let mut conn = migrated();
+        save_three(&mut conn);
 
         let entries = list_prompt_entries(&conn, 1, 1).unwrap();
 
@@ -300,10 +301,10 @@ mod tests {
 
     #[test]
     fn deleting_the_framework_keeps_the_entry_readable_from_its_snapshot() {
-        let conn = migrated();
+        let mut conn = migrated();
         insert_framework(&conn, "f", false);
         insert_section(&conn, "f", 0, "a");
-        let saved = save_prompt_entry(&conn, &new_entry("f")).unwrap();
+        let saved = save_prompt_entry(&mut conn, &new_entry("f")).unwrap();
 
         conn.execute("DELETE FROM frameworks WHERE id = 'f'", [])
             .unwrap();
@@ -337,8 +338,8 @@ mod tests {
         let saver = std::thread::spawn({
             let path = path.clone();
             move || {
-                let conn = crate::db::open(&path).unwrap();
-                save_prompt_entry(&conn, &new_entry("f"))
+                let mut conn = crate::db::open(&path).unwrap();
+                save_prompt_entry(&mut conn, &new_entry("f"))
             }
         });
         // Give the save time to reach the lock. If it hasn't yet, the test

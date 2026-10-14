@@ -3,6 +3,7 @@
 //! checks that each command is registered, granted and serializes as the
 //! frontend expects.
 
+use std::collections::BTreeSet;
 use std::sync::Mutex;
 
 use bestprompt_lib::commands::{Db, register};
@@ -72,6 +73,52 @@ fn the_webview_can_list_the_builtin_frameworks() {
 
     let ids: Vec<&str> = frameworks.iter().map(|f| f.id.as_str()).collect();
     assert_eq!(ids, ["costar", "race", "risen", "rtf"]);
+}
+
+/// Every `"..."` literal in `text`.
+fn quoted(text: &str) -> impl Iterator<Item = &str> {
+    text.split('"').skip(1).step_by(2)
+}
+
+/// The text between the first `start` and the next `end` after it.
+fn between<'a>(text: &'a str, start: &str, end: &str) -> &'a str {
+    let from = text.find(start).expect(start) + start.len();
+    let to = text[from..].find(end).expect(end);
+    &text[from..from + to]
+}
+
+/// The command list lives in three places: `build.rs` (the app manifest,
+/// which is what makes the ACL apply to app commands), the capability (the
+/// grants) and `commands.rs` (the handler). A command missing from any one of
+/// them compiles fine and fails only when the webview calls it, so the three
+/// are compared here.
+#[test]
+fn the_command_list_agrees_across_the_manifest_the_capability_and_the_handler() {
+    let manifest: BTreeSet<String> = quoted(between(
+        include_str!("../build.rs"),
+        "const COMMANDS: &[&str] = &[",
+        "];",
+    ))
+    .map(str::to_owned)
+    .collect();
+    let granted: BTreeSet<String> = quoted(include_str!("../capabilities/default.json"))
+        .filter_map(|permission| permission.strip_prefix("allow-"))
+        .map(|command| command.replace('-', "_"))
+        .collect();
+    let handled: BTreeSet<String> = between(
+        include_str!("../src/commands.rs"),
+        "generate_handler![",
+        "]",
+    )
+    .split(',')
+    .map(str::trim)
+    .filter(|name| !name.is_empty())
+    .map(str::to_owned)
+    .collect();
+
+    assert!(!manifest.is_empty());
+    assert_eq!(manifest, granted, "manifest (left) vs capability (right)");
+    assert_eq!(manifest, handled, "manifest (left) vs handler (right)");
 }
 
 /// The capability names the main window, so a window it doesn't cover gets

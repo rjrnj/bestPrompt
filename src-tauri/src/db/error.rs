@@ -26,6 +26,10 @@ pub enum DbError {
     /// No row has the id that was asked for.
     #[error("{entity} {id} not found")]
     NotFound { entity: Entity, id: String },
+
+    /// SQLite takes a backup's file name as text, which this path can't be.
+    #[error("backup path {} is not valid Unicode", path.display())]
+    BackupPathNotUnicode { path: std::path::PathBuf },
 }
 
 /// What a `NotFound` error was looking for.
@@ -69,7 +73,8 @@ impl DbError {
             DbError::Sqlite(_)
             | DbError::SchemaTooNew { .. }
             | DbError::MigrationBrokeForeignKey { .. }
-            | DbError::BuiltinsUnreadable(_) => Kind::Database,
+            | DbError::BuiltinsUnreadable(_)
+            | DbError::BackupPathNotUnicode { .. } => Kind::Database,
             DbError::NotFound { .. } => Kind::NotFound,
         }
     }
@@ -80,7 +85,8 @@ impl DbError {
         match self {
             DbError::Sqlite(_)
             | DbError::MigrationBrokeForeignKey { .. }
-            | DbError::BuiltinsUnreadable(_) => "A database error occurred.".to_owned(),
+            | DbError::BuiltinsUnreadable(_)
+            | DbError::BackupPathNotUnicode { .. } => "A database error occurred.".to_owned(),
             DbError::SchemaTooNew { .. } | DbError::NotFound { .. } => self.to_string(),
         }
     }
