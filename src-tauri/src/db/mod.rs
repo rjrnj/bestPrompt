@@ -2,7 +2,9 @@
 //! plain `cargo test` against in-memory databases.
 
 pub mod builtins;
+pub mod entries;
 mod error;
+pub mod frameworks;
 pub mod migrate;
 #[cfg(test)]
 mod schema_tests;
@@ -14,7 +16,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
 
-pub use error::DbError;
+pub use error::{DbError, Entity};
 
 /// Opens (creating if needed) the database file at `path`.
 pub fn open(path: &Path) -> Result<Connection, DbError> {
@@ -25,6 +27,37 @@ pub fn open(path: &Path) -> Result<Connection, DbError> {
     // is slower but still correct, so the result is deliberately not checked.
     conn.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
     Ok(conn)
+}
+
+/// Opens the app's database, ready to use: created if missing, migrated and
+/// with the built-in frameworks seeded. An existing database is copied to a
+/// backup next to it before any pending migration runs, so a migration that
+/// goes wrong in a way the tests didn't catch still leaves the user's history
+/// recoverable.
+pub fn open_app_database(path: &Path) -> Result<Connection, DbError> {
+    let existed = path.exists();
+    let mut conn = open(path)?;
+    if existed && let Some(version) = migrate::version_before_pending(&conn)? {
+        backup(&conn, path, version)?;
+    }
+    migrate::migrate(&mut conn)?;
+    builtins::seed_builtins(&mut conn)?;
+    Ok(conn)
+}
+
+/// Copies the database to `<name>.v<version>.<time>.bak` in the same directory.
+/// `VACUUM INTO` writes a consistent copy that includes changes still in the
+/// WAL, which copying the file would miss.
+fn backup(conn: &Connection, path: &Path, version: usize) -> Result<(), DbError> {
+    let mut name = path
+        .file_name()
+        .map(|name| name.to_os_string())
+        .unwrap_or_default();
+    name.push(format!(".v{version}.{}.bak", now_millis()));
+    let backup_path = path.with_file_name(name);
+    log::info!("backing up database to {}", backup_path.display());
+    conn.execute("VACUUM INTO ?1", [backup_path.to_string_lossy().as_ref()])?;
+    Ok(())
 }
 
 /// Opens a private in-memory database, used by tests.
@@ -60,7 +93,7 @@ fn unix_millis(time: SystemTime) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::test_support::foreign_keys_enabled;
+    use crate::db::test_support::{count, foreign_keys_enabled};
 
     #[test]
     fn in_memory_database_enforces_foreign_keys() {
@@ -86,6 +119,60 @@ mod tests {
             .pragma_query_value(None, "journal_mode", |row| row.get(0))
             .unwrap();
         assert_eq!(mode, "wal");
+    }
+
+    fn backups(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .filter(|name| name.ends_with(".bak"))
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn opening_a_new_app_database_migrates_and_seeds_it_without_a_backup() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let conn = open_app_database(&dir.path().join("app.db")).unwrap();
+
+        assert_eq!(
+            count(&conn, "SELECT count(*) FROM frameworks WHERE is_custom = 0"),
+            4
+        );
+        assert_eq!(backups(dir.path()), Vec::<String>::new());
+    }
+
+    #[test]
+    fn an_existing_database_is_backed_up_before_its_pending_migrations_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.db");
+        // A database from before the first migration, with something in it.
+        open(&path)
+            .unwrap()
+            .execute_batch("CREATE TABLE old_stuff (id INTEGER PRIMARY KEY); INSERT INTO old_stuff VALUES (7);")
+            .unwrap();
+
+        open_app_database(&path).unwrap();
+
+        let names = backups(dir.path());
+        assert_eq!(names.len(), 1, "{names:?}");
+        assert!(names[0].starts_with("app.db.v0."), "{}", names[0]);
+        let backup = open(&dir.path().join(&names[0])).unwrap();
+        assert_eq!(count(&backup, "SELECT id FROM old_stuff"), 7);
+        assert_eq!(count(&backup, "PRAGMA user_version"), 0);
+    }
+
+    #[test]
+    fn an_up_to_date_database_is_not_backed_up_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.db");
+        open_app_database(&path).unwrap();
+
+        open_app_database(&path).unwrap();
+
+        assert_eq!(backups(dir.path()), Vec::<String>::new());
     }
 
     #[test]

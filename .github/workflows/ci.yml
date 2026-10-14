@@ -53,7 +53,11 @@ jobs:
           workspaces: src-tauri
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
+      # Also regenerates the TypeScript bindings in src/bindings (ts-rs).
       - run: cargo test
+      - name: Check the committed TypeScript bindings are current
+        run: git diff --exit-code -- ../src/bindings && test -z "$(git status --porcelain -- ../src/bindings)"
+        shell: bash
 
   # Non-publishing `tauri build` on every platform, so "compiles on Windows,
   # fails on Linux/macOS" is caught here instead of at release time.

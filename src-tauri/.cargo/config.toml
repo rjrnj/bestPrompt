@@ -1,0 +1,8 @@
+# ts-rs settings. `cargo test` regenerates the TypeScript bindings; CI fails if
+# the committed ones differ.
+[env]
+# Relative to this crate's directory.
+TS_RS_EXPORT_DIR = { value = "../src/bindings", relative = true }
+# i64 timestamps arrive in the webview as JSON numbers, not BigInts.
+# Millisecond timestamps stay far below 2^53, so nothing is lost.
+TS_RS_LARGE_INT = "number"

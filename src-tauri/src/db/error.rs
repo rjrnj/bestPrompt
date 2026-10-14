@@ -1,8 +1,9 @@
-use serde::ser::{Serialize, SerializeStruct, Serializer};
+use serde::{Serialize, Serializer};
+use ts_rs::TS;
 
 /// Errors from the data layer. They reach the frontend serialized as
-/// `{ message }`. A `kind` field for the frontend to branch on can be added
-/// once there is more than one kind to tell apart.
+/// `{ kind, message }`, where `kind` is what the frontend branches on and
+/// `message` is the text it can show.
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
     #[error(transparent)]
@@ -21,9 +22,58 @@ pub enum DbError {
     /// The built-in framework definitions compiled into the app don't parse.
     #[error("builtins/frameworks.json is not valid: {0}")]
     BuiltinsUnreadable(#[from] serde_json::Error),
+
+    /// No row has the id that was asked for.
+    #[error("{entity} {id} not found")]
+    NotFound { entity: Entity, id: String },
+}
+
+/// What a `NotFound` error was looking for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Entity {
+    Framework,
+    PromptEntry,
+}
+
+impl std::fmt::Display for Entity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Entity::Framework => "framework",
+            Entity::PromptEntry => "prompt entry",
+        })
+    }
+}
+
+/// The error as the frontend receives it.
+#[derive(Debug, Serialize, TS)]
+#[serde(rename = "DbError")]
+#[ts(export)]
+struct Payload {
+    kind: Kind,
+    message: String,
+}
+
+/// What the frontend can branch on. `NotFound` is an expected outcome of a
+/// lookup; everything else is something wrong with the database.
+#[derive(Debug, Clone, Copy, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "DbError.ts", rename = "DbErrorKind")]
+enum Kind {
+    Database,
+    NotFound,
 }
 
 impl DbError {
+    fn kind(&self) -> Kind {
+        match self {
+            DbError::Sqlite(_)
+            | DbError::SchemaTooNew { .. }
+            | DbError::MigrationBrokeForeignKey { .. }
+            | DbError::BuiltinsUnreadable(_) => Kind::Database,
+            DbError::NotFound { .. } => Kind::NotFound,
+        }
+    }
+
     /// The text shown to the user. Errors that quote SQL, table names or JSON
     /// are for developers, so they get a generic message instead.
     fn message(&self) -> String {
@@ -31,7 +81,7 @@ impl DbError {
             DbError::Sqlite(_)
             | DbError::MigrationBrokeForeignKey { .. }
             | DbError::BuiltinsUnreadable(_) => "A database error occurred.".to_owned(),
-            DbError::SchemaTooNew { .. } => self.to_string(),
+            DbError::SchemaTooNew { .. } | DbError::NotFound { .. } => self.to_string(),
         }
     }
 }
@@ -40,13 +90,18 @@ impl DbError {
 /// frontend, and the user-facing message drops the detail (SQLite's error
 /// code, the table name), so the full text is logged here first. Otherwise a
 /// full disk or a read-only database file would be indistinguishable from a
-/// bug.
+/// bug. A lookup that found nothing isn't a fault, so it isn't logged.
 impl Serialize for DbError {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        log::error!("{self}");
-        let mut payload = serializer.serialize_struct("DbError", 1)?;
-        payload.serialize_field("message", &self.message())?;
-        payload.end()
+        let kind = self.kind();
+        if matches!(kind, Kind::Database) {
+            log::error!("{self}");
+        }
+        Payload {
+            kind,
+            message: self.message(),
+        }
+        .serialize(serializer)
     }
 }
 
@@ -67,7 +122,7 @@ mod tests {
 
         assert_eq!(
             serialized,
-            json!({ "message": "A database error occurred." })
+            json!({ "kind": "database", "message": "A database error occurred." })
         );
         assert_eq!(log, [format!("ERROR {error}")]);
     }
@@ -81,7 +136,7 @@ mod tests {
 
         assert_eq!(
             serde_json::to_value(&error).unwrap(),
-            json!({ "message": "A database error occurred." })
+            json!({ "kind": "database", "message": "A database error occurred." })
         );
     }
 
@@ -91,8 +146,24 @@ mod tests {
 
         assert_eq!(
             serde_json::to_value(&error).unwrap(),
-            json!({ "message": "A database error occurred." })
+            json!({ "kind": "database", "message": "A database error occurred." })
         );
+    }
+
+    #[test]
+    fn not_found_serializes_with_its_own_kind_and_message_without_logging() {
+        let error = DbError::NotFound {
+            entity: Entity::Framework,
+            id: "costar".to_owned(),
+        };
+
+        let (serialized, log) = logged(|| serde_json::to_value(&error).unwrap());
+
+        assert_eq!(
+            serialized,
+            json!({ "kind": "notFound", "message": "framework costar not found" })
+        );
+        assert_eq!(log, Vec::<String>::new());
     }
 
     #[test]
@@ -104,7 +175,7 @@ mod tests {
 
         assert_eq!(
             serde_json::to_value(&error).unwrap(),
-            json!({ "message": error.to_string() })
+            json!({ "kind": "database", "message": error.to_string() })
         );
     }
 }
