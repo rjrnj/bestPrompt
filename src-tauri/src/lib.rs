@@ -1,6 +1,5 @@
 pub mod commands;
 pub mod db;
-pub mod smoke;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
