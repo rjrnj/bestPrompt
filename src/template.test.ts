@@ -96,96 +96,37 @@ describe("parseTemplate", () => {
       nodes: [{ type: "text", value: "C:\\dir\\{x}" }],
     });
   });
+
+  it("treats a doubled backslash before {{ as one backslash and a tag", () => {
+    expect(parseTemplate("C:\\Users\\\\{{user}}")).toEqual({
+      ok: true,
+      nodes: [
+        { type: "text", value: "C:\\Users\\" },
+        { type: "placeholder", key: "user", offset: 10 },
+      ],
+    });
+  });
+
+  it("treats three backslashes before {{ as one backslash and a literal {{", () => {
+    expect(parseTemplate("\\\\\\{{x}}")).toEqual({
+      ok: true,
+      nodes: [{ type: "text", value: "\\{{x}}" }],
+    });
+  });
+
+  it("keeps }} outside a tag as text", () => {
+    expect(parseTemplate("a }} b {{k}}}")).toEqual({
+      ok: true,
+      nodes: [
+        { type: "text", value: "a }} b " },
+        { type: "placeholder", key: "k", offset: 7 },
+        { type: "text", value: "}" },
+      ],
+    });
+  });
 });
 
 describe("renderTemplate", () => {
-  it("throws TemplateSyntaxError on a template that does not parse", () => {
-    expect(() => renderTemplate("{{#a}}", {})).toThrow(TemplateSyntaxError);
-    expect(() => renderTemplate("{{#a}}", {})).toThrow(
-      "Block {{#a}} is never closed",
-    );
-  });
-
-  it("renders a literal {{ from its escape", () => {
-    expect(renderTemplate("\\{{not a tag}} {{a}}", { a: "v" })).toBe(
-      "{{not a tag}} v",
-    );
-  });
-
-  it("renders non-ASCII text in the template and the values", () => {
-    expect(
-      renderTemplate("Rôle: {{role}} — 目标: {{goal}} 🎯", {
-        role: "réviseur",
-        goal: "改善",
-      }),
-    ).toBe("Rôle: réviseur — 目标: 改善 🎯");
-  });
-
-  describe("output cleanup", () => {
-    it("collapses three or more newlines left by a dropped block to two", () => {
-      const template = "# A\n{{a}}\n\n{{#b}}# B\n{{b}}{{/b}}\n\n# C\n{{c}}";
-      expect(renderTemplate(template, { a: "1", b: "", c: "3" })).toBe(
-        "# A\n1\n\n# C\n3",
-      );
-    });
-
-    it("keeps a run of two newlines", () => {
-      expect(renderTemplate("a\n\nb", {})).toBe("a\n\nb");
-    });
-
-    it("trims whitespace from the start and end of the output", () => {
-      expect(
-        renderTemplate("\n\n{{#a}}# A\n{{a}}{{/a}}\n\n{{#b}}# B{{/b}}\n", {
-          a: "1",
-        }),
-      ).toBe("# A\n1");
-    });
-
-    it("trims whitespace around a value", () => {
-      expect(renderTemplate("[{{a}}]", { a: "  padded\n\n" })).toBe("[padded]");
-    });
-
-    it("normalizes CRLF line endings in the template and the values", () => {
-      expect(
-        renderTemplate("# A\r\n{{a}}\r\n\r\n# B\r\n{{b}}", {
-          a: "line 1\r\nline 2",
-          b: "x",
-        }),
-      ).toBe("# A\nline 1\nline 2\n\n# B\nx");
-    });
-  });
-});
-
-describe("validateTemplate", () => {
-  const keys = ["role", "task"];
-
-  it("returns no errors for a template that only uses known keys", () => {
-    expect(
-      validateTemplate("{{#role}}{{role}}{{/role}} {{task}}", keys),
-    ).toEqual([]);
-  });
-
-  it("reports each use of an unknown key with its offset", () => {
-    expect(
-      validateTemplate("{{role}} {{#format}}{{format}}{{/format}}", keys),
-    ).toEqual([
-      { message: 'Unknown key "format"', offset: 9 },
-      { message: 'Unknown key "format"', offset: 20 },
-    ]);
-  });
-
-  it("reports an unknown key inside a nested block", () => {
-    expect(
-      validateTemplate("{{#role}}{{#tone}}{{/tone}}{{/role}}", keys),
-    ).toEqual([{ message: 'Unknown key "tone"', offset: 9 }]);
-  });
-
-  it("reports syntax errors", () => {
-    expect(validateTemplate("{{#role}}", keys)).toEqual([
-      { message: "Block {{#role}} is never closed", offset: 0 },
-    ]);
-  });
-
   it("substitutes a placeholder with its value", () => {
     expect(renderTemplate("Hello {{name}}!", { name: "world" })).toBe(
       "Hello world!",
@@ -236,5 +177,107 @@ describe("validateTemplate", () => {
         }),
       ).toBe("");
     });
+  });
+
+  it("renders a key named like an Object.prototype member", () => {
+    expect(renderTemplate("[{{constructor}}]", {})).toBe("[]");
+    expect(renderTemplate("[{{#toString}}x{{/toString}}]", {})).toBe("[]");
+    expect(renderTemplate("[{{__proto__}}]", { ["__proto__"]: "p" })).toBe(
+      "[p]",
+    );
+  });
+
+  it("throws TemplateSyntaxError on a template that does not parse", () => {
+    expect(() => renderTemplate("{{#a}}", {})).toThrow(TemplateSyntaxError);
+    expect(() => renderTemplate("{{#a}}", {})).toThrow(
+      "Block {{#a}} is never closed",
+    );
+  });
+
+  it("renders a literal {{ from its escape", () => {
+    expect(renderTemplate("\\{{not a tag}} {{a}}", { a: "v" })).toBe(
+      "{{not a tag}} v",
+    );
+  });
+
+  it("renders non-ASCII text in the template and the values", () => {
+    expect(
+      renderTemplate("Rôle: {{role}} — 目标: {{goal}} 🎯", {
+        role: "réviseur",
+        goal: "改善",
+      }),
+    ).toBe("Rôle: réviseur — 目标: 改善 🎯");
+  });
+
+  describe("output cleanup", () => {
+    it("collapses three or more newlines left by a dropped block to two", () => {
+      const template = "# A\n{{a}}\n\n{{#b}}# B\n{{b}}{{/b}}\n\n# C\n{{c}}";
+      expect(renderTemplate(template, { a: "1", b: "", c: "3" })).toBe(
+        "# A\n1\n\n# C\n3",
+      );
+    });
+
+    it("keeps a run of two newlines", () => {
+      expect(renderTemplate("a\n\nb", {})).toBe("a\n\nb");
+    });
+
+    it("trims whitespace from the start and end of the output", () => {
+      expect(
+        renderTemplate("\n\n{{#a}}# A\n{{a}}{{/a}}\n\n{{#b}}# B{{/b}}\n", {
+          a: "1",
+        }),
+      ).toBe("# A\n1");
+    });
+
+    it("drops a value's leading blank lines and trailing whitespace", () => {
+      expect(renderTemplate("[{{a}}]", { a: " \n\n  padded  \n\n" })).toBe(
+        "[  padded]",
+      );
+    });
+    it("keeps a value's first-line indentation", () => {
+      expect(
+        renderTemplate("[{{a}}]", { a: "\n    def f():\n        pass\n" }),
+      ).toBe("[    def f():\n        pass]");
+    });
+
+    it("normalizes CRLF line endings in the template and the values", () => {
+      expect(
+        renderTemplate("# A\r\n{{a}}\r\n\r\n# B\r\n{{b}}", {
+          a: "line 1\r\nline 2",
+          b: "x",
+        }),
+      ).toBe("# A\nline 1\nline 2\n\n# B\nx");
+    });
+  });
+});
+
+describe("validateTemplate", () => {
+  const keys = ["role", "task"];
+
+  it("returns no errors for a template that only uses known keys", () => {
+    expect(
+      validateTemplate("{{#role}}{{role}}{{/role}} {{task}}", keys),
+    ).toEqual([]);
+  });
+
+  it("reports each use of an unknown key with its offset", () => {
+    expect(
+      validateTemplate("{{role}} {{#format}}{{format}}{{/format}}", keys),
+    ).toEqual([
+      { message: 'Unknown key "format"', offset: 9 },
+      { message: 'Unknown key "format"', offset: 20 },
+    ]);
+  });
+
+  it("reports an unknown key inside a nested block", () => {
+    expect(
+      validateTemplate("{{#role}}{{#tone}}{{/tone}}{{/role}}", keys),
+    ).toEqual([{ message: 'Unknown key "tone"', offset: 9 }]);
+  });
+
+  it("reports syntax errors", () => {
+    expect(validateTemplate("{{#role}}", keys)).toEqual([
+      { message: "Block {{#role}} is never closed", offset: 0 },
+    ]);
   });
 });

@@ -1,6 +1,7 @@
 // Prompt templates: `{{key}}` inserts a section's value, and
 // `{{#key}} … {{/key}}` wraps text that is dropped when that value is blank.
-// `\{{` is a literal `{{`; every other backslash is ordinary text.
+// `\{{` is a literal `{{` and `\\{{` is a backslash followed by a tag; a
+// backslash anywhere else is ordinary text.
 
 export type TemplateNode =
   | { type: "text"; value: string }
@@ -76,13 +77,18 @@ export function parseTemplate(src: string): ParseResult {
       text += src.slice(pos);
       break;
     }
-    if (open > 0 && src[open - 1] === "\\") {
-      // `\{{` is a literal `{{`; the backslash is dropped.
-      text += src.slice(pos, open - 1) + OPEN;
+    // Backslashes right before `{{`: each pair is one literal backslash, and
+    // an odd one out makes the `{{` literal text instead of a tag.
+    let slashes = 0;
+    while (open - slashes > pos && src[open - slashes - 1] === "\\") {
+      slashes++;
+    }
+    text += src.slice(pos, open - slashes) + "\\".repeat(slashes >> 1);
+    if (slashes % 2 === 1) {
+      text += OPEN;
       pos = open + OPEN.length;
       continue;
     }
-    text += src.slice(pos, open);
     const { tag, next } = readTag(src, open);
     pos = next;
     if (tag.kind === "error") {
@@ -169,6 +175,11 @@ function isBlank(value: string | undefined): boolean {
   return value === undefined || value.trim() === "";
 }
 
+/** Drops leading blank lines and trailing whitespace, keeping the first line's indentation. */
+function trimValue(value: string): string {
+  return value.replace(/^(?:[ \t]*\n)+/, "").replace(/\s+$/, "");
+}
+
 function renderNodes(
   nodes: TemplateNode[],
   values: Record<string, string>,
@@ -180,7 +191,7 @@ function renderNodes(
         out += node.value;
         break;
       case "placeholder":
-        out += (values[node.key] ?? "").trim();
+        out += trimValue(values[node.key] ?? "");
         break;
       case "block":
         if (!isBlank(values[node.key])) {
@@ -194,9 +205,10 @@ function renderNodes(
 
 /**
  * Renders a template with the given section values. Line endings are
- * normalized to LF, values are trimmed, runs of three or more newlines
- * (typically left by a dropped block) collapse to two, and the result has no
- * leading or trailing whitespace.
+ * normalized to LF, each value loses its leading blank lines and trailing
+ * whitespace, runs of three or more newlines (typically left by a dropped
+ * block) collapse to two, and the result has no leading or trailing
+ * whitespace.
  *
  * @throws {TemplateSyntaxError} if the template does not parse.
  */
@@ -208,7 +220,9 @@ export function renderTemplate(
   if (!parsed.ok) {
     throw new TemplateSyntaxError(parsed.errors);
   }
-  const normalized: Record<string, string> = {};
+  // No prototype, so a key such as `constructor` or `__proto__` is looked up
+  // like any other and finds only what the caller supplied.
+  const normalized: Record<string, string> = Object.create(null);
   for (const [key, value] of Object.entries(values)) {
     normalized[key] = normalizeNewlines(value);
   }
