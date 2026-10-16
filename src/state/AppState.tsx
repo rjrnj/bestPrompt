@@ -1,6 +1,6 @@
 // The app's state provider. The reducer in reducer.ts is synchronous; this
-// is where the async work lives (loading frameworks, later saving), each
-// step dispatching a start, success or failure action.
+// is where the async work lives (loading frameworks, copying and saving),
+// each step dispatching a start, success or failure action.
 
 import {
   createContext,
@@ -14,13 +14,26 @@ import {
   type Dispatch,
   type ReactNode,
 } from "react";
-import { listFrameworks } from "../api";
+import { flushSync } from "react-dom";
+import { listFrameworks, savePromptEntry } from "../api";
 import type { Framework } from "../bindings/Framework";
-import { initialState, reducer, type Action, type State } from "./reducer";
+import type { NewPromptEntry } from "../bindings/NewPromptEntry";
+import { writeText } from "../clipboard";
+import {
+  initialState,
+  reducer,
+  type Action,
+  type State,
+  type Toast,
+} from "./reducer";
 
 /** The async operations components can start. */
 export type AppActions = {
   loadFrameworks: () => Promise<void>;
+  /** Copies the entry's prompt, then saves the entry unless already saved. */
+  copy: (entry: NewPromptEntry) => Promise<void>;
+  /** Saves the entry without copying, unless already saved. */
+  save: (entry: NewPromptEntry) => Promise<void>;
 };
 
 const StateContext = createContext<State | null>(null);
@@ -31,6 +44,22 @@ const ActionsContext = createContext<AppActions | null>(null);
 // contract breaks; it keeps the failure path from ever throwing itself.
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function toast(kind: Toast["kind"], message: string): Action {
+  return { type: "toastAdded", kind, message };
+}
+
+type SaveResult = "saved" | "unchanged" | { failed: string };
+
+/** The toast for a save's result, in the words of the button that caused it. */
+function report(
+  result: SaveResult,
+  words: { saved: string; unchanged: string; failed: string },
+): Action {
+  if (result === "saved") return toast("info", words.saved);
+  if (result === "unchanged") return toast("info", words.unchanged);
+  return toast("error", `${words.failed}: ${result.failed}`);
 }
 
 export function AppStateProvider({ children }: { children: ReactNode }) {
@@ -60,9 +89,94 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     void loadFrameworks();
   }, [loadFrameworks]);
 
+  // True from the click that starts a copy or save until it has finished, so
+  // the second click of a double click is ignored rather than saving twice.
+  // The buttons only disable once `saving` renders, which is too late.
+  const busy = useRef(false);
+  const { lastSaved } = state;
+
+  /** Saves `entry` unless it is the one last saved for its framework. */
+  const persist = useCallback(
+    async (entry: NewPromptEntry): Promise<SaveResult> => {
+      if (lastSaved[entry.frameworkId] === entry.renderedPrompt) {
+        return "unchanged";
+      }
+      dispatch({ type: "saveStarted" });
+      try {
+        await savePromptEntry(entry);
+      } catch (error) {
+        const message = messageOf(error);
+        dispatch({ type: "saveFailed", message });
+        return { failed: message };
+      }
+      // Rendered before `busy` is released, so the next click already runs
+      // with the new `lastSaved` instead of a stale copy of this callback.
+      flushSync(() =>
+        dispatch({
+          type: "saveSucceeded",
+          frameworkId: entry.frameworkId,
+          renderedPrompt: entry.renderedPrompt,
+        }),
+      );
+      return "saved";
+    },
+    [lastSaved],
+  );
+
+  const copy = useCallback(
+    async (entry: NewPromptEntry) => {
+      if (busy.current) return;
+      busy.current = true;
+      try {
+        try {
+          await writeText(entry.renderedPrompt);
+        } catch (error) {
+          dispatch(
+            toast(
+              "error",
+              `Couldn't copy to the clipboard: ${messageOf(error)}`,
+            ),
+          );
+          return;
+        }
+        const result = await persist(entry);
+        dispatch(
+          report(result, {
+            saved: "Copied and saved",
+            unchanged: "Copied",
+            failed: "Copied, but couldn't save",
+          }),
+        );
+      } finally {
+        busy.current = false;
+      }
+    },
+    [persist],
+  );
+
+  const save = useCallback(
+    async (entry: NewPromptEntry) => {
+      if (busy.current) return;
+      busy.current = true;
+      try {
+        const result = await persist(entry);
+        dispatch(
+          report(result, {
+            saved: "Saved",
+            unchanged: "Already saved",
+            failed: "Couldn't save",
+          }),
+        );
+      } finally {
+        busy.current = false;
+      }
+    },
+    [persist],
+  );
+
   const actions = useMemo<AppActions>(
-    () => ({ loadFrameworks }),
-    [loadFrameworks],
+    () => ({ loadFrameworks, copy, save }),
+    [loadFrameworks, copy, save],
   );
 
   return (

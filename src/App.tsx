@@ -1,5 +1,6 @@
 import { FrameworkPicker } from "./components/FrameworkPicker";
 import { LoadErrorPanel } from "./components/LoadErrorPanel";
+import { PromptActions } from "./components/PromptActions";
 import { PromptForm } from "./components/PromptForm";
 import { PromptPreview } from "./components/PromptPreview";
 import { Toaster } from "./components/Toaster";
@@ -52,7 +53,7 @@ function Shell() {
             <div className="-m-1 min-h-0 overflow-y-auto p-1">
               <PromptForm />
             </div>
-            <PromptPreview />
+            <PromptPreview actions={<PromptActions />} />
           </div>
         )}
       </main>
