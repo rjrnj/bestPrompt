@@ -101,6 +101,8 @@ fn the_command_list_agrees_across_the_manifest_the_capability_and_the_handler() 
     ))
     .map(str::to_owned)
     .collect();
+    // Plugin permissions (`core:default`, `clipboard-manager:allow-write-text`)
+    // carry the plugin's prefix, so only the app's own grants pass the filter.
     let granted: BTreeSet<String> = quoted(include_str!("../capabilities/default.json"))
         .filter_map(|permission| permission.strip_prefix("allow-"))
         .map(|command| command.replace('-', "_"))
@@ -132,6 +134,48 @@ fn a_window_the_capability_does_not_cover_cannot_call_commands() {
 
     let text = error.as_str().unwrap_or_default();
     assert!(text.contains("not allowed"), "{error}");
+}
+
+/// A main window in an app with only the clipboard plugin registered.
+fn main_window_with_clipboard() -> WebviewWindow<MockRuntime> {
+    let app = mock_builder()
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .build(tauri::generate_context!())
+        .unwrap();
+    WebviewWindowBuilder::new(&app, "main", WebviewUrl::default())
+        .build()
+        .unwrap()
+}
+
+/// Called without its `text` argument, `write_text` gets past the permission
+/// check and then fails on the missing argument, so this proves the grant
+/// without overwriting the real clipboard.
+#[test]
+fn the_webview_may_write_the_clipboard() {
+    let window = main_window_with_clipboard();
+
+    let error = invoke(&window, "plugin:clipboard-manager|write_text", json!({})).unwrap_err();
+
+    let text = error.as_str().unwrap_or_default();
+    assert!(text.contains("missing required key text"), "{error}");
+}
+
+/// Only writing is granted: a page that could read the clipboard could read
+/// whatever the user copied from anywhere else.
+#[test]
+fn the_webview_may_not_read_the_clipboard() {
+    let window = main_window_with_clipboard();
+
+    let error = invoke(&window, "plugin:clipboard-manager|read_text", json!({})).unwrap_err();
+
+    // Tauri also says "not allowed" for a command or plugin it cannot find,
+    // so the test checks the denial is for this command and not that.
+    let text = error.as_str().unwrap_or_default();
+    assert!(
+        text.contains("clipboard-manager.read_text not allowed"),
+        "{error}"
+    );
+    assert!(!text.contains("not found"), "{error}");
 }
 
 #[test]
