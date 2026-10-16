@@ -1,8 +1,8 @@
 import { useAppActions } from "../state/AppState";
 
 /**
- * Replaces the shell when the frameworks could not be loaded: nothing works
- * without them, so there is no point showing an empty picker.
+ * Fills the main area when the frameworks could not be loaded: nothing works
+ * without them, so there is no point showing an empty form.
  */
 export function LoadErrorPanel({ message }: { message: string }) {
   const { loadFrameworks } = useAppActions();

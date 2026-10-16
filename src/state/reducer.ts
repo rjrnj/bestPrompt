@@ -151,9 +151,9 @@ export function currentDraft(state: State): Record<string, string> {
 
 /**
  * The prompt for `framework` and a draft, or an empty string when the
- * template does not parse. Only a custom framework (Phase 4) could carry
- * such a template; the editor there reports the errors, and a selector
- * must not throw inside a render.
+ * template does not parse. Only a custom framework could carry such a
+ * template; its editor reports the errors, and a selector must not throw
+ * inside a render.
  */
 export function renderPrompt(
   framework: Framework,

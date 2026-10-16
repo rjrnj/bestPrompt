@@ -1,1 +1,8 @@
 @import "tailwindcss";
+
+/* Both themes are styled and the OS setting picks one (Tailwind's `dark:`
+   variant follows prefers-color-scheme). color-scheme makes native controls
+   and scrollbars follow too. An in-app toggle comes later. */
+:root {
+  color-scheme: light dark;
+}

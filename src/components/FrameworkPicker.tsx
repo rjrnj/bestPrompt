@@ -5,7 +5,7 @@ import { selectedFramework } from "../state/reducer";
 
 /**
  * The framework dropdown in the header, with the selected framework's
- * description beside it. Renders nothing until the frameworks are loaded;
+ * description on the line below it. Renders nothing until the frameworks are loaded;
  * the shell shows the loading or error view instead.
  */
 export function FrameworkPicker() {
@@ -18,7 +18,7 @@ export function FrameworkPicker() {
   const hasDescription = selected.description.trim() !== "";
 
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
       {/* A span, not a <label>: Radix's trigger ignores the synthetic click a
           label forwards once a mouse has been used, so a label would open the
           list only sometimes. aria-labelledby gives the same accessible name. */}
@@ -35,7 +35,7 @@ export function FrameworkPicker() {
         <Select.Trigger
           aria-labelledby={labelId}
           aria-describedby={hasDescription ? descriptionId : undefined}
-          className="inline-flex min-w-40 items-center justify-between gap-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+          className="inline-flex min-w-40 items-center justify-between gap-2 rounded-md border border-slate-400 bg-white px-3 py-1.5 text-sm text-slate-900 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
         >
           <Select.Value />
           <Select.Icon>
@@ -44,7 +44,7 @@ export function FrameworkPicker() {
         </Select.Trigger>
         <Select.Portal>
           {/* In popper mode Radix leaves the height to us; without the cap a
-              long list (custom frameworks, Phase 4) would run off the window. */}
+              long list (once custom frameworks exist) would run off the window. */}
           <Select.Content
             position="popper"
             sideOffset={4}
@@ -70,7 +70,7 @@ export function FrameworkPicker() {
       {hasDescription && (
         <p
           id={descriptionId}
-          className="text-sm text-slate-600 dark:text-slate-400"
+          className="basis-full text-sm text-slate-600 dark:text-slate-400"
         >
           {selected.description}
         </p>

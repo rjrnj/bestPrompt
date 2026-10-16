@@ -33,10 +33,12 @@ export function PromptPreview({ actions }: Props) {
   if (framework === null) return null;
   const blank = isBlank(state);
 
+  // The <pre> is focusable because it scrolls on its own: WebKitGTK does not
+  // make scrollable containers keyboard-reachable the way WebView2 does.
   return (
     <section
       aria-labelledby={titleId}
-      className="flex h-full flex-col rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900"
+      className="flex h-full min-h-0 flex-col rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900"
     >
       <div className="flex items-center justify-between gap-2 px-4 py-2">
         <h2
@@ -54,7 +56,8 @@ export function PromptPreview({ actions }: Props) {
       ) : (
         <pre
           data-testid="rendered-prompt"
-          className="min-h-0 flex-1 overflow-auto px-4 pb-4 font-mono text-sm wrap-break-word whitespace-pre-wrap text-slate-900 dark:text-slate-100"
+          tabIndex={0}
+          className="min-h-0 flex-1 overflow-auto px-4 pb-4 font-mono text-sm wrap-break-word whitespace-pre-wrap text-slate-900 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-500 dark:text-slate-100"
         >
           {prompt}
         </pre>
