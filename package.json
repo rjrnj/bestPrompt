@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.2.0",
+    "@radix-ui/react-select": "^2.4.1",
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/api": "^2",
     "react": "^19.1.0",
