@@ -36,6 +36,9 @@ export type Action =
   | { type: "toastAdded"; kind: Toast["kind"]; message: string }
   | { type: "toastDismissed"; id: number };
 
+/** The most toasts shown at once; adding another drops the oldest. */
+export const MAX_TOASTS = 3;
+
 export const initialState: State = {
   frameworks: { status: "loading" },
   selectedId: null,
@@ -100,9 +103,15 @@ export function reducer(state: State, action: Action): State {
         kind: action.kind,
         message: action.message,
       };
+      // A repeat replaces the one already showing (the new id restarts its
+      // timer and announces it again), and the stack is capped so repeated
+      // clicks cannot grow it over the preview.
+      const others = state.toasts.filter(
+        (t) => t.kind !== toast.kind || t.message !== toast.message,
+      );
       return {
         ...state,
-        toasts: [...state.toasts, toast],
+        toasts: [...others, toast].slice(-MAX_TOASTS),
         nextToastId: state.nextToastId + 1,
       };
     }

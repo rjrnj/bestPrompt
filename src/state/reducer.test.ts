@@ -321,4 +321,33 @@ describe("toasts", () => {
     );
     expect(three.toasts.map((t) => t.id)).toEqual([2, 3]);
   });
+
+  it("keeps only the three newest toasts", () => {
+    const state = run(
+      ["one", "two", "three", "four"].map((message) => ({
+        type: "toastAdded" as const,
+        kind: "info" as const,
+        message,
+      })),
+    );
+
+    expect(state.toasts.map((t) => t.message)).toEqual([
+      "two",
+      "three",
+      "four",
+    ]);
+  });
+
+  it("replaces a toast with the same message by a new one at the end", () => {
+    const state = run([
+      { type: "toastAdded", kind: "info", message: "Copied" },
+      { type: "toastAdded", kind: "error", message: "Nope" },
+      { type: "toastAdded", kind: "info", message: "Copied" },
+    ]);
+
+    expect(state.toasts).toEqual([
+      { id: 2, kind: "error", message: "Nope" },
+      { id: 3, kind: "info", message: "Copied" },
+    ]);
+  });
 });

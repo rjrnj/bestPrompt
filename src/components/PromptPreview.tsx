@@ -1,11 +1,5 @@
-import { useId, useMemo, type ReactNode } from "react";
-import { useAppState } from "../state/AppState";
-import {
-  draftOf,
-  isBlank,
-  renderPrompt,
-  selectedFramework,
-} from "../state/reducer";
+import { useId, type ReactNode } from "react";
+import { useCurrentPrompt } from "../state/useCurrentPrompt";
 
 type Props = {
   /** Buttons for the header row, beside the title (Copy, Save, Clear). */
@@ -17,21 +11,10 @@ type Props = {
  * draft on every keystroke. Renders nothing until a framework is selected.
  */
 export function PromptPreview({ actions }: Props) {
-  const state = useAppState();
   const titleId = useId();
-  const framework = selectedFramework(state);
-  const stored = framework === null ? undefined : state.drafts[framework.id];
-  // Memoized on what the prompt depends on, not on the whole state, so a
-  // toast or a save flag doesn't re-render the template.
-  const prompt = useMemo(
-    () =>
-      framework === null
-        ? ""
-        : renderPrompt(framework, draftOf(framework, stored)),
-    [framework, stored],
-  );
-  if (framework === null) return null;
-  const blank = isBlank(state);
+  const current = useCurrentPrompt();
+  if (current === null) return null;
+  const { prompt, hasPrompt } = current;
 
   // The <pre> is focusable because it scrolls on its own: WebKitGTK does not
   // make scrollable containers keyboard-reachable the way WebView2 does.
@@ -49,7 +32,7 @@ export function PromptPreview({ actions }: Props) {
         </h2>
         <div className="flex items-center gap-2">{actions}</div>
       </div>
-      {blank || prompt === "" ? (
+      {!hasPrompt ? (
         <p className="px-4 pb-4 text-sm text-slate-500 dark:text-slate-400">
           Fill in a section to see the prompt.
         </p>
