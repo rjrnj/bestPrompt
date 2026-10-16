@@ -113,13 +113,40 @@ describe("App", () => {
     expect(writeText).toHaveBeenCalledWith(
       "# Objective\nWrite a README section.",
     );
-    const notifications = screen.getByRole("region", {
+    // The toast is added once the save resolves, after the click, and Radix
+    // portals it into the viewport a render later still. The Toaster mounts
+    // with the first toast, so the region is awaited too.
+    const notifications = await screen.findByRole("region", {
       name: /notifications/i,
     });
-    // The toast is added once the save resolves, after the click, and Radix
-    // portals it into the viewport a render later still.
     expect(
       await within(notifications).findByText("Copied and saved"),
     ).toBeInTheDocument();
+  });
+
+  it("shows an error toast and keeps the draft when the save fails", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue(frameworks);
+    vi.mocked(savePromptEntry).mockRejectedValue(
+      new ApiError("database", "disk full"),
+    );
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Framework" });
+    const objective = screen.getByRole("textbox", { name: "Objective" });
+    await userEvent.type(objective, "Write a README section.");
+
+    const preview = screen.getByRole("region", { name: "Preview" });
+    const save = within(preview).getByRole("button", { name: "Save" });
+    await userEvent.click(save);
+
+    // The Toaster mounts with the first toast, so the region is awaited too.
+    const notifications = await screen.findByRole("region", {
+      name: /notifications/i,
+    });
+    expect(
+      await within(notifications).findByText("Couldn't save: disk full"),
+    ).toBeInTheDocument();
+    expect(objective).toHaveValue("Write a README section.");
+    expect(save).not.toHaveAttribute("aria-disabled", "true");
+    expect(writeText).not.toHaveBeenCalled();
   });
 });
