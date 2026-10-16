@@ -116,8 +116,10 @@ describe("App", () => {
     const notifications = screen.getByRole("region", {
       name: /notifications/i,
     });
+    // The toast is added once the save resolves, after the click, and Radix
+    // portals it into the viewport a render later still.
     expect(
-      within(notifications).getByText("Copied and saved"),
+      await within(notifications).findByText("Copied and saved"),
     ).toBeInTheDocument();
   });
 });
