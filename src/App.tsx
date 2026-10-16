@@ -2,12 +2,14 @@ import { FrameworkPicker } from "./components/FrameworkPicker";
 import { LoadErrorPanel } from "./components/LoadErrorPanel";
 import { PromptForm } from "./components/PromptForm";
 import { PromptPreview } from "./components/PromptPreview";
+import { Toaster } from "./components/Toaster";
 import { AppStateProvider, useAppState } from "./state/AppState";
 
 function App() {
   return (
     <AppStateProvider>
       <Shell />
+      <Toaster />
     </AppStateProvider>
   );
 }
