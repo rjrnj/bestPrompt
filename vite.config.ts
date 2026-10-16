@@ -12,6 +12,7 @@ export default defineConfig(() => ({
     // TODO: upgrade Node to >=24.15 (update .nvmrc and engines in package.json),
     // then bump jsdom to the latest major (30.x needs it; 29.x is pinned by engine-strict).
     environment: "jsdom",
+    setupFiles: ["./src/test/setup.ts"],
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

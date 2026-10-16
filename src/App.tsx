@@ -1,80 +1,60 @@
-import { useEffect, useState } from "react";
-import { RadixSmokeTest } from "./RadixSmokeTest";
-import {
-  ApiError,
-  getPromptEntry,
-  listFrameworks,
-  savePromptEntry,
-} from "./api";
-import type { Framework } from "./bindings/Framework";
+import { FrameworkPicker } from "./components/FrameworkPicker";
+import { LoadErrorPanel } from "./components/LoadErrorPanel";
+import { PromptForm } from "./components/PromptForm";
+import { PromptPreview } from "./components/PromptPreview";
+import { AppStateProvider, useAppState } from "./state/AppState";
 
-function describeError(error: unknown): string {
-  return error instanceof ApiError
-    ? `${error.kind}: ${error.message}`
-    : String(error);
+function App() {
+  return (
+    <AppStateProvider>
+      <Shell />
+    </AppStateProvider>
+  );
 }
 
-// Throwaway: lists the built-ins and round-trips one prompt entry, to prove
-// the typed IPC path end to end. The real prompt-building UI replaces it.
-function App() {
-  const [frameworks, setFrameworks] = useState<Framework[]>([]);
-  const [status, setStatus] = useState("Loading frameworks…");
-
-  useEffect(() => {
-    listFrameworks()
-      .then((loaded) => {
-        setFrameworks(loaded);
-        setStatus(`${loaded.length} frameworks loaded.`);
-      })
-      .catch((error: unknown) => setStatus(describeError(error)));
-  }, []);
-
-  async function saveTestEntry() {
-    const framework = frameworks[0];
-    if (!framework) return;
-    try {
-      const saved = await savePromptEntry({
-        frameworkId: framework.id,
-        sectionValues: Object.fromEntries(
-          framework.sections.map((section) => [
-            section.key,
-            `test ${section.key}`,
-          ]),
-        ),
-        renderedPrompt: `Test entry for ${framework.name}`,
-      });
-      const read = await getPromptEntry(saved.id);
-      setStatus(
-        `Saved and read back entry ${read.id} (${read.frameworkSnapshot.name}).`,
-      );
-    } catch (error) {
-      setStatus(describeError(error));
-    }
-  }
-
+/**
+ * The layout: a header with the app name and the framework picker, then the
+ * form and the live preview side by side. The header has room for the
+ * history navigation and the settings that come later; the terminal pane
+ * will go under the two panes.
+ */
+function Shell() {
+  const { frameworks } = useAppState();
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-slate-900">
-      <h1 className="text-4xl font-bold text-sky-400">bestPrompt</h1>
-      <ul className="text-slate-200" data-testid="frameworks">
-        {frameworks.map((framework) => (
-          <li key={framework.id}>
-            {framework.name} ({framework.sections.length} sections)
-          </li>
-        ))}
-      </ul>
-      <button
-        type="button"
-        className="rounded bg-sky-600 px-4 py-2 text-white"
-        onClick={saveTestEntry}
-        disabled={frameworks.length === 0}
-      >
-        Save a test entry
-      </button>
-      <p className="text-slate-400" data-testid="status">
-        {status}
-      </p>
-      <RadixSmokeTest />
-    </main>
+    <div className="flex h-screen flex-col bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+      <header className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+        <h1 className="text-lg font-semibold text-sky-700 dark:text-sky-400">
+          bestPrompt
+        </h1>
+        <FrameworkPicker />
+      </header>
+      <main className="min-h-0 flex-1">
+        {frameworks.status === "loading" && (
+          <p
+            role="status"
+            className="p-6 text-sm text-slate-500 dark:text-slate-400"
+          >
+            Loading frameworks…
+          </p>
+        )}
+        {frameworks.status === "error" && (
+          <LoadErrorPanel message={frameworks.message} />
+        )}
+        {frameworks.status === "ready" && (
+          <div className="grid h-full grid-cols-2 grid-rows-[minmax(0,1fr)] gap-4 p-4">
+            {/* Each pane scrolls on its own, so the preview stays in view
+                however long the form gets. The explicit row lets a pane shrink
+                below its content instead of stretching the row. The form pane
+                is padded inside its scroll container so the textareas' focus
+                rings are not clipped at its edges. */}
+            <div className="-m-1 min-h-0 overflow-y-auto p-1">
+              <PromptForm />
+            </div>
+            <PromptPreview />
+          </div>
+        )}
+      </main>
+    </div>
   );
 }
 
