@@ -15,7 +15,7 @@ export function FrameworkPicker() {
   const descriptionId = useId();
   const selected = selectedFramework(state);
   if (state.frameworks.status !== "ready" || selected === null) return null;
-  const hasDescription = selected.description !== "";
+  const hasDescription = selected.description.trim() !== "";
 
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
