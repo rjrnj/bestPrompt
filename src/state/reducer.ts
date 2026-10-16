@@ -126,11 +126,12 @@ export function selectedFramework(state: State): Framework | null {
   return loadedFrameworks(state).find((f) => f.id === state.selectedId) ?? null;
 }
 
-/** The selected framework's draft with every section present, empty when unset. */
-export function currentDraft(state: State): Record<string, string> {
-  const framework = selectedFramework(state);
-  if (framework === null) return {};
-  const draft = state.drafts[framework.id] ?? {};
+/** `framework`'s draft with every section present, empty when unset. */
+export function draftOf(
+  framework: Framework,
+  stored: Record<string, string> | undefined,
+): Record<string, string> {
+  const draft = stored ?? {};
   // Own-property check: a section key such as `constructor` must not read
   // Object.prototype through a plain object.
   return Object.fromEntries(
@@ -141,21 +142,36 @@ export function currentDraft(state: State): Record<string, string> {
   );
 }
 
-/**
- * The prompt for the selected framework and its draft, or an empty string
- * when the template does not parse. Only a custom framework (Phase 4) could
- * carry such a template; the editor there reports the errors, and a
- * selector must not throw inside a render.
- */
-export function renderedPrompt(state: State): string {
+/** The selected framework's draft with every section present, empty when unset. */
+export function currentDraft(state: State): Record<string, string> {
   const framework = selectedFramework(state);
-  if (framework === null) return "";
+  if (framework === null) return {};
+  return draftOf(framework, state.drafts[framework.id]);
+}
+
+/**
+ * The prompt for `framework` and a draft, or an empty string when the
+ * template does not parse. Only a custom framework (Phase 4) could carry
+ * such a template; the editor there reports the errors, and a selector
+ * must not throw inside a render.
+ */
+export function renderPrompt(
+  framework: Framework,
+  draft: Record<string, string>,
+): string {
   try {
-    return renderTemplate(framework.template, currentDraft(state));
+    return renderTemplate(framework.template, draft);
   } catch (error) {
     if (error instanceof TemplateSyntaxError) return "";
     throw error;
   }
+}
+
+/** The prompt for the selected framework and its draft; see `renderPrompt`. */
+export function renderedPrompt(state: State): string {
+  const framework = selectedFramework(state);
+  if (framework === null) return "";
+  return renderPrompt(framework, currentDraft(state));
 }
 
 /** True while no section has visible text, so there is nothing to copy or save. */
