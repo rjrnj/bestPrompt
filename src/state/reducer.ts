@@ -5,6 +5,7 @@
 import type { Framework } from "../bindings/Framework";
 import type { Project } from "../bindings/Project";
 import type { PromptEntry } from "../bindings/PromptEntry";
+import { hasOwn } from "../hasOwn";
 import { renderTemplate, TemplateSyntaxError } from "../template";
 
 export type Toast = { id: number; kind: "info" | "error"; message: string };
@@ -54,6 +55,7 @@ export type Action =
   | { type: "saveStarted" }
   | { type: "saveSucceeded"; frameworkId: string; renderedPrompt: string }
   | { type: "saveFailed"; message: string }
+  | { type: "entryDeleted"; frameworkId: string | null; renderedPrompt: string }
   | { type: "toastAdded"; kind: Toast["kind"]; message: string }
   | { type: "toastDismissed"; id: number };
 
@@ -215,6 +217,21 @@ export function reducer(state: State, action: Action): State {
       };
     case "saveFailed":
       return { ...state, saving: false };
+    case "entryDeleted": {
+      // Once the entry last saved for a framework is gone, saving that
+      // prompt again stores it again rather than reporting it as saved.
+      const id = action.frameworkId;
+      if (
+        id === null ||
+        !hasOwn(state.lastSaved, id) ||
+        state.lastSaved[id] !== action.renderedPrompt
+      ) {
+        return state;
+      }
+      const lastSaved = { ...state.lastSaved };
+      delete lastSaved[id];
+      return { ...state, lastSaved };
+    }
     case "toastAdded": {
       const toast = {
         id: state.nextToastId,
@@ -239,10 +256,6 @@ export function reducer(state: State, action: Action): State {
         toasts: state.toasts.filter((t) => t.id !== action.id),
       };
   }
-}
-
-function hasOwn(object: object, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(object, key);
 }
 
 function loadedProjects(state: State): Project[] {

@@ -1,13 +1,15 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import builtins from "../src-tauri/builtins/frameworks.json";
 import App from "./App";
 import {
   ApiError,
+  deletePromptEntry,
   latestEntryProject,
   listFrameworks,
   listProjects,
+  listPromptEntries,
   savePromptEntry,
 } from "./api";
 import type { Framework } from "./bindings/Framework";
@@ -21,6 +23,8 @@ vi.mock("./api", async (importOriginal) => ({
   savePromptEntry: vi.fn(),
   listProjects: vi.fn(),
   latestEntryProject: vi.fn(),
+  listPromptEntries: vi.fn(),
+  deletePromptEntry: vi.fn(),
 }));
 vi.mock("./clipboard", () => ({ writeText: vi.fn() }));
 
@@ -40,6 +44,7 @@ const frameworks: Framework[] = builtins.map((f) => ({
 beforeEach(() => {
   vi.mocked(listProjects).mockResolvedValue([]);
   vi.mocked(latestEntryProject).mockResolvedValue(null);
+  vi.mocked(listPromptEntries).mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -96,7 +101,9 @@ describe("App", () => {
 
     await user.click(screen.getByRole("tab", { name: "History" }));
 
-    expect(screen.queryByRole("combobox")).toBeNull();
+    expect(
+      within(screen.getByRole("banner")).queryByRole("combobox"),
+    ).toBeNull();
     expect(screen.queryByText(builtins[0].description)).toBeNull();
     expect(screen.queryByRole("region", { name: "Preview" })).toBeNull();
     expect(screen.getByRole("tabpanel", { name: "History" })).toBeVisible();
@@ -168,6 +175,161 @@ describe("App", () => {
     expect(
       await within(notifications).findByText("Copied and saved"),
     ).toBeInTheDocument();
+  });
+
+  it("copying_the_opened_prompt_unchanged_saves_nothing", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue(frameworks);
+    vi.mocked(writeText).mockResolvedValue();
+    const costar = frameworks[0];
+    const entry: PromptEntry = {
+      id: "e1",
+      frameworkId: costar.id,
+      frameworkSnapshot: {
+        name: costar.name,
+        template: costar.template,
+        summaryKey: costar.summaryKey,
+        sections: costar.sections,
+      },
+      sectionValues: { objective: "Write a README section." },
+      renderedPrompt: "# Objective\nWrite a README section.",
+      title: null,
+      projectId: null,
+      createdAt: 1,
+    };
+    vi.mocked(listPromptEntries).mockResolvedValue([entry]);
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Framework" });
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("tab", { name: "History" }));
+    await user.click(
+      await screen.findByRole("button", { name: /Write a README section/ }),
+    );
+    await user.click(screen.getByRole("button", { name: "Open in Builder" }));
+
+    expect(
+      await screen.findByRole("textbox", { name: "Objective" }),
+    ).toHaveValue("Write a README section.");
+    const preview = screen.getByRole("region", { name: "Preview" });
+    await user.click(within(preview).getByRole("button", { name: "Copy" }));
+
+    expect(writeText).toHaveBeenCalledWith(entry.renderedPrompt);
+    const notifications = await screen.findByRole("region", {
+      name: /notifications/i,
+    });
+    expect(
+      await within(notifications).findByText("Copied"),
+    ).toBeInTheDocument();
+    expect(savePromptEntry).not.toHaveBeenCalled();
+  });
+
+  it("opening a saved prompt puts focus in the Builder's title", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue(frameworks);
+    const costar = frameworks[0];
+    const entry: PromptEntry = {
+      id: "e1",
+      frameworkId: costar.id,
+      frameworkSnapshot: {
+        name: costar.name,
+        template: costar.template,
+        summaryKey: costar.summaryKey,
+        sections: costar.sections,
+      },
+      sectionValues: { objective: "Write a README section." },
+      renderedPrompt: "# Objective\nWrite a README section.",
+      title: "Readme",
+      projectId: null,
+      createdAt: 1,
+    };
+    vi.mocked(listPromptEntries).mockResolvedValue([entry]);
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Framework" });
+    const user = userEvent.setup();
+    const openFromHistory = async () => {
+      await user.click(screen.getByRole("tab", { name: "History" }));
+      await user.click(await screen.findByRole("button", { name: /^Readme/ }));
+      await user.click(screen.getByRole("button", { name: "Open in Builder" }));
+    };
+    /** The title has focus, and still has it once pending focus moves ran. */
+    const expectTitleFocused = async () => {
+      const title = screen.getByRole("textbox", { name: "Title" });
+      await waitFor(() => expect(title).toHaveFocus());
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(title).toHaveFocus();
+    };
+
+    await openFromHistory();
+    await expectTitleFocused();
+
+    // The draft now has text, so opening again asks first.
+    await openFromHistory();
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Open",
+      }),
+    );
+    await expectTitleFocused();
+  });
+
+  it("saves again after the saved entry is deleted in History", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue(frameworks);
+    vi.mocked(deletePromptEntry).mockResolvedValue();
+    const costar = frameworks[0];
+    vi.mocked(savePromptEntry).mockImplementation(
+      async (entry) =>
+        ({
+          ...entry,
+          id: "entry",
+          frameworkSnapshot: {
+            name: costar.name,
+            template: costar.template,
+            summaryKey: costar.summaryKey,
+            sections: costar.sections,
+          },
+          createdAt: 1,
+        }) satisfies PromptEntry,
+    );
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Framework" });
+    const user = userEvent.setup();
+    await user.type(
+      screen.getByRole("textbox", { name: "Objective" }),
+      "Write a README section.",
+    );
+    const save = () =>
+      user.click(
+        within(screen.getByRole("region", { name: "Preview" })).getByRole(
+          "button",
+          { name: "Save" },
+        ),
+      );
+    await save();
+    const notifications = await screen.findByRole("region", {
+      name: /notifications/i,
+    });
+    expect(await within(notifications).findByText("Saved")).toBeInTheDocument();
+    const saved = await vi.mocked(savePromptEntry).mock.results[0].value;
+    vi.mocked(listPromptEntries).mockResolvedValue([saved]);
+
+    await user.click(screen.getByRole("tab", { name: "History" }));
+    await user.click(
+      await screen.findByRole("button", { name: /Write a README section/ }),
+    );
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+    await waitFor(() =>
+      expect(deletePromptEntry).toHaveBeenCalledWith("entry"),
+    );
+    await user.click(screen.getByRole("tab", { name: "Builder" }));
+    await save();
+
+    await waitFor(() => expect(savePromptEntry).toHaveBeenCalledTimes(2));
+    expect(within(notifications).queryByText("Already saved")).toBeNull();
+    expect(within(notifications).getAllByText("Saved")).not.toHaveLength(0);
   });
 
   it("shows an error toast and keeps the draft when the save fails", async () => {
