@@ -35,7 +35,7 @@ export function HistoryList() {
   const dispatch = useAppDispatch();
   const { state, setFilters, select, refresh, showMore, canShowMore } =
     useHistory();
-  const { entries, status, error, filters, selectedId } = state;
+  const { entries, status, error, appending, filters, selectedId } = state;
 
   const frameworkItems = frameworks.status === "ready" ? frameworks.items : [];
   const projectItems = projects.status === "ready" ? projects.items : [];
@@ -46,15 +46,18 @@ export function HistoryList() {
     filters.project.kind !== "any" ||
     filters.frameworkId !== null;
 
+  // A failed first page leaves the rows of the previous query or visit,
+  // which may not match the filters now shown, so they are not listed.
+  if (status === "error" && !appending) {
+    return (
+      <LoadError
+        text="Couldn't load the saved prompts."
+        onRetry={() => void refresh()}
+      />
+    );
+  }
+
   if (entries.length === 0) {
-    if (status === "error") {
-      return (
-        <LoadError
-          text="Couldn't load the saved prompts."
-          onRetry={() => void refresh()}
-        />
-      );
-    }
     if (status !== "ready") return <p className={message}>Loading…</p>;
     if (!filtered) {
       return (
@@ -130,7 +133,7 @@ export function HistoryList() {
       {status === "error" && (
         <LoadError
           text={`Couldn't load more: ${error}`}
-          onRetry={() => void refresh()}
+          onRetry={() => void showMore()}
         />
       )}
       {canShowMore && (

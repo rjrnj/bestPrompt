@@ -41,7 +41,7 @@ export type History = {
   setFilters: (changes: Partial<HistoryFilters>) => void;
   /** Whether Show more can load anything: the list is ready and has more. */
   canShowMore: boolean;
-  /** Loads the next page, when `canShowMore`. */
+  /** Loads the next page, when `canShowMore` or to retry a failed Show more. */
   showMore: () => Promise<void>;
   select: (id: string | null) => void;
   /** Reloads the first page with the current filters. */
@@ -97,7 +97,7 @@ export function HistoryProvider({ children }: { children: ReactNode }) {
   const load = useCallback(
     async (offset: number, append: boolean, limit = PAGE_SIZE) => {
       const requestId = ++requestCount.current;
-      dispatch({ type: "pageRequested", requestId });
+      dispatch({ type: "pageRequested", requestId, append });
       let entries: PromptEntry[];
       try {
         entries = await listPromptEntries(query, limit, offset);
@@ -117,9 +117,12 @@ export function HistoryProvider({ children }: { children: ReactNode }) {
   // mix two queries.
   const { offset } = state;
   const canShowMore = state.status === "ready" && state.hasMore;
+  // A failed Show more left the list as it was, so it can be run again.
+  const canRetryMore =
+    state.status === "error" && state.appending && state.hasMore;
   const showMore = useCallback(async () => {
-    if (canShowMore) await load(offset, true);
-  }, [load, offset, canShowMore]);
+    if (canShowMore || canRetryMore) await load(offset, true);
+  }, [load, offset, canShowMore, canRetryMore]);
 
   // How many rows are listed, read when the tab is shown again.
   const listed = useRef(0);
