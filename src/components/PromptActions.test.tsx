@@ -1,7 +1,12 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { listFrameworks, savePromptEntry } from "../api";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  latestEntryProject,
+  listFrameworks,
+  listProjects,
+  savePromptEntry,
+} from "../api";
 import type { Framework } from "../bindings/Framework";
 import type { PromptEntry } from "../bindings/PromptEntry";
 import { writeText } from "../clipboard";
@@ -14,6 +19,8 @@ vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   listFrameworks: vi.fn(),
   savePromptEntry: vi.fn(),
+  listProjects: vi.fn(),
+  latestEntryProject: vi.fn(),
 }));
 vi.mock("../clipboard", () => ({ writeText: vi.fn() }));
 
@@ -72,6 +79,11 @@ function stored(): PromptEntry {
     createdAt: 1,
   };
 }
+
+beforeEach(() => {
+  vi.mocked(listProjects).mockResolvedValue([]);
+  vi.mocked(latestEntryProject).mockResolvedValue(null);
+});
 
 afterEach(() => {
   vi.resetAllMocks();
@@ -161,6 +173,23 @@ describe("PromptActions", () => {
       title: null,
       projectId: null,
     });
+  });
+
+  it("saves under the selected project", async () => {
+    vi.mocked(savePromptEntry).mockResolvedValue(stored());
+    vi.mocked(listProjects).mockResolvedValue([
+      { id: "p-api", name: "api", createdAt: 1, updatedAt: 1 },
+    ]);
+    vi.mocked(latestEntryProject).mockResolvedValue("p-api");
+    const { save, role } = await renderActions();
+    await userEvent.type(role, "a reviewer");
+    await vi.waitFor(() => expect(latestEntryProject).toHaveBeenCalled());
+
+    await userEvent.click(save);
+
+    expect(savePromptEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ title: null, projectId: "p-api" }),
+    );
   });
 
   it("saves without copying", async () => {

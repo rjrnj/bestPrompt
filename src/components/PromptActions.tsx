@@ -1,4 +1,5 @@
 import { useAppActions, useAppDispatch, useAppState } from "../state/AppState";
+import { currentTitle } from "../state/reducer";
 import { useCurrentPrompt } from "../state/useCurrentPrompt";
 
 // Unavailable buttons are marked with aria-disabled, not disabled, and
@@ -28,12 +29,13 @@ export function PromptActions() {
   const canClear = Object.values(draft).some((value) => value !== "");
   // The rendered prompt goes in verbatim: the duplicate check compares it
   // with the one last saved as an exact string.
+  const title = currentTitle(state);
   const entry = {
     frameworkId: framework.id,
     sectionValues: draft,
     renderedPrompt: prompt,
-    title: null,
-    projectId: null,
+    title: title.trim() === "" ? null : title,
+    projectId: state.selectedProjectId,
   };
 
   return (

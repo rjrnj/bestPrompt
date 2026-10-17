@@ -516,6 +516,40 @@ describe("projects", () => {
     expect(state.selectedProjectId).toBe("p-web");
   });
 
+  it("leaves a project list that has not loaded alone on rename and delete", () => {
+    const renamed = reducer(initialState, {
+      type: "projectRenamed",
+      project: api,
+    });
+    const deleted = reducer(initialState, {
+      type: "projectDeleted",
+      id: "p-api",
+    });
+
+    expect(renamed.projects).toEqual({ status: "loading" });
+    expect(deleted.projects).toEqual({ status: "loading" });
+  });
+
+  it("still clears a matching selection when delete arrives before the list loads", () => {
+    const state = run([
+      { type: "projectSelected", id: "p-api" },
+      { type: "projectDeleted", id: "p-api" },
+    ]);
+
+    expect(state.projects).toEqual({ status: "loading" });
+    expect(state.selectedProjectId).toBeNull();
+  });
+
+  it("selects a created project without touching a list that has not loaded", () => {
+    const state = reducer(initialState, {
+      type: "projectCreated",
+      project: api,
+    });
+
+    expect(state.projects).toEqual({ status: "loading" });
+    expect(state.selectedProjectId).toBe("p-api");
+  });
+
   it("drops a selection that no longer exists when projects are reloaded", () => {
     const state = run(
       [

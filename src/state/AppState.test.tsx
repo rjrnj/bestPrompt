@@ -1,8 +1,19 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, listFrameworks, savePromptEntry } from "../api";
+import { useState } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  ApiError,
+  createProject,
+  deleteProject,
+  latestEntryProject,
+  listFrameworks,
+  listProjects,
+  renameProject,
+  savePromptEntry,
+} from "../api";
 import type { Framework } from "../bindings/Framework";
+import type { Project } from "../bindings/Project";
 import type { PromptEntry } from "../bindings/PromptEntry";
 import { writeText } from "../clipboard";
 import {
@@ -11,13 +22,18 @@ import {
   useAppDispatch,
   useAppState,
 } from "./AppState";
-import { currentDraft, renderedPrompt } from "./reducer";
+import { currentDraft, currentTitle, renderedPrompt } from "./reducer";
 
 // Only the commands are mocked; ApiError stays the real class.
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   listFrameworks: vi.fn(),
   savePromptEntry: vi.fn(),
+  listProjects: vi.fn(),
+  createProject: vi.fn(),
+  renameProject: vi.fn(),
+  deleteProject: vi.fn(),
+  latestEntryProject: vi.fn(),
 }));
 vi.mock("../clipboard", () => ({ writeText: vi.fn() }));
 
@@ -33,19 +49,30 @@ const rtf: Framework = {
   updatedAt: 1,
 };
 
+function project(id: string, name: string): Project {
+  return { id, name, createdAt: 1, updatedAt: 1 };
+}
+
+const api = project("p-api", "api");
+const web = project("p-web", "web");
+
 /** Shows the state the hooks expose and offers the actions as buttons. */
 function Probe() {
+  const [result, setResult] = useState("none");
   const state = useAppState();
   const dispatch = useAppDispatch();
-  const { loadFrameworks, copy, save } = useAppActions();
+  const actions = useAppActions();
+  const { loadFrameworks, copy, save } = actions;
   const frameworks = state.frameworks;
   const entry = () => ({
     frameworkId: state.selectedId ?? "",
     sectionValues: currentDraft(state),
     renderedPrompt: renderedPrompt(state),
-    title: null,
-    projectId: null,
+    title: currentTitle(state).trim() === "" ? null : currentTitle(state),
+    projectId: state.selectedProjectId,
   });
+  const outcome = (promise: Promise<boolean>) =>
+    void promise.then((ok) => setResult(String(ok)));
   return (
     <div>
       <p>status: {frameworks.status}</p>
@@ -53,6 +80,15 @@ function Probe() {
       <p>selected: {state.selectedId ?? "none"}</p>
       <p>role: {currentDraft(state).role ?? ""}</p>
       <p>saving: {String(state.saving)}</p>
+      <p>project: {state.selectedProjectId ?? "none"}</p>
+      <p>projects: {state.projects.status}</p>
+      <p>
+        names:{" "}
+        {state.projects.status === "ready"
+          ? state.projects.items.map((p) => p.name).join(",")
+          : ""}
+      </p>
+      <p>result: {result}</p>
       <ul aria-label="toasts">
         {state.toasts.map((t) => (
           <li key={t.id}>
@@ -69,6 +105,30 @@ function Probe() {
         }
       >
         type
+      </button>
+      <button onClick={() => outcome(actions.createProject("  new  "))}>
+        create
+      </button>
+      <button
+        onClick={() => outcome(actions.renameProject("p-api", "renamed"))}
+      >
+        rename
+      </button>
+      <button onClick={() => outcome(actions.deleteProject("p-api"))}>
+        remove
+      </button>
+      <button
+        onClick={() => dispatch({ type: "editTitle", value: "  A title  " })}
+      >
+        title
+      </button>
+      <button onClick={() => dispatch({ type: "editTitle", value: "   " })}>
+        blank title
+      </button>
+      <button
+        onClick={() => dispatch({ type: "projectSelected", id: "p-web" })}
+      >
+        pick web
       </button>
       <button
         onClick={() =>
@@ -95,6 +155,11 @@ function renderProbe() {
     </AppStateProvider>,
   );
 }
+
+beforeEach(() => {
+  vi.mocked(listProjects).mockResolvedValue([]);
+  vi.mocked(latestEntryProject).mockResolvedValue(null);
+});
 
 afterEach(() => {
   vi.resetAllMocks();
@@ -367,5 +432,203 @@ describe("AppStateProvider save flow", () => {
     expect(writeText).toHaveBeenCalledTimes(1);
     expect(savePromptEntry).toHaveBeenCalledTimes(1);
     expect(toasts()).toEqual(["info: Copied and saved"]);
+  });
+});
+
+describe("AppStateProvider projects", () => {
+  it("selects the newest entry's project on startup", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([rtf]);
+    vi.mocked(listProjects).mockResolvedValue([api, web]);
+    vi.mocked(latestEntryProject).mockResolvedValue("p-web");
+
+    renderProbe();
+
+    expect(await screen.findByText("project: p-web")).toBeInTheDocument();
+    expect(screen.getByText("names: api,web")).toBeInTheDocument();
+    expect(toasts()).toEqual([]);
+  });
+
+  it("starts with no project when history is empty", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([rtf]);
+    vi.mocked(listProjects).mockResolvedValue([api]);
+
+    renderProbe();
+
+    await screen.findByText("projects: ready");
+    await waitFor(() => expect(latestEntryProject).toHaveBeenCalled());
+    expect(screen.getByText("project: none")).toBeInTheDocument();
+  });
+
+  it("starts with no project when the newest project is not in the list", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([rtf]);
+    vi.mocked(listProjects).mockResolvedValue([api]);
+    vi.mocked(latestEntryProject).mockResolvedValue("gone");
+
+    renderProbe();
+
+    await screen.findByText("projects: ready");
+    await waitFor(() => expect(latestEntryProject).toHaveBeenCalled());
+    expect(screen.getByText("project: none")).toBeInTheDocument();
+  });
+
+  it("starts with no project, and no toast, when the lookup fails", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([rtf]);
+    vi.mocked(listProjects).mockResolvedValue([api]);
+    vi.mocked(latestEntryProject).mockRejectedValue(
+      new ApiError("database", "no db"),
+    );
+
+    renderProbe();
+
+    await screen.findByText("projects: ready");
+    await waitFor(() => expect(latestEntryProject).toHaveBeenCalled());
+    expect(screen.getByText("project: none")).toBeInTheDocument();
+    expect(screen.getByText("status: ready")).toBeInTheDocument();
+    expect(toasts()).toEqual([]);
+  });
+
+  it("keeps the Builder working, with no toast, when the projects fail to load", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([rtf]);
+    vi.mocked(listProjects).mockRejectedValue(
+      new ApiError("database", "no db"),
+    );
+
+    renderProbe();
+
+    expect(await screen.findByText("projects: error")).toBeInTheDocument();
+    expect(screen.getByText("status: ready")).toBeInTheDocument();
+    expect(screen.getByText("project: none")).toBeInTheDocument();
+    expect(latestEntryProject).not.toHaveBeenCalled();
+    expect(toasts()).toEqual([]);
+  });
+
+  it("creates a project, selects it and returns true", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([rtf]);
+    vi.mocked(createProject).mockResolvedValue(project("p-new", "new"));
+    renderProbe();
+    await screen.findByText("projects: ready");
+
+    await click("create");
+
+    expect(createProject).toHaveBeenCalledExactlyOnceWith("  new  ");
+    expect(await screen.findByText("result: true")).toBeInTheDocument();
+    expect(screen.getByText("project: p-new")).toBeInTheDocument();
+    expect(screen.getByText("names: new")).toBeInTheDocument();
+  });
+
+  it("toasts the message of a duplicate name and returns false", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([rtf]);
+    vi.mocked(createProject).mockRejectedValue(
+      new ApiError("invalid", "A project named new already exists"),
+    );
+    renderProbe();
+    await screen.findByText("projects: ready");
+
+    await click("create");
+
+    expect(await screen.findByText("result: false")).toBeInTheDocument();
+    expect(toasts()).toEqual(["error: A project named new already exists"]);
+    expect(screen.getByText("project: none")).toBeInTheDocument();
+  });
+
+  it("renames a project and returns true, or toasts and returns false", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([rtf]);
+    vi.mocked(listProjects).mockResolvedValue([api, web]);
+    vi.mocked(renameProject)
+      .mockResolvedValueOnce({ ...api, name: "renamed" })
+      .mockRejectedValueOnce(new ApiError("notFound", "No such project"));
+    renderProbe();
+    await screen.findByText("names: api,web");
+
+    await click("rename");
+    expect(await screen.findByText("names: renamed,web")).toBeInTheDocument();
+    expect(screen.getByText("result: true")).toBeInTheDocument();
+
+    await click("rename");
+    expect(
+      await screen.findByText("error: No such project"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("result: false")).toBeInTheDocument();
+  });
+
+  it("falls back to no project when the selected one is deleted", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([rtf]);
+    vi.mocked(listProjects).mockResolvedValue([api, web]);
+    vi.mocked(latestEntryProject).mockResolvedValue("p-api");
+    vi.mocked(deleteProject).mockResolvedValue();
+    renderProbe();
+    await screen.findByText("project: p-api");
+
+    await click("remove");
+
+    expect(deleteProject).toHaveBeenCalledExactlyOnceWith("p-api");
+    expect(await screen.findByText("project: none")).toBeInTheDocument();
+    expect(screen.getByText("names: web")).toBeInTheDocument();
+    expect(screen.getByText("result: true")).toBeInTheDocument();
+  });
+
+  it("keeps the project and toasts when a delete fails", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([rtf]);
+    vi.mocked(listProjects).mockResolvedValue([api, web]);
+    vi.mocked(latestEntryProject).mockResolvedValue("p-api");
+    vi.mocked(deleteProject).mockRejectedValue(
+      new ApiError("database", "locked"),
+    );
+    renderProbe();
+    await screen.findByText("project: p-api");
+
+    await click("remove");
+
+    expect(await screen.findByText("result: false")).toBeInTheDocument();
+    expect(screen.getByText("project: p-api")).toBeInTheDocument();
+    expect(toasts()).toEqual(["error: locked"]);
+  });
+});
+
+describe("AppStateProvider saving a title and project", () => {
+  it("copies and saves the title and the selected project", async () => {
+    vi.mocked(writeText).mockResolvedValue();
+    vi.mocked(savePromptEntry).mockResolvedValue(stored("typed"));
+    vi.mocked(listProjects).mockResolvedValue([api, web]);
+    vi.mocked(latestEntryProject).mockResolvedValue("p-api");
+    await renderTyped();
+    await screen.findByText("project: p-api");
+    await click("title");
+
+    await click("copy");
+
+    expect(savePromptEntry).toHaveBeenCalledExactlyOnceWith({
+      frameworkId: "rtf",
+      sectionValues: { role: "typed" },
+      renderedPrompt: "typed",
+      title: "  A title  ",
+      projectId: "p-api",
+    });
+  });
+
+  it("saves a blank title as none", async () => {
+    vi.mocked(savePromptEntry).mockResolvedValue(stored("typed"));
+    await renderTyped();
+    await click("blank title");
+
+    await click("save");
+
+    expect(savePromptEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ title: null, projectId: null }),
+    );
+  });
+
+  it("does not save again when only the title or project changed", async () => {
+    vi.mocked(savePromptEntry).mockResolvedValue(stored("typed"));
+    vi.mocked(listProjects).mockResolvedValue([api, web]);
+    await renderTyped();
+    await click("save");
+
+    await click("title");
+    await click("pick web");
+    await click("save");
+
+    expect(savePromptEntry).toHaveBeenCalledTimes(1);
+    expect(toasts()).toEqual(["info: Saved", "info: Already saved"]);
   });
 });

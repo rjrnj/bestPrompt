@@ -134,31 +134,40 @@ export function reducer(state: State, action: Action): State {
     case "projectCreated":
       return {
         ...state,
-        projects: {
-          status: "ready",
-          items: sortProjects([...loadedProjects(state), action.project]),
-        },
+        projects:
+          state.projects.status === "ready"
+            ? {
+                status: "ready",
+                items: sortProjects([...state.projects.items, action.project]),
+              }
+            : state.projects,
         selectedProjectId: action.project.id,
       };
     case "projectRenamed":
       return {
         ...state,
-        projects: {
-          status: "ready",
-          items: sortProjects(
-            loadedProjects(state).map((p) =>
-              p.id === action.project.id ? action.project : p,
-            ),
-          ),
-        },
+        projects:
+          state.projects.status === "ready"
+            ? {
+                status: "ready",
+                items: sortProjects(
+                  state.projects.items.map((p) =>
+                    p.id === action.project.id ? action.project : p,
+                  ),
+                ),
+              }
+            : state.projects,
       };
     case "projectDeleted":
       return {
         ...state,
-        projects: {
-          status: "ready",
-          items: loadedProjects(state).filter((p) => p.id !== action.id),
-        },
+        projects:
+          state.projects.status === "ready"
+            ? {
+                status: "ready",
+                items: state.projects.items.filter((p) => p.id !== action.id),
+              }
+            : state.projects,
         selectedProjectId:
           state.selectedProjectId === action.id
             ? null
@@ -175,7 +184,7 @@ export function reducer(state: State, action: Action): State {
       );
       if (target === undefined) return state;
       const { entry } = action;
-      const draft = Object.fromEntries(
+      const draft: Record<string, string> = Object.fromEntries(
         target.sections
           .filter((section) => hasOwn(entry.sectionValues, section.key))
           .map((section) => [section.key, entry.sectionValues[section.key]]),
