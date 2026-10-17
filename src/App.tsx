@@ -71,8 +71,9 @@ function Builder() {
           however long the form gets. The explicit row lets a pane shrink
           below its content instead of stretching the row. The form pane
           is padded inside its scroll container so the fields' focus
-          rings are not clipped at its edges. */}
-      <div className="-m-1 min-h-0 overflow-y-auto p-1">
+          rings are not clipped at its edges, with room on the right for a
+          scrollbar drawn over the content, as on Linux. */}
+      <div className="-m-1 min-h-0 overflow-y-auto p-1 overlay-scrollbars:pr-4">
         <PromptForm />
       </div>
       <PromptPreview actions={<PromptActions />} />

@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Styles for webviews whose scrollbars float over the content; the root is
+   marked at startup by markOverlayScrollbars in scrollbars.ts. */
+@custom-variant overlay-scrollbars (&:where([data-overlay-scrollbars] *));
+
 /* Both themes are styled and the OS setting picks one (Tailwind's `dark:`
    variant follows prefers-color-scheme). color-scheme makes native controls
    and scrollbars follow too. An in-app toggle comes later. */
