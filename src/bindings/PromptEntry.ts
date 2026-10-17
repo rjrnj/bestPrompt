@@ -10,4 +10,9 @@ frameworkId: string | null, frameworkSnapshot: FrameworkSnapshot,
 /**
  * What the user typed, by section key.
  */
-sectionValues: { [key in string]: string }, renderedPrompt: string, createdAt: number, };
+sectionValues: { [key in string]: string }, renderedPrompt: string, title: string | null, 
+/**
+ * The project the entry is filed under, or `None` for no project (also
+ * after the project is deleted).
+ */
+projectId: string | null, createdAt: number, };

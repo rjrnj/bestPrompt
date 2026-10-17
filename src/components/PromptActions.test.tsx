@@ -67,6 +67,8 @@ function stored(): PromptEntry {
     },
     sectionValues: {},
     renderedPrompt: "",
+    title: null,
+    projectId: null,
     createdAt: 1,
   };
 }
@@ -156,6 +158,8 @@ describe("PromptActions", () => {
       frameworkId: "rtf",
       sectionValues: { role: "a reviewer", task: "" },
       renderedPrompt: "# Role\na reviewer",
+      title: null,
+      projectId: null,
     });
   });
 
@@ -171,6 +175,8 @@ describe("PromptActions", () => {
       frameworkId: "rtf",
       sectionValues: { role: "", task: "review this" },
       renderedPrompt: "# Task\nreview this",
+      title: null,
+      projectId: null,
     });
   });
 

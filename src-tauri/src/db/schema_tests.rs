@@ -4,8 +4,8 @@
 use rusqlite::Connection;
 
 use super::test_support::{
-    count, insert_entry, insert_framework, insert_section, migrated, schema_object_exists,
-    try_insert_entry, try_insert_framework, try_insert_section,
+    count, insert_entry, insert_framework, insert_section, insert_titled_entry, migrated,
+    schema_object_exists, try_insert_entry, try_insert_framework, try_insert_section,
 };
 
 /// One framework with two sections and one prompt entry linked to it.
@@ -171,23 +171,6 @@ fn try_insert_project(conn: &Connection, id: &str, name: &str) -> rusqlite::Resu
         "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?1, ?2, 0, 0)",
         [id, name],
     )
-}
-
-/// Inserts an entry with a title and section values, linked to a project.
-fn insert_titled_entry(
-    conn: &Connection,
-    id: &str,
-    title: Option<&str>,
-    project_id: Option<&str>,
-    values: &str,
-) {
-    conn.execute(
-        "INSERT INTO prompt_entries
-             (id, framework_snapshot, section_values, rendered_prompt, created_at, title, project_id)
-         VALUES (?1, '{}', ?2, 'rendered', 0, ?3, ?4)",
-        rusqlite::params![id, values, title, project_id],
-    )
-    .unwrap();
 }
 
 fn fts_matches(conn: &Connection, query: &str) -> i64 {

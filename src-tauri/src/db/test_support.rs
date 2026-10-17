@@ -94,6 +94,23 @@ pub fn insert_entry(conn: &Connection, id: &str, framework_id: Option<&str>) {
     try_insert_entry(conn, id, framework_id, "{}", "{}").unwrap();
 }
 
+/// Inserts an entry with a title and section values, linked to a project.
+pub fn insert_titled_entry(
+    conn: &Connection,
+    id: &str,
+    title: Option<&str>,
+    project_id: Option<&str>,
+    values: &str,
+) {
+    conn.execute(
+        "INSERT INTO prompt_entries
+             (id, framework_snapshot, section_values, rendered_prompt, created_at, title, project_id)
+         VALUES (?1, '{}', ?2, 'rendered', 0, ?3, ?4)",
+        rusqlite::params![id, values, title, project_id],
+    )
+    .unwrap();
+}
+
 /// Runs `f` and returns its result together with every line it logged, each as
 /// `"LEVEL message"`. Only the calling thread's log lines are collected, so
 /// tests running in parallel don't see each other's.

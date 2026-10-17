@@ -46,6 +46,8 @@ const entry: PromptEntry = {
   },
   sectionValues: { role: "a reviewer" },
   renderedPrompt: "a reviewer",
+  title: null,
+  projectId: null,
   createdAt: 2,
 };
 
@@ -74,6 +76,8 @@ describe("api", () => {
       frameworkId: "rtf",
       sectionValues: { role: "a reviewer" },
       renderedPrompt: "a reviewer",
+      title: null,
+      projectId: null,
     };
 
     await expect(savePromptEntry(draft)).resolves.toEqual(entry);

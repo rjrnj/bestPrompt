@@ -43,6 +43,8 @@ function Probe() {
     frameworkId: state.selectedId ?? "",
     sectionValues: currentDraft(state),
     renderedPrompt: renderedPrompt(state),
+    title: null,
+    projectId: null,
   });
   return (
     <div>
@@ -195,6 +197,8 @@ function stored(prompt: string): PromptEntry {
     },
     sectionValues: { role: prompt },
     renderedPrompt: prompt,
+    title: null,
+    projectId: null,
     createdAt: 1,
   };
 }
@@ -229,6 +233,8 @@ describe("AppStateProvider save flow", () => {
       frameworkId: "rtf",
       sectionValues: { role: "typed" },
       renderedPrompt: "typed",
+      title: null,
+      projectId: null,
     });
     expect(toasts()).toEqual(["info: Copied and saved"]);
   });

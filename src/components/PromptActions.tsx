@@ -32,6 +32,8 @@ export function PromptActions() {
     frameworkId: framework.id,
     sectionValues: draft,
     renderedPrompt: prompt,
+    title: null,
+    projectId: null,
   };
 
   return (
