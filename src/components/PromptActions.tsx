@@ -1,14 +1,7 @@
 import { useAppActions, useAppDispatch, useAppState } from "../state/AppState";
+import { currentTitle } from "../state/reducer";
 import { useCurrentPrompt } from "../state/useCurrentPrompt";
-
-// Unavailable buttons are marked with aria-disabled, not disabled, and
-// ignore clicks: a disabled button drops keyboard focus to the page, and
-// Clear disables itself on every use, as Copy and Save do while saving.
-const base =
-  "rounded-md px-3 py-1 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 aria-disabled:cursor-not-allowed aria-disabled:opacity-50";
-// sky-700 and darker keep white text above 4.5:1 at rest and on hover.
-const primary = `${base} bg-sky-700 text-white not-aria-disabled:hover:bg-sky-800`;
-const secondary = `${base} border border-slate-400 bg-white text-slate-900 not-aria-disabled:hover:bg-slate-100 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:not-aria-disabled:hover:bg-slate-700`;
+import { primaryButton, secondaryButton } from "./styles";
 
 /**
  * Copy, Save and Clear for the selected framework's draft. Copy and Save
@@ -28,19 +21,20 @@ export function PromptActions() {
   const canClear = Object.values(draft).some((value) => value !== "");
   // The rendered prompt goes in verbatim: the duplicate check compares it
   // with the one last saved as an exact string.
+  const title = currentTitle(state);
   const entry = {
     frameworkId: framework.id,
     sectionValues: draft,
     renderedPrompt: prompt,
-    title: null,
-    projectId: null,
+    title: title.trim() === "" ? null : title,
+    projectId: state.selectedProjectId,
   };
 
   return (
     <>
       <button
         type="button"
-        className={primary}
+        className={primaryButton}
         aria-disabled={!canSave}
         onClick={() => {
           if (canSave) void copy(entry);
@@ -50,7 +44,7 @@ export function PromptActions() {
       </button>
       <button
         type="button"
-        className={secondary}
+        className={secondaryButton}
         aria-disabled={!canSave}
         onClick={() => {
           if (canSave) void save(entry);
@@ -60,7 +54,7 @@ export function PromptActions() {
       </button>
       <button
         type="button"
-        className={secondary}
+        className={secondaryButton}
         aria-disabled={!canClear}
         onClick={() => {
           if (canClear) dispatch({ type: "clearDraft" });
