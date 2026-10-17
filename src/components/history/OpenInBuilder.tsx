@@ -1,5 +1,6 @@
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import { useId } from "react";
+import { flushSync } from "react-dom";
 import type { PromptEntry } from "../../bindings/PromptEntry";
 import { useAppDispatch, useAppState } from "../../state/AppState";
 import { openConflicts, unplacedSections } from "../../state/reducer";
@@ -12,6 +13,7 @@ import {
   primaryButton,
   secondaryButton,
 } from "../styles";
+import { TITLE_INPUT_ID } from "../TitleField";
 
 /**
  * Loads a saved prompt into the Builder as a new draft. Asks first when that
@@ -56,7 +58,10 @@ export function OpenInBuilder({ entry }: { entry: PromptEntry }) {
     projects.find((p) => p.id === entry.projectId)?.name ?? "No project";
 
   function open() {
-    dispatch({ type: "entryOpened", entry });
+    // Rendered at once, so the Builder's title is showing to take focus;
+    // this button goes away with the History tab.
+    flushSync(() => dispatch({ type: "entryOpened", entry }));
+    document.getElementById(TITLE_INPUT_ID)?.focus();
     const unplaced = unplacedSections(entry, framework);
     if (unplaced.length > 0) {
       dispatch({
