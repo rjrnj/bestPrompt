@@ -6,7 +6,7 @@ import type { ProjectFilter } from "./ProjectFilter";
  */
 export type EntryQuery = { project: ProjectFilter, frameworkId: string | null, 
 /**
- * Words to find in titles and section text; see [`fts_query`]. Blank
- * text is no search.
+ * Words to find in titles and section text. Every word prefix-matches;
+ * blank text means no search.
  */
 search: string | null, };

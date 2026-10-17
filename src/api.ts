@@ -7,6 +7,7 @@ import type { DbError, DbErrorKind } from "./bindings/DbError";
 import type { EntryQuery } from "./bindings/EntryQuery";
 import type { Framework } from "./bindings/Framework";
 import type { NewPromptEntry } from "./bindings/NewPromptEntry";
+import type { Project } from "./bindings/Project";
 import type { PromptEntry } from "./bindings/PromptEntry";
 
 /** A command that failed, with the `kind` the backend reported. */
@@ -104,4 +105,42 @@ export function listPromptEntries(
 
 export function getPromptEntry(id: string): Promise<PromptEntry> {
   return call("get_prompt_entry", { id });
+}
+
+export function setEntryTitle(
+  id: string,
+  title: string | null,
+): Promise<PromptEntry> {
+  return call("set_entry_title", { id, title });
+}
+
+export function setEntryProject(
+  id: string,
+  projectId: string | null,
+): Promise<PromptEntry> {
+  return call("set_entry_project", { id, projectId });
+}
+
+export function deletePromptEntry(id: string): Promise<void> {
+  return call("delete_prompt_entry", { id });
+}
+
+export function latestEntryProject(): Promise<string | null> {
+  return call("latest_entry_project");
+}
+
+export function listProjects(): Promise<Project[]> {
+  return call("list_projects");
+}
+
+export function createProject(name: string): Promise<Project> {
+  return call("create_project", { name });
+}
+
+export function renameProject(id: string, name: string): Promise<Project> {
+  return call("rename_project", { id, name });
+}
+
+export function deleteProject(id: string): Promise<void> {
+  return call("delete_project", { id });
 }

@@ -143,8 +143,8 @@ pub enum ProjectFilter {
 pub struct EntryQuery {
     pub project: ProjectFilter,
     pub framework_id: Option<String>,
-    /// Words to find in titles and section text; see [`fts_query`]. Blank
-    /// text is no search.
+    /// Words to find in titles and section text. Every word prefix-matches;
+    /// blank text means no search.
     pub search: Option<String>,
 }
 
@@ -681,6 +681,8 @@ mod tests {
         // Operators are words: "AND" matches the title instead of combining terms.
         assert_eq!(found(&conn, &searching("AND")), ["1"]);
         assert_eq!(found(&conn, &searching("zzz AND")), Vec::<String>::new());
+        // A word with no letters in it is dropped, not a reason to find nothing.
+        assert_eq!(found(&conn, &searching("x -")), ["1"]);
     }
 
     #[test]

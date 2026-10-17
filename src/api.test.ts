@@ -2,11 +2,19 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ApiError,
+  createProject,
+  deleteProject,
+  deletePromptEntry,
   getFramework,
   getPromptEntry,
+  latestEntryProject,
   listFrameworks,
+  listProjects,
   listPromptEntries,
+  renameProject,
   savePromptEntry,
+  setEntryProject,
+  setEntryTitle,
 } from "./api";
 import type { EntryQuery } from "./bindings/EntryQuery";
 import type { Framework } from "./bindings/Framework";
@@ -111,6 +119,85 @@ describe("api", () => {
     expect(calls).toEqual([
       { cmd: "get_prompt_entry", args: { id: entry.id } },
     ]);
+  });
+
+  it("lists projects through list_projects", async () => {
+    const project = { id: "p", name: "API", createdAt: 1, updatedAt: 1 };
+    const calls = answering([project]);
+
+    await expect(listProjects()).resolves.toEqual([project]);
+
+    expect(calls).toEqual([{ cmd: "list_projects", args: {} }]);
+  });
+
+  it("creates a project through create_project with its name", async () => {
+    const project = { id: "p", name: "API", createdAt: 1, updatedAt: 1 };
+    const calls = answering(project);
+
+    await expect(createProject("API")).resolves.toEqual(project);
+
+    expect(calls).toEqual([{ cmd: "create_project", args: { name: "API" } }]);
+  });
+
+  it("renames a project through rename_project with its id and name", async () => {
+    const project = { id: "p", name: "Docs", createdAt: 1, updatedAt: 2 };
+    const calls = answering(project);
+
+    await expect(renameProject("p", "Docs")).resolves.toEqual(project);
+
+    expect(calls).toEqual([
+      { cmd: "rename_project", args: { id: "p", name: "Docs" } },
+    ]);
+  });
+
+  it("deletes a project through delete_project with its id", async () => {
+    const calls = answering(null);
+
+    await expect(deleteProject("p")).resolves.toBeNull();
+
+    expect(calls).toEqual([{ cmd: "delete_project", args: { id: "p" } }]);
+  });
+
+  it("sets an entry's title through set_entry_title, including a cleared one", async () => {
+    const calls = answering(entry);
+
+    await expect(setEntryTitle(entry.id, "Review")).resolves.toEqual(entry);
+    await setEntryTitle(entry.id, null);
+
+    expect(calls).toEqual([
+      { cmd: "set_entry_title", args: { id: entry.id, title: "Review" } },
+      { cmd: "set_entry_title", args: { id: entry.id, title: null } },
+    ]);
+  });
+
+  it("moves an entry through set_entry_project under the key projectId", async () => {
+    const calls = answering(entry);
+
+    await expect(setEntryProject(entry.id, "p")).resolves.toEqual(entry);
+    await setEntryProject(entry.id, null);
+
+    expect(calls).toEqual([
+      { cmd: "set_entry_project", args: { id: entry.id, projectId: "p" } },
+      { cmd: "set_entry_project", args: { id: entry.id, projectId: null } },
+    ]);
+  });
+
+  it("deletes an entry through delete_prompt_entry with its id", async () => {
+    const calls = answering(null);
+
+    await expect(deletePromptEntry(entry.id)).resolves.toBeNull();
+
+    expect(calls).toEqual([
+      { cmd: "delete_prompt_entry", args: { id: entry.id } },
+    ]);
+  });
+
+  it("reads the newest entry's project through latest_entry_project", async () => {
+    const calls = answering("p");
+
+    await expect(latestEntryProject()).resolves.toBe("p");
+
+    expect(calls).toEqual([{ cmd: "latest_entry_project", args: {} }]);
   });
 
   it("turns a rejected command into an ApiError with its kind and message", async () => {

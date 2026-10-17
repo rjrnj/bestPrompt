@@ -10,6 +10,7 @@ use bestprompt_lib::commands::{Db, register};
 use bestprompt_lib::db::builtins::seed_builtins;
 use bestprompt_lib::db::entries::PromptEntry;
 use bestprompt_lib::db::frameworks::Framework;
+use bestprompt_lib::db::projects::Project;
 use bestprompt_lib::db::{migrate, open_in_memory};
 use serde_json::{Value, json};
 use tauri::ipc::{CallbackFn, InvokeBody, InvokeResponseBody};
@@ -236,4 +237,159 @@ fn the_webview_can_save_an_entry_and_read_it_back_alone_and_in_the_list() {
     assert_eq!(saved.rendered_prompt, "# Role\na reviewer");
     assert_eq!(read, saved);
     assert_eq!(listed, [saved]);
+}
+
+/// The query that matches every entry.
+fn everything() -> Value {
+    json!({ "project": { "kind": "any" }, "frameworkId": null, "search": null })
+}
+
+fn save_entry(window: &WebviewWindow<MockRuntime>, body: &str, project_id: Value) -> PromptEntry {
+    let entry = json!({
+        "frameworkId": "rtf",
+        "sectionValues": { "role": body },
+        "renderedPrompt": body,
+        "title": null,
+        "projectId": project_id,
+    });
+    serde_json::from_value(invoke(window, "save_prompt_entry", json!({ "entry": entry })).unwrap())
+        .unwrap()
+}
+
+#[test]
+fn the_webview_can_create_list_rename_and_delete_a_project() {
+    let window = main_window();
+
+    let created: Project = serde_json::from_value(
+        invoke(&window, "create_project", json!({ "name": "API" })).unwrap(),
+    )
+    .unwrap();
+    let renamed: Project = serde_json::from_value(
+        invoke(
+            &window,
+            "rename_project",
+            json!({ "id": created.id, "name": "Docs" }),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let listed: Vec<Project> =
+        serde_json::from_value(invoke(&window, "list_projects", json!({})).unwrap()).unwrap();
+    let deleted = invoke(&window, "delete_project", json!({ "id": created.id })).unwrap();
+    let after: Vec<Project> =
+        serde_json::from_value(invoke(&window, "list_projects", json!({})).unwrap()).unwrap();
+
+    assert_eq!(created.name, "API");
+    assert_eq!(renamed.id, created.id);
+    assert_eq!(renamed.name, "Docs");
+    assert_eq!(listed, [renamed]);
+    assert_eq!(deleted, Value::Null);
+    assert!(after.is_empty());
+}
+
+#[test]
+fn a_duplicate_project_name_reaches_the_webview_as_invalid() {
+    let window = main_window();
+    invoke(&window, "create_project", json!({ "name": "API" })).unwrap();
+
+    let error = invoke(&window, "create_project", json!({ "name": " api " })).unwrap_err();
+
+    assert_eq!(error["kind"], "invalid");
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("already exists"),
+        "{error}"
+    );
+}
+
+#[test]
+fn the_webview_can_list_entries_with_a_query() {
+    let window = main_window();
+    let project: Project = serde_json::from_value(
+        invoke(&window, "create_project", json!({ "name": "API" })).unwrap(),
+    )
+    .unwrap();
+    let inside = save_entry(&window, "review the parser", json!(project.id));
+    save_entry(&window, "write a poem", Value::Null);
+
+    let by_project: Vec<PromptEntry> = serde_json::from_value(
+        invoke(
+            &window,
+            "list_prompt_entries",
+            json!({
+                "query": { "project": { "kind": "project", "id": project.id }, "frameworkId": null, "search": null },
+                "limit": 10,
+                "offset": 0
+            }),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let by_search: Vec<PromptEntry> = serde_json::from_value(
+        invoke(
+            &window,
+            "list_prompt_entries",
+            json!({
+                "query": { "project": { "kind": "any" }, "frameworkId": null, "search": "pars" },
+                "limit": 10,
+                "offset": 0
+            }),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let paged: Vec<PromptEntry> = serde_json::from_value(
+        invoke(
+            &window,
+            "list_prompt_entries",
+            json!({ "query": everything(), "limit": 1, "offset": 1 }),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(by_project, std::slice::from_ref(&inside));
+    assert_eq!(by_search, [inside]);
+    assert_eq!(paged.len(), 1);
+}
+
+#[test]
+fn the_webview_can_retitle_move_and_delete_an_entry() {
+    let window = main_window();
+    let project: Project = serde_json::from_value(
+        invoke(&window, "create_project", json!({ "name": "API" })).unwrap(),
+    )
+    .unwrap();
+    let entry = save_entry(&window, "review the parser", Value::Null);
+
+    let titled: PromptEntry = serde_json::from_value(
+        invoke(
+            &window,
+            "set_entry_title",
+            json!({ "id": entry.id, "title": "Parser review" }),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let moved: PromptEntry = serde_json::from_value(
+        invoke(
+            &window,
+            "set_entry_project",
+            json!({ "id": entry.id, "projectId": project.id }),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let latest = invoke(&window, "latest_entry_project", json!({})).unwrap();
+    let deleted = invoke(&window, "delete_prompt_entry", json!({ "id": entry.id })).unwrap();
+    let gone = invoke(&window, "get_prompt_entry", json!({ "id": entry.id })).unwrap_err();
+
+    assert_eq!(titled.title.as_deref(), Some("Parser review"));
+    assert_eq!(moved.project_id.as_deref(), Some(project.id.as_str()));
+    assert_eq!(moved.title.as_deref(), Some("Parser review"));
+    assert_eq!(latest, json!(project.id));
+    assert_eq!(deleted, Value::Null);
+    assert_eq!(gone["kind"], "notFound");
 }
