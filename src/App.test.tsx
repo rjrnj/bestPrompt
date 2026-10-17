@@ -223,6 +223,54 @@ describe("App", () => {
     expect(savePromptEntry).not.toHaveBeenCalled();
   });
 
+  it("opening a saved prompt puts focus in the Builder's title", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue(frameworks);
+    const costar = frameworks[0];
+    const entry: PromptEntry = {
+      id: "e1",
+      frameworkId: costar.id,
+      frameworkSnapshot: {
+        name: costar.name,
+        template: costar.template,
+        summaryKey: costar.summaryKey,
+        sections: costar.sections,
+      },
+      sectionValues: { objective: "Write a README section." },
+      renderedPrompt: "# Objective\nWrite a README section.",
+      title: "Readme",
+      projectId: null,
+      createdAt: 1,
+    };
+    vi.mocked(listPromptEntries).mockResolvedValue([entry]);
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Framework" });
+    const user = userEvent.setup();
+    const openFromHistory = async () => {
+      await user.click(screen.getByRole("tab", { name: "History" }));
+      await user.click(await screen.findByRole("button", { name: /^Readme/ }));
+      await user.click(screen.getByRole("button", { name: "Open in Builder" }));
+    };
+    /** The title has focus, and still has it once pending focus moves ran. */
+    const expectTitleFocused = async () => {
+      const title = screen.getByRole("textbox", { name: "Title" });
+      await waitFor(() => expect(title).toHaveFocus());
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(title).toHaveFocus();
+    };
+
+    await openFromHistory();
+    await expectTitleFocused();
+
+    // The draft now has text, so opening again asks first.
+    await openFromHistory();
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Open",
+      }),
+    );
+    await expectTitleFocused();
+  });
+
   it("saves again after the saved entry is deleted in History", async () => {
     vi.mocked(listFrameworks).mockResolvedValue(frameworks);
     vi.mocked(deletePromptEntry).mockResolvedValue();
