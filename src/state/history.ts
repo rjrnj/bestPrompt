@@ -2,6 +2,7 @@
 // entries and the selection. No React here. The provider in HistoryState.tsx
 // fetches the pages and applies the edits, dispatching these actions.
 
+import type { EntryCursor } from "../bindings/EntryCursor";
 import type { ProjectFilter } from "../bindings/ProjectFilter";
 import type { PromptEntry } from "../bindings/PromptEntry";
 
@@ -30,14 +31,20 @@ export type HistoryState = {
   /** Whether the latest request is a Show more; after a failure, the one that failed. */
   appending: boolean;
   /**
-   * How many of the backend's matching entries the loaded pages cover, where
-   * the next page starts. It moves back when a listed entry is deleted or
-   * moved out of the project filter, since the backend no longer counts it;
-   * a moved entry stays listed until the next refresh, so this can be less
-   * than `entries.length`.
+   * Where the next page starts: after the last row the latest page returned,
+   * or none before any rows. Edits and deletions leave it where it is.
    */
-  offset: number;
+  cursor: EntryCursor | null;
+  /**
+   * Edits that finished while the latest page request was loading, oldest
+   * first, with null for a deletion. That page may have been read before
+   * them, so they are applied to it again when it arrives.
+   */
+  editsSinceRequest: EntryEdit[];
 };
+
+/** An entry as an edit left it, or null when it was deleted. */
+export type EntryEdit = { id: string; entry: PromptEntry | null };
 
 export type HistoryAction =
   | { type: "filtersChanged"; filters: Partial<HistoryFilters> }
@@ -66,42 +73,31 @@ export const initialHistoryState: HistoryState = {
   selectedId: null,
   requestId: 0,
   appending: false,
-  offset: 0,
+  cursor: null,
+  editsSinceRequest: [],
 };
-
-/** Whether an entry filed under `projectId` is one `filter` lists. */
-function matchesProject(filter: ProjectFilter, projectId: string | null) {
-  switch (filter.kind) {
-    case "any":
-      return true;
-    case "unassigned":
-      return projectId === null;
-    case "project":
-      return projectId === filter.id;
-  }
-}
 
 function sameProjectFilter(a: ProjectFilter, b: ProjectFilter): boolean {
   if (a.kind === "project" && b.kind === "project") return a.id === b.id;
   return a.kind === b.kind;
 }
 
-/**
- * How far the offset moves when a listed entry's project changes: back one
- * when it leaves the project filter, forward one when it comes back. A new
- * title that stops matching the search can't be seen here, so the backend's
- * set may still have shrunk by that entry.
- */
-function offsetShift(
-  filter: ProjectFilter,
-  before: PromptEntry | undefined,
-  after: PromptEntry,
-): number {
-  if (before === undefined) return 0;
-  return (
-    Number(matchesProject(filter, after.projectId)) -
-    Number(matchesProject(filter, before.projectId))
+/** The rows with each edit applied in turn: replaced, or dropped if deleted. */
+function withEdits(entries: PromptEntry[], edits: EntryEdit[]): PromptEntry[] {
+  return edits.reduce<PromptEntry[]>(
+    (rows, { id, entry }) =>
+      entry === null
+        ? rows.filter((e) => e.id !== id)
+        : rows.map((e) => (e.id === id ? entry : e)),
+    entries,
   );
+}
+
+/** The edits to apply to the page being loaded, if one is, with `edit` added. */
+function recorded(state: HistoryState, edit: EntryEdit): EntryEdit[] {
+  return state.status === "loading"
+    ? [...state.editsSinceRequest, edit]
+    : state.editsSinceRequest;
 }
 
 export function historyReducer(
@@ -124,12 +120,20 @@ export function historyReducer(
         status: "loading",
         requestId: action.requestId,
         appending: action.append,
+        editsSinceRequest: [],
       };
     case "pageLoaded": {
       if (action.requestId !== state.requestId) return state;
-      const entries = action.append
-        ? [...state.entries, ...action.entries]
-        : action.entries;
+      const page = withEdits(action.entries, state.editsSinceRequest);
+      const entries = action.append ? [...state.entries, ...page] : page;
+      const last: PromptEntry | undefined =
+        action.entries[action.entries.length - 1];
+      const cursor =
+        last !== undefined
+          ? { createdAt: last.createdAt, id: last.id }
+          : action.append
+            ? state.cursor
+            : null;
       // A first page keeps the selection only while it still lists it.
       const selectedId =
         action.append || entries.some((e) => e.id === state.selectedId)
@@ -142,7 +146,7 @@ export function historyReducer(
         error: null,
         hasMore: action.entries.length === action.limit,
         selectedId,
-        offset: (action.append ? state.offset : 0) + action.entries.length,
+        cursor,
       };
     }
     case "pageFailed":
@@ -151,28 +155,20 @@ export function historyReducer(
     case "entrySelected":
       return { ...state, selectedId: action.id };
     case "entryUpdated": {
-      const before = state.entries.find((e) => e.id === action.entry.id);
+      const edit = { id: action.entry.id, entry: action.entry };
       return {
         ...state,
-        entries: state.entries.map((e) =>
-          e.id === action.entry.id ? action.entry : e,
-        ),
-        offset:
-          state.offset +
-          offsetShift(state.filters.project, before, action.entry),
+        entries: withEdits(state.entries, [edit]),
+        editsSinceRequest: recorded(state, edit),
       };
     }
     case "entryRemoved": {
-      const removed = state.entries.find((e) => e.id === action.id);
-      // An entry that already left the project filter was counted out then.
-      const counted =
-        removed !== undefined &&
-        matchesProject(state.filters.project, removed.projectId);
+      const edit = { id: action.id, entry: null };
       return {
         ...state,
-        entries: state.entries.filter((e) => e.id !== action.id),
+        entries: withEdits(state.entries, [edit]),
         selectedId: state.selectedId === action.id ? null : state.selectedId,
-        offset: counted ? state.offset - 1 : state.offset,
+        editsSinceRequest: recorded(state, edit),
       };
     }
     case "projectRemoved": {

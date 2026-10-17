@@ -96,7 +96,7 @@ describe("api", () => {
     ]);
   });
 
-  it("lists entries through list_prompt_entries with query, limit and offset", async () => {
+  it("lists entries through list_prompt_entries with query, limit and cursor", async () => {
     const calls = answering([entry]);
     const query: EntryQuery = {
       project: { kind: "project", id: "p" },
@@ -104,10 +104,12 @@ describe("api", () => {
       search: "csv",
     };
 
-    await expect(listPromptEntries(query, 20, 40)).resolves.toEqual([entry]);
+    const after = { createdAt: 5, id: "e9" };
+
+    await expect(listPromptEntries(query, 20, after)).resolves.toEqual([entry]);
 
     expect(calls).toEqual([
-      { cmd: "list_prompt_entries", args: { query, limit: 20, offset: 40 } },
+      { cmd: "list_prompt_entries", args: { query, limit: 20, after } },
     ]);
   });
 

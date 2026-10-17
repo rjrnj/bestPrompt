@@ -226,7 +226,7 @@ fn the_webview_can_save_an_entry_and_read_it_back_alone_and_in_the_list() {
             json!({
                 "query": { "project": { "kind": "any" }, "frameworkId": null, "search": null },
                 "limit": 10,
-                "offset": 0
+                "after": null
             }),
         )
         .unwrap(),
@@ -321,7 +321,7 @@ fn the_webview_can_list_entries_with_a_query() {
             json!({
                 "query": { "project": { "kind": "project", "id": project.id }, "frameworkId": null, "search": null },
                 "limit": 10,
-                "offset": 0
+                "after": null
             }),
         )
         .unwrap(),
@@ -334,17 +334,27 @@ fn the_webview_can_list_entries_with_a_query() {
             json!({
                 "query": { "project": { "kind": "any" }, "frameworkId": null, "search": "pars" },
                 "limit": 10,
-                "offset": 0
+                "after": null
             }),
         )
         .unwrap(),
     )
     .unwrap();
-    let paged: Vec<PromptEntry> = serde_json::from_value(
+    let first: Vec<PromptEntry> = serde_json::from_value(
         invoke(
             &window,
             "list_prompt_entries",
-            json!({ "query": everything(), "limit": 1, "offset": 1 }),
+            json!({ "query": everything(), "limit": 1 }),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let after = json!({ "createdAt": first[0].created_at, "id": first[0].id });
+    let next: Vec<PromptEntry> = serde_json::from_value(
+        invoke(
+            &window,
+            "list_prompt_entries",
+            json!({ "query": everything(), "limit": 1, "after": after }),
         )
         .unwrap(),
     )
@@ -352,7 +362,9 @@ fn the_webview_can_list_entries_with_a_query() {
 
     assert_eq!(by_project, std::slice::from_ref(&inside));
     assert_eq!(by_search, [inside]);
-    assert_eq!(paged.len(), 1);
+    assert_eq!(first.len(), 1);
+    assert_eq!(next.len(), 1);
+    assert_ne!(next[0].id, first[0].id);
 }
 
 #[test]

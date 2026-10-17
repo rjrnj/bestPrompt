@@ -10,7 +10,7 @@ use rusqlite::Connection;
 use tauri::{Builder, Runtime, State};
 
 use crate::db::DbError;
-use crate::db::entries::{self, EntryQuery, NewPromptEntry, PromptEntry};
+use crate::db::entries::{self, EntryCursor, EntryQuery, NewPromptEntry, PromptEntry};
 use crate::db::frameworks::{self, Framework};
 use crate::db::projects::{self, Project};
 
@@ -65,9 +65,9 @@ fn list_prompt_entries(
     db: State<'_, Db>,
     query: EntryQuery,
     limit: u32,
-    offset: u32,
+    after: Option<EntryCursor>,
 ) -> Result<Vec<PromptEntry>, DbError> {
-    db.with(|conn| entries::list_prompt_entries(conn, &query, limit, offset))
+    db.with(|conn| entries::list_prompt_entries(conn, &query, limit, after.as_ref()))
 }
 
 #[tauri::command(async)]

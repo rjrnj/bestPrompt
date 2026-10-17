@@ -191,7 +191,9 @@ describe("HistoryView list pane", () => {
 
     expect(await screen.findByText("task e51")).toBeInTheDocument();
     expect(screen.getByText("task e0")).toBeInTheDocument();
-    expect(vi.mocked(listPromptEntries).mock.lastCall?.[2]).toBe(PAGE_SIZE);
+    expect(vi.mocked(listPromptEntries).mock.lastCall?.[2]?.id).toBe(
+      `e${PAGE_SIZE - 1}`,
+    );
     expect(
       screen.queryByRole("button", { name: "Show more" }),
     ).not.toBeInTheDocument();
@@ -216,10 +218,9 @@ describe("HistoryView list pane", () => {
 
     expect(await screen.findByText("task e51")).toBeInTheDocument();
     expect(screen.getByText("task e0")).toBeInTheDocument();
-    expect(vi.mocked(listPromptEntries).mock.lastCall?.slice(1)).toEqual([
-      PAGE_SIZE,
-      PAGE_SIZE,
-    ]);
+    const [, limit, after] = vi.mocked(listPromptEntries).mock.lastCall ?? [];
+    expect(limit).toBe(PAGE_SIZE);
+    expect(after?.id).toBe(`e${PAGE_SIZE - 1}`);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -251,7 +252,7 @@ describe("HistoryView list pane", () => {
     expect(vi.mocked(listPromptEntries).mock.lastCall).toEqual([
       { project: { kind: "any" }, frameworkId: null, search: "zzz" },
       PAGE_SIZE,
-      0,
+      null,
     ]);
   });
 
