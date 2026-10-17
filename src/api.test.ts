@@ -8,6 +8,7 @@ import {
   listPromptEntries,
   savePromptEntry,
 } from "./api";
+import type { EntryQuery } from "./bindings/EntryQuery";
 import type { Framework } from "./bindings/Framework";
 import type { PromptEntry } from "./bindings/PromptEntry";
 
@@ -87,13 +88,18 @@ describe("api", () => {
     ]);
   });
 
-  it("lists entries through list_prompt_entries with limit and offset", async () => {
+  it("lists entries through list_prompt_entries with query, limit and offset", async () => {
     const calls = answering([entry]);
+    const query: EntryQuery = {
+      project: { kind: "project", id: "p" },
+      frameworkId: null,
+      search: "csv",
+    };
 
-    await expect(listPromptEntries(20, 40)).resolves.toEqual([entry]);
+    await expect(listPromptEntries(query, 20, 40)).resolves.toEqual([entry]);
 
     expect(calls).toEqual([
-      { cmd: "list_prompt_entries", args: { limit: 20, offset: 40 } },
+      { cmd: "list_prompt_entries", args: { query, limit: 20, offset: 40 } },
     ]);
   });
 

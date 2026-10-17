@@ -2,12 +2,14 @@
 
 use std::collections::BTreeMap;
 
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::types::ToSql;
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params, params_from_iter};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
 use super::frameworks::{Section, get_framework};
+use super::search::fts_query;
 use super::{DbError, Entity, now_millis};
 
 /// The framework as it was when the entry was saved, so the entry can be
@@ -120,17 +122,76 @@ const ENTRY_COLUMNS: &str =
             title, project_id, created_at
      FROM prompt_entries";
 
-/// A page of the history, newest first.
+/// Which project's entries to list.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
+pub enum ProjectFilter {
+    /// Entries in any project or none.
+    #[default]
+    Any,
+    /// Entries with no project.
+    Unassigned,
+    /// Entries in one project.
+    Project { id: String },
+}
+
+/// What to list from the history. Every part narrows the result.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EntryQuery {
+    pub project: ProjectFilter,
+    pub framework_id: Option<String>,
+    /// Words to find in titles and section text; see [`fts_query`]. Blank
+    /// text is no search.
+    pub search: Option<String>,
+}
+
+/// A page of the entries matching `query`, newest first. The filters are
+/// bound as parameters; only fixed SQL fragments are joined into the text.
 pub fn list_prompt_entries(
     conn: &Connection,
+    query: &EntryQuery,
     limit: u32,
     offset: u32,
 ) -> Result<Vec<PromptEntry>, DbError> {
+    let mut conditions: Vec<&str> = Vec::new();
+    let mut args: Vec<Box<dyn ToSql>> = Vec::new();
+    match &query.project {
+        ProjectFilter::Any => {}
+        ProjectFilter::Unassigned => conditions.push("project_id IS NULL"),
+        ProjectFilter::Project { id } => {
+            conditions.push("project_id = ?");
+            args.push(Box::new(id.clone()));
+        }
+    }
+    if let Some(framework_id) = &query.framework_id {
+        conditions.push("framework_id = ?");
+        args.push(Box::new(framework_id.clone()));
+    }
+    if let Some(words) = query.search.as_deref().and_then(fts_query) {
+        conditions.push(
+            "id IN (SELECT entry_id FROM prompt_entries_fts WHERE prompt_entries_fts MATCH ?)",
+        );
+        args.push(Box::new(words));
+    }
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", conditions.join(" AND "))
+    };
+    args.push(Box::new(limit));
+    args.push(Box::new(offset));
+
     let entries = conn
         .prepare(&format!(
-            "{ENTRY_COLUMNS} ORDER BY created_at DESC, id DESC LIMIT ?1 OFFSET ?2"
+            "{ENTRY_COLUMNS}{where_clause} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
         ))?
-        .query_map([limit, offset], entry_from_row)?
+        .query_map(
+            params_from_iter(args.iter().map(|arg| arg.as_ref())),
+            entry_from_row,
+        )?
         .collect::<Result<_, _>>()?;
     Ok(entries)
 }
@@ -419,7 +480,7 @@ mod tests {
         let mut conn = migrated();
         save_three(&mut conn);
 
-        let entries = list_prompt_entries(&conn, 10, 0).unwrap();
+        let entries = list_prompt_entries(&conn, &EntryQuery::default(), 10, 0).unwrap();
 
         assert_eq!(ids(&entries), ["a", "b", "c"]);
     }
@@ -429,9 +490,217 @@ mod tests {
         let mut conn = migrated();
         save_three(&mut conn);
 
-        let entries = list_prompt_entries(&conn, 1, 1).unwrap();
+        let entries = list_prompt_entries(&conn, &EntryQuery::default(), 1, 1).unwrap();
 
         assert_eq!(ids(&entries), ["b"]);
+    }
+
+    /// Saves an entry at a given time with the given title, project, framework
+    /// and section values.
+    fn save_at(
+        conn: &mut Connection,
+        id: &str,
+        time: i64,
+        framework: &str,
+        title: Option<&str>,
+        project: Option<&str>,
+        sections: &[(&str, &str)],
+    ) {
+        let new = NewPromptEntry {
+            framework_id: framework.to_owned(),
+            section_values: values(sections),
+            rendered_prompt: "rendered".to_owned(),
+            title: title.map(str::to_owned),
+            project_id: project.map(str::to_owned),
+        };
+        insert(conn, &new, id.to_owned(), time).unwrap();
+    }
+
+    fn searching(text: &str) -> EntryQuery {
+        EntryQuery {
+            search: Some(text.to_owned()),
+            ..EntryQuery::default()
+        }
+    }
+
+    fn found(conn: &Connection, query: &EntryQuery) -> Vec<String> {
+        list_prompt_entries(conn, query, 50, 0)
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect()
+    }
+
+    #[test]
+    fn filters_by_project_unassigned_and_framework() {
+        let mut conn = migrated();
+        insert_framework(&conn, "f", false);
+        insert_framework(&conn, "g", false);
+        insert_project(&conn, "p");
+        insert_project(&conn, "q");
+        save_at(&mut conn, "1", 1, "f", None, Some("p"), &[]);
+        save_at(&mut conn, "2", 2, "g", None, Some("q"), &[]);
+        save_at(&mut conn, "3", 3, "f", None, None, &[]);
+        save_at(&mut conn, "4", 4, "g", None, Some("p"), &[]);
+
+        let project = |id: &str| EntryQuery {
+            project: ProjectFilter::Project { id: id.to_owned() },
+            ..EntryQuery::default()
+        };
+        assert_eq!(found(&conn, &EntryQuery::default()), ["4", "3", "2", "1"]);
+        assert_eq!(found(&conn, &project("p")), ["4", "1"]);
+        assert_eq!(found(&conn, &project("missing")), Vec::<String>::new());
+        assert_eq!(
+            found(
+                &conn,
+                &EntryQuery {
+                    project: ProjectFilter::Unassigned,
+                    ..EntryQuery::default()
+                }
+            ),
+            ["3"]
+        );
+        assert_eq!(
+            found(
+                &conn,
+                &EntryQuery {
+                    framework_id: Some("g".to_owned()),
+                    ..EntryQuery::default()
+                }
+            ),
+            ["4", "2"]
+        );
+        assert_eq!(
+            found(
+                &conn,
+                &EntryQuery {
+                    framework_id: Some("f".to_owned()),
+                    ..project("p")
+                }
+            ),
+            ["1"]
+        );
+    }
+
+    #[test]
+    fn search_matches_title_and_section_text_by_word_prefix() {
+        let mut conn = migrated();
+        insert_framework(&conn, "f", false);
+        save_at(
+            &mut conn,
+            "1",
+            1,
+            "f",
+            Some("Parse CSV"),
+            None,
+            &[("a", "x")],
+        );
+        let second = [("a", "first"), ("b", "convert the csvfile")];
+        save_at(&mut conn, "2", 2, "f", None, None, &second);
+        save_at(&mut conn, "3", 3, "f", None, None, &[("a", "unrelated")]);
+
+        assert_eq!(found(&conn, &searching("pars")), ["1"]);
+        assert_eq!(found(&conn, &searching("csv")), ["2", "1"]);
+        assert_eq!(found(&conn, &searching("pars csv")), ["1"]);
+        assert_eq!(found(&conn, &searching("first convert")), ["2"]);
+        assert_eq!(found(&conn, &searching("sv")), Vec::<String>::new());
+    }
+
+    #[test]
+    fn search_ignores_case_and_diacritics() {
+        let mut conn = migrated();
+        insert_framework(&conn, "f", false);
+        save_at(&mut conn, "1", 1, "f", Some("Café Résumé"), None, &[]);
+        save_at(&mut conn, "2", 2, "f", None, None, &[("a", "naive")]);
+
+        assert_eq!(found(&conn, &searching("CAFE")), ["1"]);
+        assert_eq!(found(&conn, &searching("résumé")), ["1"]);
+        assert_eq!(found(&conn, &searching("naïve")), ["2"]);
+    }
+
+    #[test]
+    fn search_combines_with_filters() {
+        let mut conn = migrated();
+        insert_framework(&conn, "f", false);
+        insert_framework(&conn, "g", false);
+        insert_project(&conn, "p");
+        save_at(&mut conn, "1", 1, "f", Some("report"), Some("p"), &[]);
+        save_at(&mut conn, "2", 2, "g", Some("report"), Some("p"), &[]);
+        save_at(&mut conn, "3", 3, "f", Some("report"), None, &[]);
+        save_at(&mut conn, "4", 4, "f", Some("other"), Some("p"), &[]);
+
+        let query = EntryQuery {
+            project: ProjectFilter::Project { id: "p".to_owned() },
+            framework_id: Some("f".to_owned()),
+            search: Some("report".to_owned()),
+        };
+
+        assert_eq!(found(&conn, &query), ["1"]);
+    }
+
+    #[test]
+    fn a_search_with_no_words_lists_everything() {
+        let mut conn = migrated();
+        insert_framework(&conn, "f", false);
+        save_at(&mut conn, "1", 1, "f", None, None, &[]);
+
+        assert_eq!(found(&conn, &searching("  ")), ["1"]);
+        assert_eq!(found(&conn, &searching("\"")), ["1"]);
+    }
+
+    #[test]
+    fn search_treats_fts_syntax_as_plain_words() {
+        let mut conn = migrated();
+        insert_framework(&conn, "f", false);
+        save_at(
+            &mut conn,
+            "1",
+            1,
+            "f",
+            Some("and near x"),
+            None,
+            &[("a", "a b")],
+        );
+
+        for text in [
+            "\"",
+            "a\"b",
+            "*",
+            "-x",
+            "(",
+            "AND",
+            "NEAR(a b)",
+            "a OR",
+            "col:x",
+            "^a",
+            "\" *",
+        ] {
+            let result = list_prompt_entries(&conn, &searching(text), 50, 0);
+            assert!(result.is_ok(), "{text:?}: {result:?}");
+        }
+        // Operators are words: "AND" matches the title instead of combining terms.
+        assert_eq!(found(&conn, &searching("AND")), ["1"]);
+        assert_eq!(found(&conn, &searching("zzz AND")), Vec::<String>::new());
+    }
+
+    #[test]
+    fn paging_is_newest_first_without_gaps_or_repeats() {
+        let mut conn = migrated();
+        insert_framework(&conn, "f", false);
+        // Two entries share a time, so the id tie-break decides their order.
+        for (id, time) in [("a", 1), ("b", 2), ("c", 2), ("d", 3), ("e", 4)] {
+            save_at(&mut conn, id, time, "f", Some("page"), None, &[]);
+        }
+        let all = found(&conn, &searching("page"));
+        assert_eq!(all, ["e", "d", "c", "b", "a"]);
+
+        let mut paged = Vec::new();
+        for offset in (0..5).step_by(2) {
+            let page = list_prompt_entries(&conn, &searching("page"), 2, offset).unwrap();
+            paged.extend(page.into_iter().map(|entry| entry.id));
+        }
+
+        assert_eq!(paged, all);
     }
 
     #[test]
@@ -448,7 +717,7 @@ mod tests {
         assert_eq!(read.framework_id, None);
         assert_eq!(read.framework_snapshot, saved.framework_snapshot);
         assert_eq!(
-            ids(&list_prompt_entries(&conn, 10, 0).unwrap()),
+            ids(&list_prompt_entries(&conn, &EntryQuery::default(), 10, 0).unwrap()),
             [saved.id.as_str()]
         );
     }

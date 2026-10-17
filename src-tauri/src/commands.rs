@@ -10,7 +10,7 @@ use rusqlite::Connection;
 use tauri::{Builder, Runtime, State};
 
 use crate::db::DbError;
-use crate::db::entries::{self, NewPromptEntry, PromptEntry};
+use crate::db::entries::{self, EntryQuery, NewPromptEntry, PromptEntry};
 use crate::db::frameworks::{self, Framework};
 
 /// The app's database connection, held in Tauri's managed state.
@@ -54,10 +54,11 @@ fn save_prompt_entry(db: State<'_, Db>, entry: NewPromptEntry) -> Result<PromptE
 #[tauri::command(async)]
 fn list_prompt_entries(
     db: State<'_, Db>,
+    query: EntryQuery,
     limit: u32,
     offset: u32,
 ) -> Result<Vec<PromptEntry>, DbError> {
-    db.with(|conn| entries::list_prompt_entries(conn, limit, offset))
+    db.with(|conn| entries::list_prompt_entries(conn, &query, limit, offset))
 }
 
 #[tauri::command(async)]

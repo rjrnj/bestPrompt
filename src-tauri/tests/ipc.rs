@@ -222,7 +222,11 @@ fn the_webview_can_save_an_entry_and_read_it_back_alone_and_in_the_list() {
         invoke(
             &window,
             "list_prompt_entries",
-            json!({ "limit": 10, "offset": 0 }),
+            json!({
+                "query": { "project": { "kind": "any" }, "frameworkId": null, "search": null },
+                "limit": 10,
+                "offset": 0
+            }),
         )
         .unwrap(),
     )
