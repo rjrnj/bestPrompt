@@ -39,7 +39,9 @@ export type History = {
   state: HistoryState;
   /** Changes some filters; the list then reloads from the first page. */
   setFilters: (changes: Partial<HistoryFilters>) => void;
-  /** Loads the page after the entries listed, when the list is ready and has more. */
+  /** Whether Show more can load anything: the list is ready and has more. */
+  canShowMore: boolean;
+  /** Loads the next page, when `canShowMore`. */
   showMore: () => Promise<void>;
   select: (id: string | null) => void;
   /** Reloads the first page with the current filters. */
@@ -113,11 +115,11 @@ export function HistoryProvider({ children }: { children: ReactNode }) {
   // Only from a settled, full list: while a first page loads, the listed
   // entries may belong to the previous filters, and appending to them would
   // mix two queries.
-  const listed = state.entries.length;
+  const { offset } = state;
   const canShowMore = state.status === "ready" && state.hasMore;
   const showMore = useCallback(async () => {
-    if (canShowMore) await load(listed, true);
-  }, [load, listed, canShowMore]);
+    if (canShowMore) await load(offset, true);
+  }, [load, offset, canShowMore]);
 
   // The list reloads whenever the tab is shown and, while it shows, whenever
   // the query changes.
@@ -199,6 +201,7 @@ export function HistoryProvider({ children }: { children: ReactNode }) {
     () => ({
       state,
       setFilters,
+      canShowMore,
       showMore,
       select,
       refresh,
@@ -209,6 +212,7 @@ export function HistoryProvider({ children }: { children: ReactNode }) {
     [
       state,
       setFilters,
+      canShowMore,
       showMore,
       select,
       refresh,

@@ -57,6 +57,7 @@ describe("the history state", () => {
       hasMore: false,
       selectedId: null,
       requestId: 0,
+      offset: 0,
     });
   });
 
@@ -302,5 +303,158 @@ describe("the history state", () => {
     expect(
       historyReducer(filtered, { type: "projectRemoved", id: "p-api" }),
     ).toBe(filtered);
+  });
+
+  it("keeps the project filter's object when the new one is equal", () => {
+    const filtered = run([
+      {
+        type: "filtersChanged",
+        filters: { project: { kind: "project", id: "p-web" } },
+      },
+    ]);
+    const before = filtered.filters.project;
+
+    const same = historyReducer(filtered, {
+      type: "filtersChanged",
+      filters: { project: { kind: "project", id: "p-web" }, search: "x" },
+    });
+    const other = historyReducer(filtered, {
+      type: "filtersChanged",
+      filters: { project: { kind: "project", id: "p-api" } },
+    });
+
+    expect(same.filters.project).toBe(before);
+    expect(same.filters.search).toBe("x");
+    expect(other.filters.project).toEqual({ kind: "project", id: "p-api" });
+  });
+});
+
+describe("the paging offset", () => {
+  /** A first page of `items` loaded under `project`. */
+  function filtered(
+    project: HistoryState["filters"]["project"],
+    items: PromptEntry[],
+  ): HistoryState {
+    return run([
+      { type: "filtersChanged", filters: { project } },
+      { type: "pageRequested", requestId: 1 },
+      { type: "pageLoaded", requestId: 1, entries: items, append: false },
+    ]);
+  }
+
+  it("advances by the rows each page returned", () => {
+    const first = loaded(entries(PAGE_SIZE));
+    expect(first.offset).toBe(PAGE_SIZE);
+
+    const second = run(
+      [
+        { type: "pageRequested", requestId: 2 },
+        {
+          type: "pageLoaded",
+          requestId: 2,
+          entries: entries(3, PAGE_SIZE),
+          append: true,
+        },
+      ],
+      first,
+    );
+    expect(second.offset).toBe(PAGE_SIZE + 3);
+
+    const reloaded = run(
+      [
+        { type: "pageRequested", requestId: 3 },
+        {
+          type: "pageLoaded",
+          requestId: 3,
+          entries: entries(2),
+          append: false,
+        },
+      ],
+      second,
+    );
+    expect(reloaded.offset).toBe(2);
+  });
+
+  it("moves back for a removed entry", () => {
+    const state = run([{ type: "entryRemoved", id: "e1" }], loaded(entries(3)));
+
+    expect(state.offset).toBe(2);
+  });
+
+  it("stays put when an entry that is not listed is removed", () => {
+    const state = run(
+      [{ type: "entryRemoved", id: "elsewhere" }],
+      loaded(entries(3)),
+    );
+
+    expect(state.offset).toBe(3);
+  });
+
+  it("moves back for an edit that leaves the project filter", () => {
+    const unassigned = run(
+      [{ type: "entryUpdated", entry: entry("e1", { projectId: "p-web" }) }],
+      filtered({ kind: "unassigned" }, entries(3)),
+    );
+    const inProject = run(
+      [{ type: "entryUpdated", entry: entry("a", { projectId: null }) }],
+      filtered({ kind: "project", id: "p-api" }, [
+        entry("a", { projectId: "p-api" }),
+        entry("b", { projectId: "p-api" }),
+      ]),
+    );
+
+    expect(unassigned.offset).toBe(2);
+    expect(unassigned.entries[1].projectId).toBe("p-web");
+    expect(inProject.offset).toBe(1);
+  });
+
+  it("stays put for an edit that keeps matching", () => {
+    const retitled = run(
+      [{ type: "entryUpdated", entry: entry("e1", { title: "New" }) }],
+      filtered({ kind: "unassigned" }, entries(3)),
+    );
+    const anyProject = run(
+      [{ type: "entryUpdated", entry: entry("e1", { projectId: "p-web" }) }],
+      loaded(entries(3)),
+    );
+
+    expect(retitled.offset).toBe(3);
+    expect(anyProject.offset).toBe(3);
+  });
+
+  it("moves back only once for an entry that already left the filter", () => {
+    const state = run(
+      [
+        { type: "entryUpdated", entry: entry("e1", { projectId: "p-web" }) },
+        { type: "entryUpdated", entry: entry("e1", { projectId: "p-api" }) },
+      ],
+      filtered({ kind: "unassigned" }, entries(3)),
+    );
+
+    expect(state.offset).toBe(2);
+  });
+
+  it("moves forward again for an entry moved back into the filter", () => {
+    const state = run(
+      [
+        { type: "entryUpdated", entry: entry("e1", { projectId: "p-web" }) },
+        { type: "entryUpdated", entry: entry("e1", { projectId: null }) },
+      ],
+      filtered({ kind: "unassigned" }, entries(3)),
+    );
+
+    expect(state.offset).toBe(3);
+  });
+
+  it("does not move back twice for a removed entry that already left", () => {
+    const state = run(
+      [
+        { type: "entryUpdated", entry: entry("e1", { projectId: "p-web" }) },
+        { type: "entryRemoved", id: "e1" },
+      ],
+      filtered({ kind: "unassigned" }, entries(3)),
+    );
+
+    expect(state.offset).toBe(2);
   });
 });

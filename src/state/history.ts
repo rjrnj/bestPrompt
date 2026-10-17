@@ -27,6 +27,14 @@ export type HistoryState = {
   selectedId: string | null;
   /** The latest page request; a result for any other is ignored. */
   requestId: number;
+  /**
+   * How many of the backend's matching entries the loaded pages cover, where
+   * the next page starts. It moves back when a listed entry is deleted or
+   * moved out of the project filter, since the backend no longer counts it;
+   * a moved entry stays listed until the next refresh, so this can be less
+   * than `entries.length`.
+   */
+  offset: number;
 };
 
 export type HistoryAction =
@@ -53,15 +61,58 @@ export const initialHistoryState: HistoryState = {
   hasMore: false,
   selectedId: null,
   requestId: 0,
+  offset: 0,
 };
+
+/** Whether an entry filed under `projectId` is one `filter` lists. */
+function matchesProject(filter: ProjectFilter, projectId: string | null) {
+  switch (filter.kind) {
+    case "any":
+      return true;
+    case "unassigned":
+      return projectId === null;
+    case "project":
+      return projectId === filter.id;
+  }
+}
+
+function sameProjectFilter(a: ProjectFilter, b: ProjectFilter): boolean {
+  if (a.kind === "project" && b.kind === "project") return a.id === b.id;
+  return a.kind === b.kind;
+}
+
+/**
+ * How far the offset moves when a listed entry's project changes: back one
+ * when it leaves the project filter, forward one when it comes back. A new
+ * title that stops matching the search can't be seen here, so the backend's
+ * set may still have shrunk by that entry.
+ */
+function offsetShift(
+  filter: ProjectFilter,
+  before: PromptEntry | undefined,
+  after: PromptEntry,
+): number {
+  if (before === undefined) return 0;
+  return (
+    Number(matchesProject(filter, after.projectId)) -
+    Number(matchesProject(filter, before.projectId))
+  );
+}
 
 export function historyReducer(
   state: HistoryState,
   action: HistoryAction,
 ): HistoryState {
   switch (action.type) {
-    case "filtersChanged":
-      return { ...state, filters: { ...state.filters, ...action.filters } };
+    case "filtersChanged": {
+      const filters = { ...state.filters, ...action.filters };
+      // An equal filter keeps its object, so the query does not change and
+      // nothing is fetched again.
+      if (sameProjectFilter(filters.project, state.filters.project)) {
+        filters.project = state.filters.project;
+      }
+      return { ...state, filters };
+    }
     case "pageRequested":
       return { ...state, status: "loading", requestId: action.requestId };
     case "pageLoaded": {
@@ -81,6 +132,7 @@ export function historyReducer(
         error: null,
         hasMore: action.entries.length === PAGE_SIZE,
         selectedId,
+        offset: (action.append ? state.offset : 0) + action.entries.length,
       };
     }
     case "pageFailed":
@@ -88,19 +140,31 @@ export function historyReducer(
       return { ...state, status: "error", error: action.message };
     case "entrySelected":
       return { ...state, selectedId: action.id };
-    case "entryUpdated":
+    case "entryUpdated": {
+      const before = state.entries.find((e) => e.id === action.entry.id);
       return {
         ...state,
         entries: state.entries.map((e) =>
           e.id === action.entry.id ? action.entry : e,
         ),
+        offset:
+          state.offset +
+          offsetShift(state.filters.project, before, action.entry),
       };
-    case "entryRemoved":
+    }
+    case "entryRemoved": {
+      const removed = state.entries.find((e) => e.id === action.id);
+      // An entry that already left the project filter was counted out then.
+      const counted =
+        removed !== undefined &&
+        matchesProject(state.filters.project, removed.projectId);
       return {
         ...state,
         entries: state.entries.filter((e) => e.id !== action.id),
         selectedId: state.selectedId === action.id ? null : state.selectedId,
+        offset: counted ? state.offset - 1 : state.offset,
       };
+    }
     case "projectRemoved": {
       const { project } = state.filters;
       if (project.kind !== "project" || project.id !== action.id) return state;
