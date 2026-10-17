@@ -8,11 +8,16 @@ import { PromptForm } from "./components/PromptForm";
 import { PromptPreview } from "./components/PromptPreview";
 import { Toaster } from "./components/Toaster";
 import { AppStateProvider, useAppState } from "./state/AppState";
+import { HistoryProvider } from "./state/HistoryState";
 
 function App() {
   return (
     <AppStateProvider>
-      <Shell />
+      {/* Above the tabs, so History's filters and selection survive a
+          visit to the Builder. */}
+      <HistoryProvider>
+        <Shell />
+      </HistoryProvider>
       <Toaster />
     </AppStateProvider>
   );

@@ -6,7 +6,8 @@ import { primaryButton, secondaryButton } from "./styles";
 /**
  * Copy, Save and Clear for the selected framework's draft. Copy and Save
  * are offered only when the preview shows a prompt, and not while a save is
- * running; Clear whenever the draft has any text, whitespace included.
+ * running; Clear whenever the draft or the title has any text, whitespace
+ * included.
  * Renders nothing until a framework is selected.
  */
 export function PromptActions() {
@@ -18,10 +19,11 @@ export function PromptActions() {
   const { framework, draft, prompt, hasPrompt } = current;
 
   const canSave = hasPrompt && !state.saving;
-  const canClear = Object.values(draft).some((value) => value !== "");
+  const title = currentTitle(state);
+  const canClear =
+    title !== "" || Object.values(draft).some((value) => value !== "");
   // The rendered prompt goes in verbatim: the duplicate check compares it
   // with the one last saved as an exact string.
-  const title = currentTitle(state);
   const entry = {
     frameworkId: framework.id,
     sectionValues: draft,
