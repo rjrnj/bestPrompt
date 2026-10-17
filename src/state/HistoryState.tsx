@@ -177,13 +177,24 @@ export function HistoryProvider({ children }: { children: ReactNode }) {
     [edit],
   );
 
+  const { entries } = state;
   const remove = useCallback(
-    (id: string) =>
-      edit("Couldn't delete the prompt", async () => {
+    async (id: string) => {
+      const removed = entries.find((e) => e.id === id);
+      const ok = await edit("Couldn't delete the prompt", async () => {
         await deletePromptEntry(id);
         return { type: "entryRemoved", id };
-      }),
-    [edit],
+      });
+      if (ok && removed !== undefined) {
+        appDispatch({
+          type: "entryDeleted",
+          frameworkId: removed.frameworkId,
+          renderedPrompt: removed.renderedPrompt,
+        });
+      }
+      return ok;
+    },
+    [edit, entries, appDispatch],
   );
 
   const setFilters = useCallback(

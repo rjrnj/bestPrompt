@@ -307,6 +307,32 @@ describe("saving", () => {
   it("does not need saving while blank", () => {
     expect(needsSave(loaded)).toBe(false);
   });
+
+  it("needs saving again once the saved entry is deleted", () => {
+    const saved = run([savedHi], edited);
+    const state = run(
+      [{ type: "entryDeleted", frameworkId: "ab", renderedPrompt: "hi" }],
+      saved,
+    );
+
+    expect(needsSave(state)).toBe(true);
+    expect(state.lastSaved).toEqual({});
+  });
+
+  it("keeps the saved record when a different entry is deleted", () => {
+    const saved = run([savedHi], edited);
+    const state = run(
+      [
+        { type: "entryDeleted", frameworkId: "ab", renderedPrompt: "older" },
+        { type: "entryDeleted", frameworkId: "xy", renderedPrompt: "hi" },
+        { type: "entryDeleted", frameworkId: null, renderedPrompt: "hi" },
+      ],
+      saved,
+    );
+
+    expect(state.lastSaved).toEqual({ ab: "hi" });
+    expect(needsSave(state)).toBe(false);
+  });
 });
 
 describe("toasts", () => {
