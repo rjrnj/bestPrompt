@@ -43,9 +43,10 @@ pub struct PromptEntry {
     /// after the project is deleted).
     pub project_id: Option<String>,
     pub created_at: i64,
-    /// How many times the entry has been edited since it was saved, so of two
-    /// copies read at different times the one with the higher version is the
-    /// newer.
+    /// How many title or project edits the entry has had since it was saved,
+    /// so of two copies read at different times the one with the higher
+    /// version is the newer. Clearing the project when it is deleted doesn't
+    /// count: ties go to the copy read later.
     pub version: i64,
 }
 

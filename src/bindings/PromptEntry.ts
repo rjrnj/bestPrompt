@@ -17,8 +17,9 @@ sectionValues: { [key in string]: string }, renderedPrompt: string, title: strin
  */
 projectId: string | null, createdAt: number, 
 /**
- * How many times the entry has been edited since it was saved, so of two
- * copies read at different times the one with the higher version is the
- * newer.
+ * How many title or project edits the entry has had since it was saved,
+ * so of two copies read at different times the one with the higher
+ * version is the newer. Clearing the project when it is deleted doesn't
+ * count: ties go to the copy read later.
  */
 version: number, };
