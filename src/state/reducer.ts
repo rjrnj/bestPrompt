@@ -5,6 +5,7 @@
 import type { Framework } from "../bindings/Framework";
 import type { Project } from "../bindings/Project";
 import type { PromptEntry } from "../bindings/PromptEntry";
+import { hasOwn } from "../hasOwn";
 import { renderTemplate, TemplateSyntaxError } from "../template";
 
 export type Toast = { id: number; kind: "info" | "error"; message: string };
@@ -255,10 +256,6 @@ export function reducer(state: State, action: Action): State {
         toasts: state.toasts.filter((t) => t.id !== action.id),
       };
   }
-}
-
-function hasOwn(object: object, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(object, key);
 }
 
 function loadedProjects(state: State): Project[] {

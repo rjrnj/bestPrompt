@@ -141,6 +141,28 @@ describe("EntryDetail", () => {
     expect(task?.textContent).toBe("Fix the login bug\nsoon");
   });
 
+  it("reads_only_the_entry's_own_section_values", async () => {
+    await renderDetail({
+      ...saved,
+      frameworkSnapshot: {
+        ...saved.frameworkSnapshot,
+        sections: [
+          { key: "constructor", label: "Builder", helpText: "" },
+          { key: "toString", label: "Text", helpText: "" },
+          ...rtf.sections,
+        ],
+      },
+      sectionValues: { constructor: "Mine", task: "Fix the login bug" },
+    });
+
+    const headings = within(pane())
+      .getAllByRole("heading", { level: 3 })
+      .map((h) => h.textContent);
+    expect(headings).toEqual(["Builder", "Task"]);
+    const builder = within(pane()).getByText("Builder").nextElementSibling;
+    expect(builder?.textContent).toBe("Mine");
+  });
+
   it("prompt_toggle_shows_the_saved_text_exactly", async () => {
     const user = await renderDetail();
     await user.click(within(pane()).getByRole("radio", { name: "Prompt" }));

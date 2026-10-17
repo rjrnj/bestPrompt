@@ -47,6 +47,20 @@ function framework(id: string, summaryKey: string | null): Framework {
 }
 
 describe("entryLabel", () => {
+  it("reads_only_the_entry's_own_section_values", () => {
+    const e = entry(
+      { a: "body" },
+      { summaryKey: "constructor", keys: ["constructor", "toString", "a"] },
+    );
+    expect(entryLabel(e, [])).toBe("body");
+
+    const named = entry(
+      { constructor: "Built it" },
+      { summaryKey: "constructor" },
+    );
+    expect(entryLabel(named, [])).toBe("Built it");
+  });
+
   it("uses_the_title", () => {
     const e = entry({ a: "body" }, { title: "  My title  " });
     expect(entryLabel(e, [])).toBe("My title");
