@@ -1,10 +1,11 @@
 import { useAppDispatch, useAppState } from "../state/AppState";
 import { currentDraft, selectedFramework } from "../state/reducer";
 import { SectionField } from "./SectionField";
+import { TitleField } from "./TitleField";
 
 /**
- * One field per section of the selected framework, bound to its draft.
- * Renders nothing until a framework is selected.
+ * The selected framework's title, then one field per section, bound to its
+ * draft. Renders nothing until a framework is selected.
  */
 export function PromptForm() {
   const state = useAppState();
@@ -18,6 +19,7 @@ export function PromptForm() {
   // would carry its dragged height, scroll offset and undo stack along.
   return (
     <div key={framework.id} className="flex flex-col gap-4">
+      <TitleField />
       {framework.sections.map((section) => (
         <SectionField
           key={section.key}

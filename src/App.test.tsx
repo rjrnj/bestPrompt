@@ -1,9 +1,15 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import builtins from "../src-tauri/builtins/frameworks.json";
 import App from "./App";
-import { ApiError, listFrameworks, savePromptEntry } from "./api";
+import {
+  ApiError,
+  latestEntryProject,
+  listFrameworks,
+  listProjects,
+  savePromptEntry,
+} from "./api";
 import type { Framework } from "./bindings/Framework";
 import type { PromptEntry } from "./bindings/PromptEntry";
 import { writeText } from "./clipboard";
@@ -13,6 +19,8 @@ vi.mock("./api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./api")>()),
   listFrameworks: vi.fn(),
   savePromptEntry: vi.fn(),
+  listProjects: vi.fn(),
+  latestEntryProject: vi.fn(),
 }));
 vi.mock("./clipboard", () => ({ writeText: vi.fn() }));
 
@@ -28,6 +36,11 @@ const frameworks: Framework[] = builtins.map((f) => ({
   createdAt: 1,
   updatedAt: 1,
 }));
+
+beforeEach(() => {
+  vi.mocked(listProjects).mockResolvedValue([]);
+  vi.mocked(latestEntryProject).mockResolvedValue(null);
+});
 
 afterEach(() => {
   vi.resetAllMocks();
@@ -64,11 +77,38 @@ describe("App", () => {
 
     const picker = await screen.findByRole("combobox", { name: "Framework" });
     expect(picker).toHaveTextContent("CO-STAR");
-    expect(screen.getAllByRole("textbox")).toHaveLength(6);
+    expect(screen.getByRole("combobox", { name: "Project" })).toHaveTextContent(
+      "No project",
+    );
+    // The title, then CO-STAR's six sections.
+    expect(screen.getAllByRole("textbox")).toHaveLength(7);
     expect(screen.getByRole("region", { name: "Preview" })).toHaveTextContent(
       "Fill in a section to see the prompt.",
     );
     expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("hides the Builder's pickers on the History tab", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue(frameworks);
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Framework" });
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("tab", { name: "History" }));
+
+    expect(screen.queryByRole("combobox")).toBeNull();
+    expect(screen.queryByText(builtins[0].description)).toBeNull();
+    expect(screen.queryByRole("region", { name: "Preview" })).toBeNull();
+    expect(screen.getByRole("tabpanel", { name: "History" })).toBeVisible();
+
+    await user.click(screen.getByRole("tab", { name: "Builder" }));
+
+    expect(
+      screen.getByRole("combobox", { name: "Framework" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Project" }),
+    ).toBeInTheDocument();
   });
 
   it("renders what is typed through the framework's template", async () => {
