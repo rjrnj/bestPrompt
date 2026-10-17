@@ -68,12 +68,22 @@ const saved: PromptEntry = {
   version: 0,
 };
 
-/** Dispatches `actions` once the frameworks and projects are loaded. */
-function Seed({ actions }: { actions: Action[] }) {
+/**
+ * Dispatches `actions` once the frameworks are loaded, and the projects too
+ * unless `projectsLoading`.
+ */
+function Seed({
+  actions,
+  projectsLoading = false,
+}: {
+  actions: Action[];
+  projectsLoading?: boolean;
+}) {
   const state = useAppState();
   const dispatch = useAppDispatch();
   const ready =
-    state.frameworks.status === "ready" && state.projects.status === "ready";
+    state.frameworks.status === "ready" &&
+    (projectsLoading || state.projects.status === "ready");
   useEffect(() => {
     if (ready) actions.forEach(dispatch);
     // Seeding happens once, when loading finishes.
@@ -104,12 +114,19 @@ const probe = () =>
     project: string | null;
   };
 
-async function renderOpen(entry: PromptEntry, seed: Action[] = []) {
+async function renderOpen(
+  entry: PromptEntry,
+  seed: Action[] = [],
+  { projectsLoading = false } = {},
+) {
   vi.mocked(listPromptEntries).mockResolvedValue([entry]);
   render(
     <AppStateProvider>
       <HistoryProvider>
-        <Seed actions={[...seed, { type: "viewChanged", view: "history" }]} />
+        <Seed
+          actions={[...seed, { type: "viewChanged", view: "history" }]}
+          projectsLoading={projectsLoading}
+        />
         <HistoryView />
         <Probe />
         <Toaster />
@@ -195,6 +212,39 @@ describe("OpenInBuilder", () => {
     await user.click(within(dialog).getByRole("button", { name: "Open" }));
     await waitFor(() => expect(probe().view).toBe("builder"));
     expect(probe().project).toBeNull();
+  });
+
+  it("asks_before_moving_drafts_to_its_project_while_the_projects_load", async () => {
+    // The entry keeps its project until the list can confirm it, so the
+    // other framework's draft would move to it.
+    const other: Framework = {
+      ...rtf,
+      id: "other",
+      name: "Other",
+      sections: [{ key: "a", label: "A", helpText: "" }],
+    };
+    vi.mocked(listFrameworks).mockResolvedValue([rtf, other]);
+    vi.mocked(listProjects).mockReturnValue(new Promise(() => {}));
+    const user = await renderOpen(
+      { ...saved, projectId: api.id },
+      [
+        { type: "selectFramework", id: "other" },
+        { type: "editSection", key: "a", value: "work in progress" },
+      ],
+      { projectsLoading: true },
+    );
+    await user.click(openButton());
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(
+      within(dialog).getByText(
+        "Your unsaved drafts will be filed under this prompt's project.",
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: "Open" }));
+    await waitFor(() => expect(probe().view).toBe("builder"));
+    expect(probe().project).toBe(api.id);
   });
 
   it("cancel_leaves_the_builder_untouched", async () => {

@@ -205,6 +205,24 @@ describe("ProjectPicker", () => {
     expect(trigger).toHaveTextContent("api");
   });
 
+  it("keeps No project picked while the projects load", async () => {
+    // Picking the item already selected changes no value, so this is the
+    // pick most easily lost to the newest entry's project.
+    const listing = deferred<Project[]>();
+    vi.mocked(listProjects).mockReturnValue(listing.promise);
+    vi.mocked(latestEntryProject).mockResolvedValue(web.id);
+    renderPicker();
+    const user = userEvent.setup();
+    const trigger = screen.getByRole("combobox", { name: "Project" });
+
+    await user.click(trigger);
+    await user.click(await screen.findByRole("option", { name: "No project" }));
+    await act(async () => listing.resolve([api, web]));
+
+    expect(screen.getByText("selected: none")).toBeInTheDocument();
+    expect(trigger).toHaveTextContent("No project");
+  });
+
   it("offers No project when the projects fail to load", async () => {
     vi.mocked(listProjects).mockRejectedValue(
       new ApiError("database", "no db"),

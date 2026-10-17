@@ -32,9 +32,9 @@ export type State = {
   /** The project new entries are filed under; one value for all frameworks. */
   selectedProjectId: string | null;
   /**
-   * Whether the user has chosen the project (picked one or none, created one,
-   * or opened an entry), so the newest entry's project, looked up at
-   * startup, no longer replaces it.
+   * Whether the user has chosen the project (opened the project list, picked
+   * one or none, created one, or opened an entry), so the newest entry's
+   * project, looked up at startup, no longer replaces it.
    */
   projectChosen: boolean;
   /**
@@ -59,6 +59,7 @@ export type Action =
   | { type: "projectsLoaded"; projects: Project[] }
   | { type: "projectsFailed"; message: string }
   | { type: "projectSelected"; id: string | null }
+  | { type: "projectListOpened" }
   | { type: "startingProjectFound"; id: string | null }
   | { type: "projectCreated"; project: Project }
   | { type: "projectRenamed"; project: Project }
@@ -157,6 +158,10 @@ export function reducer(state: State, action: Action): State {
       };
     case "projectSelected":
       return { ...state, selectedProjectId: action.id, projectChosen: true };
+    case "projectListOpened":
+      // Radix reports no pick of the project already selected, so opening
+      // the list counts as choosing: the user has seen what is selected.
+      return state.projectChosen ? state : { ...state, projectChosen: true };
     case "startingProjectFound": {
       if (state.projectChosen) return state;
       const id = projectIfPresent(loadedProjects(state), action.id);
@@ -210,11 +215,7 @@ export function reducer(state: State, action: Action): State {
         selectedId: target.id,
         drafts: { ...state.drafts, [target.id]: draft },
         titles: { ...state.titles, [target.id]: entry.title ?? "" },
-        // While the list loads, projectsLoaded checks the project instead.
-        selectedProjectId:
-          state.projects.status === "loading"
-            ? entry.projectId
-            : projectIfPresent(listedProjects(state), entry.projectId),
+        selectedProjectId: openedProject(state, entry),
         projectChosen: true,
         lastSaved: { ...state.lastSaved, [target.id]: entry.renderedPrompt },
       };
@@ -421,12 +422,22 @@ export function openConflicts(
     ((hasOwn(state.titles, id) && filled(state.titles[id])) ||
       (hasOwn(state.drafts, id) &&
         Object.values(state.drafts[id]).some(filled)));
-  const entryProject = projectIfPresent(loadedProjects(state), entry.projectId);
   return {
     replacesDraft,
     changesProject:
-      hasAnyDraftText(state) && entryProject !== state.selectedProjectId,
+      hasAnyDraftText(state) &&
+      openedProject(state, entry) !== state.selectedProjectId,
   };
+}
+
+/**
+ * The project opening `entry` selects: its own while the list loads, since
+ * projectsLoaded checks it then, else its own if listed, else none.
+ */
+export function openedProject(state: State, entry: PromptEntry): string | null {
+  return state.projects.status === "loading"
+    ? entry.projectId
+    : projectIfPresent(listedProjects(state), entry.projectId);
 }
 
 /**

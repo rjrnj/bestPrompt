@@ -20,6 +20,8 @@ type Props = {
   /** Shown for a `value` that isn't among `projects`, which lists no item for it. */
   unlistedLabel?: string;
   onChange(id: string | null): void;
+  /** Runs as the list opens. */
+  onOpen?(): void;
   label: string;
   /** Listed after a separator; choosing one runs it and keeps the value. */
   extraItems?: ExtraItem[];
@@ -37,6 +39,7 @@ export function ProjectSelect({
   value,
   unlistedLabel,
   onChange,
+  onOpen,
   label,
   extraItems = [],
   ref,
@@ -66,6 +69,9 @@ export function ProjectSelect({
           } else {
             onChange(next === NONE ? null : next);
           }
+        }}
+        onOpenChange={(open) => {
+          if (open) onOpen?.();
         }}
       >
         <Select.Trigger

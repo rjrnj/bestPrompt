@@ -38,6 +38,7 @@ export function ProjectPicker() {
         value={state.selectedProjectId}
         unlistedLabel="Loading projects…"
         onChange={(id) => dispatch({ type: "projectSelected", id })}
+        onOpen={() => dispatch({ type: "projectListOpened" })}
         extraItems={[
           {
             value: "new",

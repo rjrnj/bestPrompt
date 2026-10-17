@@ -729,6 +729,18 @@ describe("the starting project", () => {
     expect(none.selectedProjectId).toBeNull();
   });
 
+  it("does not replace no project once the user opened the list", () => {
+    const state = run(
+      [
+        { type: "projectListOpened" },
+        { type: "startingProjectFound", id: "p-web" },
+      ],
+      withProjects,
+    );
+
+    expect(state.selectedProjectId).toBeNull();
+  });
+
   it("does not replace a project the user created", () => {
     const state = run(
       [
@@ -989,6 +1001,43 @@ describe("openConflicts", () => {
     expect(
       openConflicts(state, entry("xy", { x: "x" }, { projectId: "p-web" })),
     ).toEqual(none);
+  });
+
+  it("reports a changed project for an entry opened while the projects load", () => {
+    // The entry keeps its project until the list arrives, so the drafts
+    // move to it.
+    const state = run([{ type: "editSection", key: "a", value: "t" }], loaded);
+
+    expect(
+      openConflicts(state, entry("xy", {}, { projectId: "p-web" }))
+        .changesProject,
+    ).toBe(true);
+    expect(
+      openConflicts(
+        reducer(state, {
+          type: "entryOpened",
+          entry: entry("xy", {}, { projectId: "p-web" }),
+        }),
+        entry("ab", {}, { projectId: "p-web" }),
+      ).changesProject,
+    ).toBe(false);
+  });
+
+  it("counts a project created after the projects failed to load", () => {
+    const state = run(
+      [
+        { type: "projectsFailed", message: "no" },
+        { type: "projectCreated", project: project("p-c", "C") },
+        { type: "editSection", key: "a", value: "t" },
+        { type: "projectSelected", id: null },
+      ],
+      loaded,
+    );
+
+    expect(
+      openConflicts(state, entry("xy", {}, { projectId: "p-c" }))
+        .changesProject,
+    ).toBe(true);
   });
 
   it("treats a deleted project as no project", () => {
