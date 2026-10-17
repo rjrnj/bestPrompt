@@ -155,6 +155,89 @@ describe("HistoryProvider", () => {
     expect(listPromptEntries).toHaveBeenCalledTimes(2);
   });
 
+  it("coming back to the tab reloads every listed page and keeps the selection", async () => {
+    vi.mocked(listPromptEntries)
+      .mockResolvedValueOnce(entries(PAGE_SIZE))
+      .mockResolvedValueOnce(entries(PAGE_SIZE, PAGE_SIZE))
+      .mockResolvedValueOnce(entries(2 * PAGE_SIZE))
+      .mockResolvedValueOnce(entries(3, 2 * PAGE_SIZE));
+    const { result } = renderHistory();
+    await openHistory(result);
+    await act(() => result.current.history.showMore());
+    act(() => result.current.history.select(`e${PAGE_SIZE + 7}`));
+
+    act(() =>
+      result.current.dispatch({ type: "viewChanged", view: "builder" }),
+    );
+    await openHistory(result);
+
+    expect(listPromptEntries).toHaveBeenCalledTimes(3);
+    expect(listPromptEntries).toHaveBeenLastCalledWith(
+      everything,
+      2 * PAGE_SIZE,
+      0,
+    );
+    expect(ids(result)).toHaveLength(2 * PAGE_SIZE);
+    expect(result.current.history.state.selectedId).toBe(`e${PAGE_SIZE + 7}`);
+    expect(result.current.history.canShowMore).toBe(true);
+
+    await act(() => result.current.history.showMore());
+
+    expect(listPromptEntries).toHaveBeenLastCalledWith(
+      everything,
+      PAGE_SIZE,
+      2 * PAGE_SIZE,
+    );
+    expect(ids(result)).toHaveLength(2 * PAGE_SIZE + 3);
+  });
+
+  it("coming back after a delete reloads the listed rows rounded up to whole pages", async () => {
+    vi.mocked(listPromptEntries)
+      .mockResolvedValueOnce(entries(PAGE_SIZE))
+      .mockResolvedValueOnce(entries(PAGE_SIZE, PAGE_SIZE))
+      .mockResolvedValue([]);
+    vi.mocked(deletePromptEntry).mockResolvedValue();
+    const { result } = renderHistory();
+    await openHistory(result);
+    await act(() => result.current.history.showMore());
+    await act(() => result.current.history.remove("e3"));
+
+    act(() =>
+      result.current.dispatch({ type: "viewChanged", view: "builder" }),
+    );
+    await openHistory(result);
+
+    expect(listPromptEntries).toHaveBeenLastCalledWith(
+      everything,
+      2 * PAGE_SIZE,
+      0,
+    );
+  });
+
+  it("a filter change after coming back loads one page", async () => {
+    vi.mocked(listPromptEntries)
+      .mockResolvedValueOnce(entries(PAGE_SIZE))
+      .mockResolvedValueOnce(entries(PAGE_SIZE, PAGE_SIZE))
+      .mockResolvedValueOnce(entries(2 * PAGE_SIZE))
+      .mockResolvedValueOnce([]);
+    const { result } = renderHistory();
+    await openHistory(result);
+    await act(() => result.current.history.showMore());
+    act(() =>
+      result.current.dispatch({ type: "viewChanged", view: "builder" }),
+    );
+    await openHistory(result);
+
+    act(() => result.current.history.setFilters({ frameworkId: "rtf" }));
+
+    await waitFor(() => expect(listPromptEntries).toHaveBeenCalledTimes(4));
+    expect(listPromptEntries).toHaveBeenLastCalledWith(
+      { ...everything, frameworkId: "rtf" },
+      PAGE_SIZE,
+      0,
+    );
+  });
+
   it("refreshes on request with the current filters", async () => {
     const { result } = renderHistory();
     await openHistory(result);
@@ -392,6 +475,36 @@ describe("HistoryProvider", () => {
       PAGE_SIZE,
       0,
     );
+  });
+
+  it("keeps the selection when a deleted project filter falls back to all", async () => {
+    vi.mocked(listProjects).mockResolvedValue([project("p-api", "api")]);
+    vi.mocked(deleteProject).mockResolvedValue();
+    const filed = entry("filed", { projectId: "p-api" });
+    vi.mocked(listPromptEntries).mockImplementation(async (query) =>
+      query.project.kind === "any" ? [entry("other"), filed] : [filed],
+    );
+    const { result } = renderHistory();
+    await waitFor(() =>
+      expect(result.current.app.projects.status).toBe("ready"),
+    );
+    act(() =>
+      result.current.history.setFilters({
+        project: { kind: "project", id: "p-api" },
+      }),
+    );
+    await openHistory(result);
+    act(() => result.current.history.select("filed"));
+    act(() =>
+      result.current.dispatch({ type: "viewChanged", view: "builder" }),
+    );
+
+    await act(() => result.current.actions.deleteProject("p-api"));
+    await openHistory(result);
+
+    await waitFor(() => expect(ids(result)).toEqual(["other", "filed"]));
+    expect(listPromptEntries).toHaveBeenCalledTimes(2);
+    expect(result.current.history.state.selectedId).toBe("filed");
   });
 
   it("keeps a filter whose project is still there", async () => {

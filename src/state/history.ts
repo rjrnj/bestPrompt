@@ -22,7 +22,7 @@ export type HistoryState = {
   status: "idle" | "loading" | "ready" | "error";
   /** Why the last page failed; the entries already listed stay. */
   error: string | null;
-  /** Whether the last page came back full, so another may follow. */
+  /** Whether the last request came back full, so another page may follow. */
   hasMore: boolean;
   selectedId: string | null;
   /** The latest page request; a result for any other is ignored. */
@@ -46,6 +46,8 @@ export type HistoryAction =
       entries: PromptEntry[];
       /** True for "Show more"; false replaces the list with a first page. */
       append: boolean;
+      /** How many entries the request asked for. */
+      limit: number;
     }
   | { type: "pageFailed"; requestId: number; message: string }
   | { type: "entrySelected"; id: string | null }
@@ -130,7 +132,7 @@ export function historyReducer(
         entries,
         status: "ready",
         error: null,
-        hasMore: action.entries.length === PAGE_SIZE,
+        hasMore: action.entries.length === action.limit,
         selectedId,
         offset: (action.append ? state.offset : 0) + action.entries.length,
       };
