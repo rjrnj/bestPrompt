@@ -163,6 +163,19 @@ describe("EntryDetail", () => {
     expect(builder?.textContent).toBe("Mine");
   });
 
+  it("sections_drop_their_leading_and_trailing_blank_lines", async () => {
+    await renderDetail({
+      ...saved,
+      sectionValues: {
+        ...saved.sectionValues,
+        role: "\n  \r\n    Reviewer of\n\n  the login code \n \t\n\n",
+      },
+    });
+
+    const role = within(pane()).getByText("Role").nextElementSibling;
+    expect(role?.textContent).toBe("    Reviewer of\n\n  the login code ");
+  });
+
   it("prompt_toggle_shows_the_saved_text_exactly", async () => {
     const user = await renderDetail();
     await user.click(within(pane()).getByRole("radio", { name: "Prompt" }));
