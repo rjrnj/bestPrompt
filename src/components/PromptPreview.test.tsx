@@ -19,6 +19,7 @@ const rtf: Framework = {
   description: "",
   template:
     "{{#role}}# Role\n{{role}}{{/role}}\n\n{{#task}}# Task\n{{task}}{{/task}}",
+  summaryKey: null,
   isCustom: false,
   sections: [
     { key: "role", label: "Role", helpText: "" },

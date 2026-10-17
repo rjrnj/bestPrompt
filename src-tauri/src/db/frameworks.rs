@@ -24,6 +24,9 @@ pub struct Framework {
     pub name: String,
     pub description: String,
     pub template: String,
+    /// The key of the section that best summarises a prompt built with this
+    /// framework, used to label entries that have no title.
+    pub summary_key: Option<String>,
     pub is_custom: bool,
     pub sections: Vec<Section>,
     pub created_at: i64,
@@ -31,7 +34,8 @@ pub struct Framework {
 }
 
 const FRAMEWORK_COLUMNS: &str =
-    "SELECT id, name, description, template, is_custom, created_at, updated_at FROM frameworks";
+    "SELECT id, name, description, template, summary_key, is_custom, created_at, updated_at
+     FROM frameworks";
 
 /// Maps a `FRAMEWORK_COLUMNS` row; the sections are filled in by a second query.
 fn framework_without_sections(row: &rusqlite::Row<'_>) -> rusqlite::Result<Framework> {
@@ -40,10 +44,11 @@ fn framework_without_sections(row: &rusqlite::Row<'_>) -> rusqlite::Result<Frame
         name: row.get(1)?,
         description: row.get(2)?,
         template: row.get(3)?,
-        is_custom: row.get(4)?,
+        summary_key: row.get(4)?,
+        is_custom: row.get(5)?,
         sections: Vec::new(),
-        created_at: row.get(5)?,
-        updated_at: row.get(6)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
     })
 }
 

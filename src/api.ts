@@ -4,8 +4,10 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type { DbError, DbErrorKind } from "./bindings/DbError";
+import type { EntryQuery } from "./bindings/EntryQuery";
 import type { Framework } from "./bindings/Framework";
 import type { NewPromptEntry } from "./bindings/NewPromptEntry";
+import type { Project } from "./bindings/Project";
 import type { PromptEntry } from "./bindings/PromptEntry";
 
 /** A command that failed, with the `kind` the backend reported. */
@@ -22,10 +24,11 @@ export class ApiError extends Error {
 // `satisfies` makes this a compile error when the generated DbErrorKind gains
 // a value that isn't listed here, so a new backend kind can't be silently
 // reclassified as "database".
-const KINDS = { database: true, notFound: true } satisfies Record<
-  DbErrorKind,
-  true
->;
+const KINDS = {
+  database: true,
+  notFound: true,
+  invalid: true,
+} satisfies Record<DbErrorKind, true>;
 
 function isKnownKind(value: unknown): value is DbErrorKind {
   return (
@@ -93,12 +96,51 @@ export function savePromptEntry(entry: NewPromptEntry): Promise<PromptEntry> {
 }
 
 export function listPromptEntries(
+  query: EntryQuery,
   limit: number,
   offset: number,
 ): Promise<PromptEntry[]> {
-  return call("list_prompt_entries", { limit, offset });
+  return call("list_prompt_entries", { query, limit, offset });
 }
 
 export function getPromptEntry(id: string): Promise<PromptEntry> {
   return call("get_prompt_entry", { id });
+}
+
+export function setEntryTitle(
+  id: string,
+  title: string | null,
+): Promise<PromptEntry> {
+  return call("set_entry_title", { id, title });
+}
+
+export function setEntryProject(
+  id: string,
+  projectId: string | null,
+): Promise<PromptEntry> {
+  return call("set_entry_project", { id, projectId });
+}
+
+export function deletePromptEntry(id: string): Promise<void> {
+  return call("delete_prompt_entry", { id });
+}
+
+export function latestEntryProject(): Promise<string | null> {
+  return call("latest_entry_project");
+}
+
+export function listProjects(): Promise<Project[]> {
+  return call("list_projects");
+}
+
+export function createProject(name: string): Promise<Project> {
+  return call("create_project", { name });
+}
+
+export function renameProject(id: string, name: string): Promise<Project> {
+  return call("rename_project", { id, name });
+}
+
+export function deleteProject(id: string): Promise<void> {
+  return call("delete_project", { id });
 }

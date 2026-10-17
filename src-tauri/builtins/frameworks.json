@@ -1,6 +1,7 @@
 [
   {
     "id": "costar",
+    "summaryKey": "objective",
     "name": "CO-STAR",
     "description": "Context, Objective, Style, Tone, Audience, Response. Suited to writing tasks where voice and audience matter.",
     "source": "GovTech Singapore's Data Science & AI team (https://www.tech.gov.sg/technews/mastering-the-art-of-prompt-engineering-with-empower/), made widely known by Sheila Teo's write-up of Singapore's GPT-4 prompt engineering competition (https://medium.com/towards-data-science/how-i-won-singapores-gpt-4-prompt-engineering-competition-34c195a93d41).",
@@ -40,6 +41,7 @@
   },
   {
     "id": "risen",
+    "summaryKey": "instructions",
     "name": "RISEN",
     "description": "Role, Instructions, Steps, End goal, Narrowing. Suited to multi-step tasks with a clear outcome.",
     "source": "Kyle Balmer (https://aiwithkyle.com/).",
@@ -74,6 +76,7 @@
   },
   {
     "id": "race",
+    "summaryKey": "action",
     "name": "RACE",
     "description": "Role, Action, Context, Execution. Asks a reasoning model to work out its own approach rather than telling it.",
     "source": "RACE 2.0 by Trust Insights, which created RACE for AI prompting (https://www.trustinsights.ai/blog/2025/04/ai-prompting-frameworks/).",
@@ -103,6 +106,7 @@
   },
   {
     "id": "rtf",
+    "summaryKey": "task",
     "name": "RTF",
     "description": "Role, Task, Format. The shortest framework, for quick requests.",
     "source": "No single verifiable origin. Role, Task, Format is the most common expansion; some sources use Request for the R.",

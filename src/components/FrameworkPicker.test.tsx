@@ -18,6 +18,7 @@ function framework(id: string, name: string, description: string): Framework {
     name,
     description,
     template: "",
+    summaryKey: null,
     isCustom: false,
     sections: [],
     createdAt: 1,

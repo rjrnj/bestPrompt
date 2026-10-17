@@ -4,4 +4,8 @@
  * What the frontend sends to save an entry. The id, timestamp and snapshot
  * are filled in here.
  */
-export type NewPromptEntry = { frameworkId: string, sectionValues: { [key in string]: string }, renderedPrompt: string, };
+export type NewPromptEntry = { frameworkId: string, sectionValues: { [key in string]: string }, renderedPrompt: string, 
+/**
+ * Blank or whitespace-only is stored as no title.
+ */
+title: string | null, projectId: string | null, };

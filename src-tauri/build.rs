@@ -9,6 +9,14 @@ const COMMANDS: &[&str] = &[
     "save_prompt_entry",
     "list_prompt_entries",
     "get_prompt_entry",
+    "set_entry_title",
+    "set_entry_project",
+    "delete_prompt_entry",
+    "latest_entry_project",
+    "list_projects",
+    "create_project",
+    "rename_project",
+    "delete_project",
 ];
 
 fn main() {

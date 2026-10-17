@@ -6,8 +6,10 @@ pub mod entries;
 mod error;
 pub mod frameworks;
 pub mod migrate;
+pub mod projects;
 #[cfg(test)]
 mod schema_tests;
+pub mod search;
 #[cfg(test)]
 mod test_support;
 

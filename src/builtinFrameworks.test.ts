@@ -8,6 +8,10 @@ import { renderTemplate, validateTemplate } from "./template";
 describe.each(frameworks)("built-in framework $id", (framework) => {
   const keys = framework.sections.map((section) => section.key);
 
+  it("has a summaryKey that is one of its sections", () => {
+    expect(keys).toContain(framework.summaryKey);
+  });
+
   it("has a template that validates against its section keys", () => {
     expect(validateTemplate(framework.template, keys)).toEqual([]);
   });

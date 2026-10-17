@@ -18,7 +18,10 @@ use super::DbError;
 
 /// The app's migrations, in order. Never edit or reorder a migration that has
 /// shipped; add a new one to the end instead.
-const MIGRATIONS: &[&str] = &[include_str!("migrations/001_initial.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("migrations/001_initial.sql"),
+    include_str!("migrations/002_history.sql"),
+];
 
 /// The schema version of a database that `migrate` would have to change,
 /// or `None` if it is already current (or newer, which `migrate` refuses).
@@ -131,6 +134,32 @@ mod tests {
         let mut conn = open_in_memory().unwrap();
         migrate(&mut conn).unwrap();
         assert_eq!(user_version(&conn).unwrap(), MIGRATIONS.len());
+    }
+
+    #[test]
+    fn migration_backfills_the_fts_index_for_existing_entries() {
+        let mut conn = open_in_memory().unwrap();
+        apply(&mut conn, &MIGRATIONS[..1]).unwrap();
+        conn.execute(
+            "INSERT INTO prompt_entries (id, framework_snapshot, section_values, rendered_prompt, created_at)
+             VALUES ('e', '{}', '{\"a\":\"needle here\",\"b\":\"other\"}', 'rendered', 0)",
+            [],
+        )
+        .unwrap();
+
+        apply(&mut conn, MIGRATIONS).unwrap();
+
+        let found: Vec<String> = conn
+            .prepare(
+                "SELECT entry_id FROM prompt_entries_fts WHERE prompt_entries_fts MATCH 'needle'",
+            )
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(found, ["e"]);
+        assert_eq!(count(&conn, "SELECT count(*) FROM prompt_entries_fts"), 1);
     }
 
     #[test]

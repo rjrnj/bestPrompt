@@ -10,6 +10,14 @@
     "allow-get-framework",
     "allow-save-prompt-entry",
     "allow-list-prompt-entries",
-    "allow-get-prompt-entry"
+    "allow-get-prompt-entry",
+    "allow-set-entry-title",
+    "allow-set-entry-project",
+    "allow-delete-prompt-entry",
+    "allow-latest-entry-project",
+    "allow-list-projects",
+    "allow-create-project",
+    "allow-rename-project",
+    "allow-delete-project"
   ]
 }

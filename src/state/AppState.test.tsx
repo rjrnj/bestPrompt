@@ -26,6 +26,7 @@ const rtf: Framework = {
   name: "RTF",
   description: "",
   template: "{{role}}",
+  summaryKey: null,
   isCustom: false,
   sections: [{ key: "role", label: "Role", helpText: "" }],
   createdAt: 1,
@@ -42,6 +43,8 @@ function Probe() {
     frameworkId: state.selectedId ?? "",
     sectionValues: currentDraft(state),
     renderedPrompt: renderedPrompt(state),
+    title: null,
+    projectId: null,
   });
   return (
     <div>
@@ -189,10 +192,13 @@ function stored(prompt: string): PromptEntry {
     frameworkSnapshot: {
       name: rtf.name,
       template: rtf.template,
+      summaryKey: rtf.summaryKey,
       sections: rtf.sections,
     },
     sectionValues: { role: prompt },
     renderedPrompt: prompt,
+    title: null,
+    projectId: null,
     createdAt: 1,
   };
 }
@@ -227,6 +233,8 @@ describe("AppStateProvider save flow", () => {
       frameworkId: "rtf",
       sectionValues: { role: "typed" },
       renderedPrompt: "typed",
+      title: null,
+      projectId: null,
     });
     expect(toasts()).toEqual(["info: Copied and saved"]);
   });
