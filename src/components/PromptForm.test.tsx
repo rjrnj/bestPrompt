@@ -24,6 +24,7 @@ function framework(id: string, sections: Section[]): Framework {
     name: id.toUpperCase(),
     description: "",
     template: "",
+    summaryKey: null,
     isCustom: false,
     sections,
     createdAt: 1,

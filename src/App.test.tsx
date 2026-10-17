@@ -22,6 +22,7 @@ const frameworks: Framework[] = builtins.map((f) => ({
   name: f.name,
   description: f.description,
   template: f.template,
+  summaryKey: f.summaryKey,
   sections: f.sections,
   isCustom: false,
   createdAt: 1,
@@ -94,7 +95,12 @@ describe("App", () => {
         ({
           ...entry,
           id: "entry",
-          frameworkSnapshot: { name: "CO-STAR", template: "", sections: [] },
+          frameworkSnapshot: {
+            name: "CO-STAR",
+            template: "",
+            summaryKey: null,
+            sections: [],
+          },
           createdAt: 1,
         }) satisfies PromptEntry,
     );

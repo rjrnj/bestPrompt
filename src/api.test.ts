@@ -28,6 +28,7 @@ const rtf: Framework = {
   name: "RTF",
   description: "",
   template: "{{role}}",
+  summaryKey: null,
   isCustom: false,
   sections: [{ key: "role", label: "Role", helpText: "" }],
   createdAt: 1,
@@ -37,7 +38,12 @@ const rtf: Framework = {
 const entry: PromptEntry = {
   id: "0192d4c8-7b3a-7f00-8a1e-3c5d7e9f0b2a",
   frameworkId: "rtf",
-  frameworkSnapshot: { name: "RTF", template: "{{role}}", sections: [] },
+  frameworkSnapshot: {
+    name: "RTF",
+    template: "{{role}}",
+    summaryKey: null,
+    sections: [],
+  },
   sectionValues: { role: "a reviewer" },
   renderedPrompt: "a reviewer",
   createdAt: 2,

@@ -5,4 +5,8 @@ import type { Section } from "./Section";
  * The framework as it was when the entry was saved, so the entry can be
  * reopened after the framework is edited or deleted.
  */
-export type FrameworkSnapshot = { name: string, template: string, sections: Array<Section>, };
+export type FrameworkSnapshot = { name: string, template: string, 
+/**
+ * Absent in entries saved before summary keys existed.
+ */
+summaryKey: string | null, sections: Array<Section>, };

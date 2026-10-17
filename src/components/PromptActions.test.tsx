@@ -23,6 +23,7 @@ const rtf: Framework = {
   description: "",
   template:
     "{{#role}}# Role\n{{role}}{{/role}}\n\n{{#task}}# Task\n{{task}}{{/task}}",
+  summaryKey: null,
   isCustom: false,
   sections: [
     { key: "role", label: "Role", helpText: "" },
@@ -61,6 +62,7 @@ function stored(): PromptEntry {
     frameworkSnapshot: {
       name: rtf.name,
       template: rtf.template,
+      summaryKey: rtf.summaryKey,
       sections: rtf.sections,
     },
     sectionValues: {},

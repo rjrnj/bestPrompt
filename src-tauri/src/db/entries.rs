@@ -18,6 +18,9 @@ use super::{DbError, Entity, now_millis};
 pub struct FrameworkSnapshot {
     pub name: String,
     pub template: String,
+    /// Absent in entries saved before summary keys existed.
+    #[serde(default)]
+    pub summary_key: Option<String>,
     pub sections: Vec<Section>,
 }
 
@@ -73,6 +76,7 @@ fn insert(
         framework_snapshot: FrameworkSnapshot {
             name: framework.name,
             template: framework.template,
+            summary_key: framework.summary_key,
             sections: framework.sections,
         },
         section_values: new.section_values.clone(),
@@ -197,6 +201,7 @@ mod tests {
             FrameworkSnapshot {
                 name: "Framework".to_owned(),
                 template: String::new(),
+                summary_key: None,
                 sections: vec![
                     Section {
                         key: "a".to_owned(),
@@ -213,6 +218,29 @@ mod tests {
         );
         assert_eq!(entry.section_values, values(&[("a", "one"), ("b", "")]));
         assert_eq!(entry.rendered_prompt, "# A\none");
+    }
+
+    #[test]
+    fn saving_snapshots_the_summary_key() {
+        let mut conn = migrated();
+        insert_framework(&conn, "f", false);
+        insert_section(&conn, "f", 0, "a");
+        conn.execute("UPDATE frameworks SET summary_key = 'a' WHERE id = 'f'", [])
+            .unwrap();
+
+        let entry = save_prompt_entry(&mut conn, &new_entry("f")).unwrap();
+
+        assert_eq!(entry.framework_snapshot.summary_key.as_deref(), Some("a"));
+        let stored = get_prompt_entry(&conn, &entry.id).unwrap();
+        assert_eq!(stored.framework_snapshot.summary_key.as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn a_snapshot_saved_before_summary_keys_reads_as_none() {
+        let snapshot: FrameworkSnapshot =
+            serde_json::from_str(r#"{"name":"N","template":"T","sections":[]}"#).unwrap();
+
+        assert_eq!(snapshot.summary_key, None);
     }
 
     fn new_entry(framework_id: &str) -> NewPromptEntry {

@@ -23,6 +23,8 @@ struct Builtin {
     name: String,
     description: String,
     template: String,
+    /// The key of the section that best summarises the prompt.
+    summary_key: String,
     sections: Vec<BuiltinSection>,
 }
 
@@ -121,14 +123,23 @@ fn upsert(conn: &Connection, builtin: &Builtin, now: i64) -> Result<(), DbError>
     // Not INSERT OR REPLACE: that deletes the existing row first, and the
     // delete would unlink every history entry from the framework.
     conn.execute(
-        "INSERT INTO frameworks (id, name, description, template, is_custom, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, 0, ?5, ?5)
+        "INSERT INTO frameworks
+             (id, name, description, template, summary_key, is_custom, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?6)
          ON CONFLICT (id) DO UPDATE SET
              name = excluded.name,
              description = excluded.description,
              template = excluded.template,
+             summary_key = excluded.summary_key,
              updated_at = excluded.updated_at",
-        params![builtin.id, builtin.name, builtin.description, builtin.template, now],
+        params![
+            builtin.id,
+            builtin.name,
+            builtin.description,
+            builtin.template,
+            builtin.summary_key,
+            now
+        ],
     )?;
     // Replaced wholesale: updating rows in place could collide on the unique
     // position while sections are being reordered.
@@ -154,11 +165,19 @@ fn upsert(conn: &Connection, builtin: &Builtin, now: i64) -> Result<(), DbError>
 
 /// Reads a built-in back from the database, in the file's shape.
 fn stored(conn: &Connection, id: &str) -> Result<Option<Builtin>, DbError> {
-    let Some((name, description, template)) = conn
+    let Some((name, description, template, summary_key)) = conn
         .query_row(
-            "SELECT name, description, template FROM frameworks WHERE id = ?1 AND is_custom = 0",
+            "SELECT name, description, template, summary_key
+             FROM frameworks WHERE id = ?1 AND is_custom = 0",
             [id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            },
         )
         .optional()?
     else {
@@ -182,6 +201,9 @@ fn stored(conn: &Connection, id: &str) -> Result<Option<Builtin>, DbError> {
         name,
         description,
         template,
+        // A built-in row with no summary key never equals the file's, so the
+        // sync fills it in.
+        summary_key: summary_key.unwrap_or_default(),
         sections,
     }))
 }
@@ -199,6 +221,7 @@ mod tests {
             name: name.to_owned(),
             description: format!("{name} description"),
             template: keys.iter().map(|key| format!("{{{{{key}}}}}")).collect(),
+            summary_key: keys[0].to_owned(),
             sections: keys
                 .iter()
                 .map(|key| BuiltinSection {
@@ -286,6 +309,59 @@ mod tests {
         for builtin in &builtins {
             assert_eq!(stored(&conn, &builtin.id).unwrap().as_ref(), Some(builtin));
         }
+    }
+
+    #[test]
+    fn seeding_stores_each_builtins_summary_key() {
+        let mut conn = migrated();
+        seed_builtins(&mut conn).unwrap();
+
+        let keys: Vec<(String, Option<String>)> = conn
+            .prepare("SELECT id, summary_key FROM frameworks WHERE is_custom = 0 ORDER BY id")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+
+        let expected: Vec<(String, Option<String>)> = [
+            ("costar", "objective"),
+            ("race", "action"),
+            ("risen", "instructions"),
+            ("rtf", "task"),
+        ]
+        .iter()
+        .map(|(id, key)| ((*id).to_owned(), Some((*key).to_owned())))
+        .collect();
+        assert_eq!(keys, expected);
+    }
+
+    #[test]
+    fn every_builtins_summary_key_is_one_of_its_sections() {
+        for builtin in parse_builtins().unwrap() {
+            assert!(
+                builtin
+                    .sections
+                    .iter()
+                    .any(|section| section.key == builtin.summary_key),
+                "{}",
+                builtin.id
+            );
+        }
+    }
+
+    #[test]
+    fn changing_only_the_summary_key_resyncs_the_builtin() {
+        let mut conn = migrated();
+        let original = builtin("a", "A", &["x", "y"]);
+        sync(&mut conn, std::slice::from_ref(&original), 1).unwrap();
+
+        let mut changed = original;
+        changed.summary_key = "y".to_owned();
+        sync(&mut conn, std::slice::from_ref(&changed), 2).unwrap();
+
+        assert_eq!(stored(&conn, "a").unwrap(), Some(changed));
+        assert_eq!(timestamps(&conn, "a"), (1, 2));
     }
 
     #[test]

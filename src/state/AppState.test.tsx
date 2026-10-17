@@ -26,6 +26,7 @@ const rtf: Framework = {
   name: "RTF",
   description: "",
   template: "{{role}}",
+  summaryKey: null,
   isCustom: false,
   sections: [{ key: "role", label: "Role", helpText: "" }],
   createdAt: 1,
@@ -189,6 +190,7 @@ function stored(prompt: string): PromptEntry {
     frameworkSnapshot: {
       name: rtf.name,
       template: rtf.template,
+      summaryKey: rtf.summaryKey,
       sections: rtf.sections,
     },
     sectionValues: { role: prompt },
