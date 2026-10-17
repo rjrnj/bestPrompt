@@ -83,7 +83,16 @@ describe("PromptForm", () => {
     const objective = screen.getByRole("textbox", { name: "Objective" });
     expect(context).toHaveAccessibleDescription("Background the model needs.");
     expect(objective).toHaveAccessibleDescription("The task to carry out.");
-    expect(screen.getAllByRole("textbox")).toHaveLength(2);
+    // The title field comes first; see the next test.
+    expect(screen.getAllByRole("textbox")).toHaveLength(3);
+  });
+
+  it("puts the title field above the first section", async () => {
+    await renderForm();
+
+    const fields = screen.getAllByRole("textbox");
+    expect(fields[0]).toHaveAccessibleName("Title");
+    expect(fields[1]).toHaveAccessibleName("Context");
   });
 
   it("stores what is typed in the draft", async () => {

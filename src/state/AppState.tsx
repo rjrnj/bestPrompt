@@ -15,9 +15,18 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
-import { listFrameworks, savePromptEntry } from "../api";
+import {
+  createProject as createProjectCommand,
+  deleteProject as deleteProjectCommand,
+  latestEntryProject,
+  listFrameworks,
+  listProjects,
+  renameProject as renameProjectCommand,
+  savePromptEntry,
+} from "../api";
 import type { Framework } from "../bindings/Framework";
 import type { NewPromptEntry } from "../bindings/NewPromptEntry";
+import type { Project } from "../bindings/Project";
 import { writeText } from "../clipboard";
 import {
   initialState,
@@ -34,6 +43,12 @@ export type AppActions = {
   copy: (entry: NewPromptEntry) => Promise<void>;
   /** Saves the entry without copying, unless already saved. */
   save: (entry: NewPromptEntry) => Promise<void>;
+  /** Creates a project and selects it. False, after a toast, when it fails. */
+  createProject: (name: string) => Promise<boolean>;
+  /** Renames a project. False, after a toast, when it fails. */
+  renameProject: (id: string, name: string) => Promise<boolean>;
+  /** Deletes a project. False, after a toast, when it fails. */
+  deleteProject: (id: string) => Promise<boolean>;
 };
 
 const StateContext = createContext<State | null>(null);
@@ -88,6 +103,81 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void loadFrameworks();
   }, [loadFrameworks]);
+
+  // The projects load without blocking the Builder, and without a toast when
+  // they fail: the Builder still works with "No project". The project of the
+  // newest entry becomes the starting selection when it is in the list.
+  useEffect(() => {
+    let current = true;
+    void (async () => {
+      let projects: Project[];
+      try {
+        projects = await listProjects();
+      } catch (error) {
+        if (current) {
+          dispatch({ type: "projectsFailed", message: messageOf(error) });
+        }
+        return;
+      }
+      if (!current) return;
+      dispatch({ type: "projectsLoaded", projects });
+      let latest: string | null;
+      try {
+        latest = await latestEntryProject();
+      } catch {
+        return;
+      }
+      if (current && projects.some((p) => p.id === latest)) {
+        dispatch({ type: "projectSelected", id: latest });
+      }
+    })();
+    return () => {
+      current = false;
+    };
+  }, []);
+
+  /** Runs a project command; on failure toasts its message and returns false. */
+  const projectAction = useCallback(
+    async (run: () => Promise<Action>): Promise<boolean> => {
+      let action: Action;
+      try {
+        action = await run();
+      } catch (error) {
+        dispatch(toast("error", messageOf(error)));
+        return false;
+      }
+      dispatch(action);
+      return true;
+    },
+    [],
+  );
+
+  const createProject = useCallback(
+    (name: string) =>
+      projectAction(async () => ({
+        type: "projectCreated",
+        project: await createProjectCommand(name),
+      })),
+    [projectAction],
+  );
+
+  const renameProject = useCallback(
+    (id: string, name: string) =>
+      projectAction(async () => ({
+        type: "projectRenamed",
+        project: await renameProjectCommand(id, name),
+      })),
+    [projectAction],
+  );
+
+  const deleteProject = useCallback(
+    (id: string) =>
+      projectAction(async () => {
+        await deleteProjectCommand(id);
+        return { type: "projectDeleted", id };
+      }),
+    [projectAction],
+  );
 
   // True from the click that starts a copy or save until it has finished, so
   // the second click of a double click is ignored rather than saving twice.
@@ -175,8 +265,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   );
 
   const actions = useMemo<AppActions>(
-    () => ({ loadFrameworks, copy, save }),
-    [loadFrameworks, copy, save],
+    () => ({
+      loadFrameworks,
+      copy,
+      save,
+      createProject,
+      renameProject,
+      deleteProject,
+    }),
+    [loadFrameworks, copy, save, createProject, renameProject, deleteProject],
   );
 
   return (
