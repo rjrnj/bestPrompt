@@ -175,6 +175,52 @@ describe("App", () => {
     ).toBeInTheDocument();
   });
 
+  it("copying_the_opened_prompt_unchanged_saves_nothing", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue(frameworks);
+    vi.mocked(writeText).mockResolvedValue();
+    const costar = frameworks[0];
+    const entry: PromptEntry = {
+      id: "e1",
+      frameworkId: costar.id,
+      frameworkSnapshot: {
+        name: costar.name,
+        template: costar.template,
+        summaryKey: costar.summaryKey,
+        sections: costar.sections,
+      },
+      sectionValues: { objective: "Write a README section." },
+      renderedPrompt: "# Objective\nWrite a README section.",
+      title: null,
+      projectId: null,
+      createdAt: 1,
+    };
+    vi.mocked(listPromptEntries).mockResolvedValue([entry]);
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Framework" });
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("tab", { name: "History" }));
+    await user.click(
+      await screen.findByRole("button", { name: /Write a README section/ }),
+    );
+    await user.click(screen.getByRole("button", { name: "Open in Builder" }));
+
+    expect(
+      await screen.findByRole("textbox", { name: "Objective" }),
+    ).toHaveValue("Write a README section.");
+    const preview = screen.getByRole("region", { name: "Preview" });
+    await user.click(within(preview).getByRole("button", { name: "Copy" }));
+
+    expect(writeText).toHaveBeenCalledWith(entry.renderedPrompt);
+    const notifications = await screen.findByRole("region", {
+      name: /notifications/i,
+    });
+    expect(
+      await within(notifications).findByText("Copied"),
+    ).toBeInTheDocument();
+    expect(savePromptEntry).not.toHaveBeenCalled();
+  });
+
   it("shows an error toast and keeps the draft when the save fails", async () => {
     vi.mocked(listFrameworks).mockResolvedValue(frameworks);
     vi.mocked(savePromptEntry).mockRejectedValue(

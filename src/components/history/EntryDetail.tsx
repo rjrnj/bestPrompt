@@ -6,6 +6,7 @@ import { writeText } from "../../clipboard";
 import { entryLabel } from "../../history/label";
 import { useAppDispatch, useAppState } from "../../state/AppState";
 import { useHistory } from "../../state/HistoryState";
+import { OpenInBuilder } from "./OpenInBuilder";
 import { ProjectSelect } from "../ProjectSelect";
 import { TextFieldDialog } from "../TextFieldDialog";
 import {
@@ -120,7 +121,7 @@ function Detail({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        {/* Open in Builder goes here, first in the row. */}
+        <OpenInBuilder entry={entry} />
         <button type="button" className={secondaryButton} onClick={copy}>
           Copy
         </button>
