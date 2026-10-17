@@ -7,6 +7,7 @@ export type DbError = { kind: DbErrorKind, message: string, };
 
 /**
  * What the frontend can branch on. `NotFound` is an expected outcome of a
- * lookup; everything else is something wrong with the database.
+ * lookup and `Invalid` a rejected input whose message can be shown as is;
+ * everything else is something wrong with the database.
  */
-export type DbErrorKind = "database" | "notFound";
+export type DbErrorKind = "database" | "notFound" | "invalid";

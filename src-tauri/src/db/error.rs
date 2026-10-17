@@ -30,6 +30,14 @@ pub enum DbError {
     /// SQLite takes a backup's file name as text, which this path can't be.
     #[error("backup path {} is not valid Unicode", path.display())]
     BackupPathNotUnicode { path: std::path::PathBuf },
+
+    /// A project name that is empty once surrounding whitespace is removed.
+    #[error("A project name can't be blank.")]
+    BlankProjectName,
+
+    /// Another project already has this name, ignoring ASCII case.
+    #[error("A project named “{name}” already exists.")]
+    ProjectNameTaken { name: String },
 }
 
 /// What a `NotFound` error was looking for.
@@ -37,6 +45,7 @@ pub enum DbError {
 pub enum Entity {
     Framework,
     PromptEntry,
+    Project,
 }
 
 impl std::fmt::Display for Entity {
@@ -44,6 +53,7 @@ impl std::fmt::Display for Entity {
         f.write_str(match self {
             Entity::Framework => "framework",
             Entity::PromptEntry => "prompt entry",
+            Entity::Project => "project",
         })
     }
 }
@@ -58,13 +68,15 @@ struct Payload {
 }
 
 /// What the frontend can branch on. `NotFound` is an expected outcome of a
-/// lookup; everything else is something wrong with the database.
+/// lookup and `Invalid` a rejected input whose message can be shown as is;
+/// everything else is something wrong with the database.
 #[derive(Debug, Clone, Copy, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "DbError.ts", rename = "DbErrorKind")]
 enum Kind {
     Database,
     NotFound,
+    Invalid,
 }
 
 impl DbError {
@@ -76,6 +88,7 @@ impl DbError {
             | DbError::BuiltinsUnreadable(_)
             | DbError::BackupPathNotUnicode { .. } => Kind::Database,
             DbError::NotFound { .. } => Kind::NotFound,
+            DbError::BlankProjectName | DbError::ProjectNameTaken { .. } => Kind::Invalid,
         }
     }
 
@@ -87,7 +100,10 @@ impl DbError {
             | DbError::MigrationBrokeForeignKey { .. }
             | DbError::BuiltinsUnreadable(_)
             | DbError::BackupPathNotUnicode { .. } => "A database error occurred.".to_owned(),
-            DbError::SchemaTooNew { .. } | DbError::NotFound { .. } => self.to_string(),
+            DbError::SchemaTooNew { .. }
+            | DbError::NotFound { .. }
+            | DbError::BlankProjectName
+            | DbError::ProjectNameTaken { .. } => self.to_string(),
         }
     }
 }
@@ -170,6 +186,32 @@ mod tests {
             json!({ "kind": "notFound", "message": "framework costar not found" })
         );
         assert_eq!(log, Vec::<String>::new());
+    }
+
+    #[test]
+    fn invalid_errors_serialize_with_their_own_kind_and_message() {
+        let (blank, blank_log) =
+            logged(|| serde_json::to_value(DbError::BlankProjectName).unwrap());
+        let (taken, taken_log) = logged(|| {
+            serde_json::to_value(DbError::ProjectNameTaken {
+                name: "API".to_owned(),
+            })
+            .unwrap()
+        });
+
+        assert_eq!(
+            blank,
+            json!({ "kind": "invalid", "message": "A project name can't be blank." })
+        );
+        assert_eq!(
+            taken,
+            json!({
+                "kind": "invalid",
+                "message": "A project named “API” already exists."
+            })
+        );
+        assert_eq!(blank_log, Vec::<String>::new());
+        assert_eq!(taken_log, Vec::<String>::new());
     }
 
     #[test]

@@ -117,6 +117,20 @@ describe("api", () => {
     });
   });
 
+  it("turns an invalid rejection into an ApiError of kind invalid", async () => {
+    mockIPC(() => {
+      throw { kind: "invalid", message: "A project name can't be blank." };
+    });
+
+    const error = await listFrameworks().catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({
+      kind: "invalid",
+      message: "A project name can't be blank.",
+    });
+  });
+
   it("treats a rejection with an unknown kind as a database error, keeping its message", async () => {
     mockIPC(() => {
       throw { kind: "somethingElse", message: "from a plugin" };

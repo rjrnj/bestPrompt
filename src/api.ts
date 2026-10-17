@@ -22,10 +22,11 @@ export class ApiError extends Error {
 // `satisfies` makes this a compile error when the generated DbErrorKind gains
 // a value that isn't listed here, so a new backend kind can't be silently
 // reclassified as "database".
-const KINDS = { database: true, notFound: true } satisfies Record<
-  DbErrorKind,
-  true
->;
+const KINDS = {
+  database: true,
+  notFound: true,
+  invalid: true,
+} satisfies Record<DbErrorKind, true>;
 
 function isKnownKind(value: unknown): value is DbErrorKind {
   return (
