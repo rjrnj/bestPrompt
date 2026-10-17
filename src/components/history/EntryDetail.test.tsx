@@ -231,6 +231,66 @@ describe("EntryDetail", () => {
     ).toBeInTheDocument();
   });
 
+  it("deleting_moves_focus_to_the_hint", async () => {
+    vi.mocked(deletePromptEntry).mockResolvedValue(undefined);
+    const user = await renderDetail();
+    await user.click(within(pane()).getByRole("button", { name: "Delete" }));
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+
+    const hint = await screen.findByText("Select a prompt to read it.");
+    await waitFor(() => expect(hint).toHaveFocus());
+  });
+
+  it("a_second_delete_waits_for_the_first", async () => {
+    let finish: () => void = () => {};
+    vi.mocked(deletePromptEntry).mockReturnValue(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const user = await renderDetail();
+    for (let i = 0; i < 2; i++) {
+      await user.click(within(pane()).getByRole("button", { name: "Delete" }));
+      await user.click(
+        within(await screen.findByRole("alertdialog")).getByRole("button", {
+          name: "Delete",
+        }),
+      );
+    }
+    expect(deletePromptEntry).toHaveBeenCalledTimes(1);
+    finish();
+    expect(
+      await screen.findByText("Select a prompt to read it."),
+    ).toBeInTheDocument();
+  });
+
+  it("choosing_no_project_clears_the_entrys_project", async () => {
+    vi.mocked(setEntryProject).mockResolvedValue({ ...saved, projectId: null });
+    const user = await renderDetail({ ...saved, projectId: api.id });
+    await user.click(within(pane()).getByRole("combobox", { name: "Project" }));
+    await user.click(await screen.findByRole("option", { name: "No project" }));
+
+    expect(setEntryProject).toHaveBeenCalledWith("e1", null);
+    expect(
+      await within(pane()).findByText(/RTF · no project · /),
+    ).toBeInTheDocument();
+  });
+
+  it("a_failed_copy_toasts_the_error", async () => {
+    vi.mocked(writeText).mockRejectedValue(new Error("no clipboard"));
+    const user = await renderDetail();
+    await user.click(within(pane()).getByRole("button", { name: "Copy" }));
+
+    expect(
+      await screen.findByText("Couldn't copy to the clipboard: no clipboard"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Copied")).not.toBeInTheDocument();
+  });
+
   it("a_failed_edit_toasts_and_keeps_the_entry", async () => {
     vi.mocked(setEntryProject).mockRejectedValue(
       new ApiError("database", "disk full"),
