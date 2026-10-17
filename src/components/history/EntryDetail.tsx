@@ -24,6 +24,16 @@ type View = "sections" | "prompt";
 const toggleItem =
   "px-3 py-1 text-sm font-medium text-slate-700 first:rounded-l-md last:rounded-r-md hover:bg-slate-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-500 data-[state=on]:bg-sky-100 data-[state=on]:text-sky-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:data-[state=on]:bg-sky-900 dark:data-[state=on]:text-sky-100";
 
+/**
+ * `text` without the blank lines before its first line of text and after
+ * its last, keeping everything between and the first line's indentation.
+ */
+function withoutOuterBlankLines(text: string): string {
+  return text
+    .replace(/^(?:[^\S\r\n]*\r?\n)+/, "")
+    .replace(/(?:\r?\n[^\S\r\n]*)+$/, "");
+}
+
 /** The reading pane: the selected saved prompt, with its actions. */
 export function EntryDetail() {
   const { frameworks } = useAppState();
@@ -177,7 +187,7 @@ function Detail({
                 {section.label}
               </h3>
               <p className="text-sm wrap-break-word whitespace-pre-wrap text-slate-900 dark:text-slate-100">
-                {sectionText(entry, section.key)}
+                {withoutOuterBlankLines(sectionText(entry, section.key))}
               </p>
             </section>
           ))}
