@@ -27,6 +27,8 @@ export type HistoryState = {
   selectedId: string | null;
   /** The latest page request; a result for any other is ignored. */
   requestId: number;
+  /** Whether the latest request is a Show more; after a failure, the one that failed. */
+  appending: boolean;
   /**
    * How many of the backend's matching entries the loaded pages cover, where
    * the next page starts. It moves back when a listed entry is deleted or
@@ -39,7 +41,7 @@ export type HistoryState = {
 
 export type HistoryAction =
   | { type: "filtersChanged"; filters: Partial<HistoryFilters> }
-  | { type: "pageRequested"; requestId: number }
+  | { type: "pageRequested"; requestId: number; append: boolean }
   | {
       type: "pageLoaded";
       requestId: number;
@@ -63,6 +65,7 @@ export const initialHistoryState: HistoryState = {
   hasMore: false,
   selectedId: null,
   requestId: 0,
+  appending: false,
   offset: 0,
 };
 
@@ -116,7 +119,12 @@ export function historyReducer(
       return { ...state, filters };
     }
     case "pageRequested":
-      return { ...state, status: "loading", requestId: action.requestId };
+      return {
+        ...state,
+        status: "loading",
+        requestId: action.requestId,
+        appending: action.append,
+      };
     case "pageLoaded": {
       if (action.requestId !== state.requestId) return state;
       const entries = action.append

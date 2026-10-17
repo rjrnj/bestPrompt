@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useEffect, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  ApiError,
   latestEntryProject,
   listFrameworks,
   listProjects,
@@ -194,6 +195,64 @@ describe("HistoryView list pane", () => {
     expect(
       screen.queryByRole("button", { name: "Show more" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("a_failed_show_more_offers_to_retry_it", async () => {
+    vi.mocked(listPromptEntries)
+      .mockResolvedValueOnce(page(PAGE_SIZE))
+      .mockRejectedValueOnce(new ApiError("database", "disk busy"))
+      .mockResolvedValueOnce(page(2, PAGE_SIZE));
+    renderView();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "Show more" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't load more: disk busy",
+    );
+    expect(screen.getByText("task e0")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText("task e51")).toBeInTheDocument();
+    expect(screen.getByText("task e0")).toBeInTheDocument();
+    expect(vi.mocked(listPromptEntries).mock.lastCall?.slice(1)).toEqual([
+      PAGE_SIZE,
+      PAGE_SIZE,
+    ]);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("a_failed_reload_hides_the_old_rows_and_retries_the_first_page", async () => {
+    vi.mocked(listPromptEntries)
+      .mockResolvedValueOnce([entry("a")])
+      .mockRejectedValueOnce(new ApiError("database", "disk busy"))
+      .mockResolvedValueOnce([entry("b")]);
+    renderView();
+    const user = userEvent.setup();
+    const box = await screen.findByRole("searchbox", {
+      name: "Search prompts",
+    });
+    expect(
+      await screen.findByRole("button", { name: /task a/ }),
+    ).toBeInTheDocument();
+
+    await user.type(box, "zzz");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't load the saved prompts.",
+    );
+    expect(screen.queryByText("task a")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Couldn't load more/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText("task b")).toBeInTheDocument();
+    expect(vi.mocked(listPromptEntries).mock.lastCall).toEqual([
+      { project: { kind: "any" }, frameworkId: null, search: "zzz" },
+      PAGE_SIZE,
+      0,
+    ]);
   });
 
   it("empty_history_points_to_the_builder", async () => {

@@ -42,7 +42,7 @@ function run(
 /** A first page of `items`, requested and loaded as request 1. */
 function loaded(items: PromptEntry[]): HistoryState {
   return run([
-    { type: "pageRequested", requestId: 1 },
+    { type: "pageRequested", requestId: 1, append: false },
     {
       type: "pageLoaded",
       requestId: 1,
@@ -63,12 +63,13 @@ describe("the history state", () => {
       hasMore: false,
       selectedId: null,
       requestId: 0,
+      appending: false,
       offset: 0,
     });
   });
 
   it("loads while a page is requested", () => {
-    const state = run([{ type: "pageRequested", requestId: 1 }]);
+    const state = run([{ type: "pageRequested", requestId: 1, append: false }]);
 
     expect(state.status).toBe("loading");
     expect(state.requestId).toBe(1);
@@ -76,8 +77,8 @@ describe("the history state", () => {
 
   it("a stale page is ignored", () => {
     const state = run([
-      { type: "pageRequested", requestId: 1 },
-      { type: "pageRequested", requestId: 2 },
+      { type: "pageRequested", requestId: 1, append: false },
+      { type: "pageRequested", requestId: 2, append: false },
       {
         type: "pageLoaded",
         requestId: 2,
@@ -106,7 +107,7 @@ describe("the history state", () => {
 
     const second = run(
       [
-        { type: "pageRequested", requestId: 2 },
+        { type: "pageRequested", requestId: 2, append: true },
         {
           type: "pageLoaded",
           requestId: 2,
@@ -127,7 +128,7 @@ describe("the history state", () => {
   it("replaces the list with a first page", () => {
     const state = run(
       [
-        { type: "pageRequested", requestId: 2 },
+        { type: "pageRequested", requestId: 2, append: false },
         {
           type: "pageLoaded",
           requestId: 2,
@@ -171,7 +172,7 @@ describe("the history state", () => {
     const state = run(
       [
         { type: "entrySelected", id: "e1" },
-        { type: "pageRequested", requestId: 2 },
+        { type: "pageRequested", requestId: 2, append: false },
         {
           type: "pageLoaded",
           requestId: 2,
@@ -190,7 +191,7 @@ describe("the history state", () => {
     const state = run(
       [
         { type: "entrySelected", id: "e1" },
-        { type: "pageRequested", requestId: 2 },
+        { type: "pageRequested", requestId: 2, append: false },
         {
           type: "pageLoaded",
           requestId: 2,
@@ -209,7 +210,7 @@ describe("the history state", () => {
     const state = run(
       [
         { type: "entrySelected", id: "e1" },
-        { type: "pageRequested", requestId: 2 },
+        { type: "pageRequested", requestId: 2, append: true },
         {
           type: "pageLoaded",
           requestId: 2,
@@ -230,7 +231,7 @@ describe("the history state", () => {
       run(
         [
           { type: "entrySelected", id: `e${PAGE_SIZE + 5}` },
-          { type: "pageRequested", requestId: 3 },
+          { type: "pageRequested", requestId: 3, append: false },
           {
             type: "pageLoaded",
             requestId: 3,
@@ -252,10 +253,24 @@ describe("the history state", () => {
     expect(short.offset).toBe(limit - 1);
   });
 
+  it("records whether the failed request was a show more", () => {
+    const failed = (append: boolean) =>
+      run(
+        [
+          { type: "pageRequested", requestId: 2, append },
+          { type: "pageFailed", requestId: 2, message: "no db" },
+        ],
+        loaded(entries(PAGE_SIZE)),
+      );
+
+    expect(failed(true).appending).toBe(true);
+    expect(failed(false).appending).toBe(false);
+  });
+
   it("a failed page reports the error and keeps the entries", () => {
     const state = run(
       [
-        { type: "pageRequested", requestId: 2 },
+        { type: "pageRequested", requestId: 2, append: false },
         { type: "pageFailed", requestId: 2, message: "no db" },
       ],
       loaded(entries(PAGE_SIZE)),
@@ -270,9 +285,9 @@ describe("the history state", () => {
   it("clears the error when the next page loads", () => {
     const state = run(
       [
-        { type: "pageRequested", requestId: 2 },
+        { type: "pageRequested", requestId: 2, append: false },
         { type: "pageFailed", requestId: 2, message: "no db" },
-        { type: "pageRequested", requestId: 3 },
+        { type: "pageRequested", requestId: 3, append: false },
         {
           type: "pageLoaded",
           requestId: 3,
@@ -384,7 +399,7 @@ describe("the paging offset", () => {
   ): HistoryState {
     return run([
       { type: "filtersChanged", filters: { project } },
-      { type: "pageRequested", requestId: 1 },
+      { type: "pageRequested", requestId: 1, append: false },
       {
         type: "pageLoaded",
         requestId: 1,
@@ -401,7 +416,7 @@ describe("the paging offset", () => {
 
     const second = run(
       [
-        { type: "pageRequested", requestId: 2 },
+        { type: "pageRequested", requestId: 2, append: true },
         {
           type: "pageLoaded",
           requestId: 2,
@@ -416,7 +431,7 @@ describe("the paging offset", () => {
 
     const reloaded = run(
       [
-        { type: "pageRequested", requestId: 3 },
+        { type: "pageRequested", requestId: 3, append: false },
         {
           type: "pageLoaded",
           requestId: 3,
