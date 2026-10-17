@@ -1,8 +1,29 @@
-/** The History tab's content. */
+import { HistoryFilters } from "./HistoryFilters";
+import { HistoryList } from "./HistoryList";
+
+/**
+ * The History tab's content: the list pane on the left, 300 px wide, then a
+ * divider and the reading pane taking the rest. Each pane scrolls on its own.
+ */
 export function HistoryView() {
   return (
-    <p className="p-6 text-sm text-slate-500 dark:text-slate-400">
-      Saved prompts will be listed here.
-    </p>
+    <div className="flex h-full min-h-0">
+      <section
+        aria-label="Saved prompts"
+        className="flex w-75 shrink-0 flex-col gap-4 overflow-y-auto p-4"
+      >
+        <HistoryFilters />
+        <HistoryList />
+      </section>
+      <div className="w-px shrink-0 bg-slate-200 dark:bg-slate-800" />
+      <section
+        aria-label="Selected prompt"
+        className="min-w-0 flex-1 overflow-y-auto p-6"
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-400">
+          Pick a prompt from the list to read it here.
+        </p>
+      </section>
+    </div>
   );
 }

@@ -99,7 +99,9 @@ describe("App", () => {
 
     await user.click(screen.getByRole("tab", { name: "History" }));
 
-    expect(screen.queryByRole("combobox")).toBeNull();
+    expect(
+      within(screen.getByRole("banner")).queryByRole("combobox"),
+    ).toBeNull();
     expect(screen.queryByText(builtins[0].description)).toBeNull();
     expect(screen.queryByRole("region", { name: "Preview" })).toBeNull();
     expect(screen.getByRole("tabpanel", { name: "History" })).toBeVisible();
