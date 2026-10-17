@@ -20,12 +20,19 @@ fn insert_framework_with_entry(conn: &Connection) {
 fn migrated_database_has_the_schema() {
     let conn = migrated();
 
-    for table in ["frameworks", "framework_sections", "prompt_entries"] {
+    for table in [
+        "frameworks",
+        "framework_sections",
+        "prompt_entries",
+        "projects",
+        "prompt_entries_fts",
+    ] {
         assert!(schema_object_exists(&conn, "table", table), "{table}");
     }
     for index in [
         "prompt_entries_created_at",
         "prompt_entries_framework_id_created_at",
+        "prompt_entries_project_id_created_at",
     ] {
         assert!(schema_object_exists(&conn, "index", index), "{index}");
     }
@@ -157,4 +164,175 @@ fn prompt_entries_reject_invalid_json() {
     try_insert_entry(&conn, "valid", None, "{}", "{}").unwrap();
     assert!(try_insert_entry(&conn, "bad_snapshot", None, "not json", "{}").is_err());
     assert!(try_insert_entry(&conn, "bad_values", None, "{}", "not json").is_err());
+}
+
+fn try_insert_project(conn: &Connection, id: &str, name: &str) -> rusqlite::Result<usize> {
+    conn.execute(
+        "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?1, ?2, 0, 0)",
+        [id, name],
+    )
+}
+
+/// Inserts an entry with a title and section values, linked to a project.
+fn insert_titled_entry(
+    conn: &Connection,
+    id: &str,
+    title: Option<&str>,
+    project_id: Option<&str>,
+    values: &str,
+) {
+    conn.execute(
+        "INSERT INTO prompt_entries
+             (id, framework_snapshot, section_values, rendered_prompt, created_at, title, project_id)
+         VALUES (?1, '{}', ?2, 'rendered', 0, ?3, ?4)",
+        rusqlite::params![id, values, title, project_id],
+    )
+    .unwrap();
+}
+
+fn fts_matches(conn: &Connection, query: &str) -> i64 {
+    conn.query_row(
+        "SELECT count(*) FROM prompt_entries_fts WHERE prompt_entries_fts MATCH ?1",
+        [query],
+        |row| row.get(0),
+    )
+    .unwrap()
+}
+
+#[test]
+fn projects_reject_blank_and_untrimmed_names() {
+    let conn = migrated();
+
+    // Proves the statement itself is fine, so the failures below come from the check.
+    try_insert_project(&conn, "ok", "API").unwrap();
+    assert!(try_insert_project(&conn, "empty", "").is_err(), "empty");
+    assert!(
+        try_insert_project(&conn, "spaces", "   ").is_err(),
+        "spaces"
+    );
+    assert!(
+        try_insert_project(&conn, "padded", " Web ").is_err(),
+        "surrounding spaces"
+    );
+}
+
+#[test]
+fn project_names_are_unique_ignoring_case() {
+    let conn = migrated();
+    try_insert_project(&conn, "a", "api").unwrap();
+
+    assert!(try_insert_project(&conn, "b", "API").is_err());
+    try_insert_project(&conn, "c", "web").unwrap();
+}
+
+#[test]
+fn deleting_a_project_keeps_its_entries_but_unlinks_them() {
+    let conn = migrated();
+    try_insert_project(&conn, "p", "API").unwrap();
+    insert_titled_entry(&conn, "e", None, Some("p"), "{}");
+
+    conn.execute("DELETE FROM projects WHERE id = 'p'", [])
+        .unwrap();
+
+    assert_eq!(
+        count(
+            &conn,
+            "SELECT count(*) FROM prompt_entries WHERE id = 'e' AND project_id IS NULL"
+        ),
+        1
+    );
+}
+
+#[test]
+fn entries_reject_a_blank_title() {
+    let conn = migrated();
+
+    // Proves the statement itself is fine, so the failures below come from the check.
+    conn.execute(
+        "INSERT INTO prompt_entries (id, framework_snapshot, section_values, rendered_prompt, created_at, title)
+         VALUES ('ok', '{}', '{}', '', 0, 'Title')",
+        [],
+    )
+    .unwrap();
+    for (id, title) in [("empty", ""), ("spaces", "   ")] {
+        let result = conn.execute(
+            "INSERT INTO prompt_entries (id, framework_snapshot, section_values, rendered_prompt, created_at, title)
+             VALUES (?1, '{}', '{}', '', 0, ?2)",
+            [id, title],
+        );
+        assert!(result.is_err(), "{id}");
+    }
+}
+
+#[test]
+fn listing_one_projects_history_newest_first_uses_an_index() {
+    let conn = migrated();
+
+    let plan: Vec<String> = conn
+        .prepare(
+            "EXPLAIN QUERY PLAN
+             SELECT * FROM prompt_entries WHERE project_id = ?1 ORDER BY created_at DESC",
+        )
+        .unwrap()
+        .query_map(["p"], |row| row.get("detail"))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+
+    assert!(
+        plan.iter()
+            .any(|step| step.contains("USING INDEX prompt_entries_project_id_created_at")),
+        "{plan:?}"
+    );
+    assert!(
+        !plan.iter().any(|step| step.contains("TEMP B-TREE")),
+        "{plan:?}"
+    );
+}
+
+#[test]
+fn fts_row_follows_insert_title_update_and_delete() {
+    let conn = migrated();
+
+    insert_titled_entry(
+        &conn,
+        "e",
+        Some("Alpha"),
+        None,
+        r#"{"a":"first line","b":"second line"}"#,
+    );
+    assert_eq!(fts_matches(&conn, "alpha"), 1, "title is indexed");
+    assert_eq!(fts_matches(&conn, "second"), 1, "every section is indexed");
+    assert_eq!(count(&conn, "SELECT count(*) FROM prompt_entries_fts"), 1);
+
+    conn.execute(
+        "UPDATE prompt_entries SET title = 'Beta' WHERE id = 'e'",
+        [],
+    )
+    .unwrap();
+    assert_eq!(fts_matches(&conn, "alpha"), 0, "old title is gone");
+    assert_eq!(fts_matches(&conn, "beta"), 1, "new title is indexed");
+    assert_eq!(
+        fts_matches(&conn, "first"),
+        1,
+        "body survives a title change"
+    );
+    assert_eq!(count(&conn, "SELECT count(*) FROM prompt_entries_fts"), 1);
+
+    conn.execute("UPDATE prompt_entries SET title = NULL WHERE id = 'e'", [])
+        .unwrap();
+    assert_eq!(fts_matches(&conn, "beta"), 0, "cleared title is gone");
+    assert_eq!(fts_matches(&conn, "first"), 1);
+
+    conn.execute("DELETE FROM prompt_entries WHERE id = 'e'", [])
+        .unwrap();
+    assert_eq!(count(&conn, "SELECT count(*) FROM prompt_entries_fts"), 0);
+}
+
+#[test]
+fn fts_ignores_diacritics_and_case() {
+    let conn = migrated();
+    insert_titled_entry(&conn, "e", Some("Café"), None, "{}");
+
+    assert_eq!(fts_matches(&conn, "CAFE"), 1);
 }
