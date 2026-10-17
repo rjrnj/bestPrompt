@@ -448,6 +448,37 @@ describe("AppStateProvider projects", () => {
     expect(toasts()).toEqual([]);
   });
 
+  it("keeps a project picked before the startup lookup returns", async () => {
+    const lookup = deferred<string | null>();
+    vi.mocked(listFrameworks).mockResolvedValue([rtf]);
+    vi.mocked(listProjects).mockResolvedValue([api, web]);
+    vi.mocked(latestEntryProject).mockReturnValue(lookup.promise);
+    renderProbe();
+    await screen.findByText("projects: ready");
+
+    await click("pick web");
+    await act(async () => lookup.resolve("p-api"));
+
+    expect(screen.getByText("project: p-web")).toBeInTheDocument();
+  });
+
+  it("keeps a project created while the projects load", async () => {
+    const listing = deferred<Project[]>();
+    vi.mocked(listFrameworks).mockResolvedValue([rtf]);
+    vi.mocked(listProjects).mockReturnValue(listing.promise);
+    vi.mocked(createProject).mockResolvedValue(project("p-new", "new"));
+    renderProbe();
+    await screen.findByText("status: ready");
+
+    await click("create");
+    await screen.findByText("result: true");
+    // The list was read before the project was created.
+    await act(async () => listing.resolve([api]));
+
+    expect(screen.getByText("names: api,new")).toBeInTheDocument();
+    expect(screen.getByText("project: p-new")).toBeInTheDocument();
+  });
+
   it("starts with no project when history is empty", async () => {
     vi.mocked(listFrameworks).mockResolvedValue([rtf]);
     vi.mocked(listProjects).mockResolvedValue([api]);

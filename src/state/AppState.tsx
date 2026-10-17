@@ -106,7 +106,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   // The projects load without blocking the Builder, and without a toast when
   // they fail: the Builder still works with "No project". The project of the
-  // newest entry becomes the starting selection when it is in the list.
+  // newest entry becomes the starting selection when it is in the list and
+  // the user hasn't chosen one meanwhile; the reducer checks both.
   useEffect(() => {
     let current = true;
     void (async () => {
@@ -127,9 +128,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       } catch {
         return;
       }
-      if (current && projects.some((p) => p.id === latest)) {
-        dispatch({ type: "projectSelected", id: latest });
-      }
+      if (current) dispatch({ type: "startingProjectFound", id: latest });
     })();
     return () => {
       current = false;

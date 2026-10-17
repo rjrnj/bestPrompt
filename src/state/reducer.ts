@@ -31,6 +31,17 @@ export type State = {
     | { status: "error"; message: string };
   /** The project new entries are filed under; one value for all frameworks. */
   selectedProjectId: string | null;
+  /**
+   * Whether the user has chosen the project (picked one or none, created one,
+   * or opened an entry), so the newest entry's project, looked up at
+   * startup, no longer replaces it.
+   */
+  projectChosen: boolean;
+  /**
+   * Project changes made while the list was loading, oldest first. The list
+   * may have been read before them, so they are applied to it on arrival.
+   */
+  unlistedProjectChanges: ProjectChange[];
   saving: boolean;
   toasts: Toast[];
   nextToastId: number;
@@ -47,9 +58,8 @@ export type Action =
   | { type: "projectsLoaded"; projects: Project[] }
   | { type: "projectsFailed"; message: string }
   | { type: "projectSelected"; id: string | null }
-  | { type: "projectCreated"; project: Project }
-  | { type: "projectRenamed"; project: Project }
-  | { type: "projectDeleted"; id: string }
+  | { type: "startingProjectFound"; id: string | null }
+  | ProjectChange
   | { type: "editTitle"; value: string }
   | { type: "entryOpened"; entry: PromptEntry }
   | { type: "saveStarted" }
@@ -58,6 +68,11 @@ export type Action =
   | { type: "entryDeleted"; frameworkId: string | null; renderedPrompt: string }
   | { type: "toastAdded"; kind: Toast["kind"]; message: string }
   | { type: "toastDismissed"; id: number };
+
+export type ProjectChange =
+  | { type: "projectCreated"; project: Project }
+  | { type: "projectRenamed"; project: Project }
+  | { type: "projectDeleted"; id: string };
 
 /** The most toasts shown at once; adding another drops the oldest. */
 export const MAX_TOASTS = 3;
@@ -71,6 +86,8 @@ export const initialState: State = {
   view: "builder",
   projects: { status: "loading" },
   selectedProjectId: null,
+  projectChosen: false,
+  unlistedProjectChanges: [],
   saving: false,
   toasts: [],
   nextToastId: 1,
@@ -117,59 +134,42 @@ export function reducer(state: State, action: Action): State {
     }
     case "viewChanged":
       return { ...state, view: action.view };
-    case "projectsLoaded":
+    case "projectsLoaded": {
+      const items = state.unlistedProjectChanges.reduce(
+        withProjectChange,
+        sortProjects(action.projects),
+      );
       return {
         ...state,
-        projects: { status: "ready", items: sortProjects(action.projects) },
-        selectedProjectId: projectIfPresent(
-          action.projects,
-          state.selectedProjectId,
-        ),
+        projects: { status: "ready", items },
+        selectedProjectId: projectIfPresent(items, state.selectedProjectId),
+        unlistedProjectChanges: [],
       };
+    }
     case "projectsFailed":
       return {
         ...state,
         projects: { status: "error", message: action.message },
+        unlistedProjectChanges: [],
       };
     case "projectSelected":
-      return { ...state, selectedProjectId: action.id };
+      return { ...state, selectedProjectId: action.id, projectChosen: true };
+    case "startingProjectFound": {
+      if (state.projectChosen) return state;
+      const id = projectIfPresent(loadedProjects(state), action.id);
+      return id === null ? state : { ...state, selectedProjectId: id };
+    }
     case "projectCreated":
       return {
-        ...state,
-        projects:
-          state.projects.status === "ready"
-            ? {
-                status: "ready",
-                items: sortProjects([...state.projects.items, action.project]),
-              }
-            : state.projects,
+        ...withChangedProjects(state, action),
         selectedProjectId: action.project.id,
+        projectChosen: true,
       };
     case "projectRenamed":
-      return {
-        ...state,
-        projects:
-          state.projects.status === "ready"
-            ? {
-                status: "ready",
-                items: sortProjects(
-                  state.projects.items.map((p) =>
-                    p.id === action.project.id ? action.project : p,
-                  ),
-                ),
-              }
-            : state.projects,
-      };
+      return withChangedProjects(state, action);
     case "projectDeleted":
       return {
-        ...state,
-        projects:
-          state.projects.status === "ready"
-            ? {
-                status: "ready",
-                items: state.projects.items.filter((p) => p.id !== action.id),
-              }
-            : state.projects,
+        ...withChangedProjects(state, action),
         selectedProjectId:
           state.selectedProjectId === action.id
             ? null
@@ -197,10 +197,12 @@ export function reducer(state: State, action: Action): State {
         selectedId: target.id,
         drafts: { ...state.drafts, [target.id]: draft },
         titles: { ...state.titles, [target.id]: entry.title ?? "" },
-        selectedProjectId: projectIfPresent(
-          loadedProjects(state),
-          entry.projectId,
-        ),
+        // While the list loads, projectsLoaded checks the project instead.
+        selectedProjectId:
+          state.projects.status === "loading"
+            ? entry.projectId
+            : projectIfPresent(loadedProjects(state), entry.projectId),
+        projectChosen: true,
         lastSaved: { ...state.lastSaved, [target.id]: entry.renderedPrompt },
       };
     }
@@ -268,6 +270,51 @@ function sortProjects(projects: Project[]): Project[] {
   return [...projects].sort((a, b) =>
     key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : a.id < b.id ? -1 : 1,
   );
+}
+
+/**
+ * `state` with `change` applied to a loaded project list, or queued for the
+ * list while it loads.
+ */
+function withChangedProjects(state: State, change: ProjectChange): State {
+  const { projects } = state;
+  if (projects.status === "ready") {
+    return {
+      ...state,
+      projects: {
+        status: "ready",
+        items: withProjectChange(projects.items, change),
+      },
+    };
+  }
+  if (projects.status === "loading") {
+    return {
+      ...state,
+      unlistedProjectChanges: [...state.unlistedProjectChanges, change],
+    };
+  }
+  return state;
+}
+
+/** `projects`, kept in name order, with `change` applied. */
+function withProjectChange(
+  projects: Project[],
+  change: ProjectChange,
+): Project[] {
+  switch (change.type) {
+    case "projectCreated": {
+      const { project } = change;
+      // A list read after the create already has it.
+      const others = projects.filter((p) => p.id !== project.id);
+      return sortProjects([...others, project]);
+    }
+    case "projectRenamed":
+      return sortProjects(
+        projects.map((p) => (p.id === change.project.id ? change.project : p)),
+      );
+    case "projectDeleted":
+      return projects.filter((p) => p.id !== change.id);
+  }
 }
 
 /** `id` if a project with that id is in `projects`, else null. */

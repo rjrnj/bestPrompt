@@ -588,6 +588,38 @@ describe("projects", () => {
     expect(state.selectedProjectId).toBeNull();
   });
 
+  it("keeps a project created while the list loads, and its selection", () => {
+    const mid = project("p-m", "Mid");
+    const state = run([
+      { type: "projectCreated", project: mid },
+      { type: "projectsLoaded", projects: [api, web] },
+    ]);
+
+    expect(state.projects).toEqual({ status: "ready", items: [api, mid, web] });
+    expect(state.selectedProjectId).toBe("p-m");
+  });
+
+  it("lists a project created while loading once when the list already has it", () => {
+    const state = run([
+      { type: "projectCreated", project: api },
+      { type: "projectsLoaded", projects: [api, web] },
+    ]);
+
+    expect(state.projects).toEqual({ status: "ready", items: [api, web] });
+  });
+
+  it("applies a rename and a delete made while the list loads", () => {
+    const renamed = { ...api, name: "zzz" };
+    const state = run([
+      { type: "projectRenamed", project: renamed },
+      { type: "projectDeleted", id: "p-web" },
+      { type: "projectsLoaded", projects: [api, web] },
+    ]);
+
+    expect(state.projects).toEqual({ status: "ready", items: [renamed] });
+    expect(state.unlistedProjectChanges).toEqual([]);
+  });
+
   it("keeps a selection that is still there when projects are reloaded", () => {
     const state = run(
       [
@@ -598,6 +630,95 @@ describe("projects", () => {
     );
 
     expect(state.selectedProjectId).toBe("p-web");
+  });
+});
+
+describe("the starting project", () => {
+  it("is selected when the user has not chosen one", () => {
+    const state = reducer(withProjects, {
+      type: "startingProjectFound",
+      id: "p-web",
+    });
+
+    expect(state.selectedProjectId).toBe("p-web");
+  });
+
+  it("is ignored when it is not in the list", () => {
+    const state = reducer(withProjects, {
+      type: "startingProjectFound",
+      id: "gone",
+    });
+
+    expect(state.selectedProjectId).toBeNull();
+  });
+
+  it("does not replace a project the user picked, even none", () => {
+    const picked = run(
+      [
+        { type: "projectSelected", id: "p-api" },
+        { type: "startingProjectFound", id: "p-web" },
+      ],
+      withProjects,
+    );
+    const none = run(
+      [
+        { type: "projectSelected", id: null },
+        { type: "startingProjectFound", id: "p-web" },
+      ],
+      withProjects,
+    );
+
+    expect(picked.selectedProjectId).toBe("p-api");
+    expect(none.selectedProjectId).toBeNull();
+  });
+
+  it("does not replace a project the user created", () => {
+    const state = run(
+      [
+        { type: "projectCreated", project: project("p-m", "Mid") },
+        { type: "startingProjectFound", id: "p-web" },
+      ],
+      withProjects,
+    );
+
+    expect(state.selectedProjectId).toBe("p-m");
+  });
+
+  it("does not replace the project of an opened entry", () => {
+    const state = run(
+      [
+        {
+          type: "entryOpened",
+          entry: entry("ab", { a: "one" }, { projectId: "p-api" }),
+        },
+        { type: "startingProjectFound", id: "p-web" },
+      ],
+      withProjects,
+    );
+
+    expect(state.selectedProjectId).toBe("p-api");
+  });
+});
+
+describe("opening an entry while the projects load", () => {
+  const opened = reducer(loaded, {
+    type: "entryOpened",
+    entry: entry("ab", { a: "one" }, { projectId: "p-api" }),
+  });
+
+  it("keeps the entry's project once the list has it", () => {
+    const state = reducer(opened, {
+      type: "projectsLoaded",
+      projects: [api, web],
+    });
+
+    expect(state.selectedProjectId).toBe("p-api");
+  });
+
+  it("drops the entry's project when the list does not have it", () => {
+    const state = reducer(opened, { type: "projectsLoaded", projects: [web] });
+
+    expect(state.selectedProjectId).toBeNull();
   });
 });
 
