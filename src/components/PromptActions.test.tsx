@@ -137,6 +137,19 @@ describe("PromptActions", () => {
     expectOn(clear);
   });
 
+  it("offers only Clear for a title alone, and clears it", async () => {
+    const { copy, save, clear } = await renderActions();
+    const title = screen.getByRole("textbox", { name: "Title" });
+
+    await userEvent.type(title, "Login fix");
+
+    expectOff(copy, save);
+    expectOn(clear);
+    await userEvent.click(clear);
+    expect(title).toHaveValue("");
+    expectOff(clear);
+  });
+
   it("offers only Clear when the template renders nothing", async () => {
     const { copy, save, clear, role } = await renderActions(broken);
 
