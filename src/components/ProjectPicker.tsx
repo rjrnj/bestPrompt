@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { useAppDispatch, useAppState } from "../state/AppState";
+import { listedProjects } from "../state/reducer";
 import { ManageProjectsDialog } from "./ManageProjectsDialog";
 import { NewProjectDialog } from "./NewProjectDialog";
 import { ProjectSelect } from "./ProjectSelect";
@@ -7,15 +8,16 @@ import { ProjectSelect } from "./ProjectSelect";
 /**
  * The Builder's project, which new prompts are filed under, with New
  * project… and Manage projects… at the end of its list. While the projects
- * are loading or failed to load it offers only No project.
+ * are loading or failed to load it offers only No project and any projects
+ * created meanwhile; a prompt opened from History meanwhile keeps its
+ * project, labelled as loading until the list can name it.
  */
 export function ProjectPicker() {
   const state = useAppState();
   const dispatch = useAppDispatch();
   const [dialog, setDialog] = useState<"new" | "manage" | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
-  const projects =
-    state.projects.status === "ready" ? state.projects.items : [];
+  const projects = listedProjects(state);
 
   const onOpenChange = (open: boolean) => {
     if (!open) setDialog(null);
@@ -34,6 +36,7 @@ export function ProjectPicker() {
         label="Project"
         projects={projects}
         value={state.selectedProjectId}
+        unlistedLabel="Loading projects…"
         onChange={(id) => dispatch({ type: "projectSelected", id })}
         extraItems={[
           {

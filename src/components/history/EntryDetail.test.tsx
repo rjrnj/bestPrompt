@@ -78,6 +78,7 @@ const saved: PromptEntry = {
   title: null,
   projectId: null,
   createdAt,
+  version: 0,
 };
 
 function ShowHistory() {

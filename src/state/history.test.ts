@@ -23,6 +23,7 @@ function entry(id: string, fields: Partial<PromptEntry> = {}): PromptEntry {
     title: null,
     projectId: null,
     createdAt: 1,
+    version: 0,
     ...fields,
   };
 }
@@ -65,7 +66,7 @@ describe("the history state", () => {
       requestId: 0,
       appending: false,
       cursor: null,
-      editsSinceRequest: [],
+      deletedWhileLoading: [],
     });
   });
 
@@ -478,11 +479,11 @@ describe("edits made while a page loads", () => {
     ];
   }
 
-  it("keep a new title when the page read before it arrives", () => {
+  it("keep a newer title when the page read before it arrives", () => {
     const state = run(
       refresh({
         type: "entryUpdated",
-        entry: entry("e1", { title: "New" }),
+        entry: entry("e1", { title: "New", version: 1 }),
       })(entries(3)),
       loaded(entries(3)),
     );
@@ -499,57 +500,53 @@ describe("edits made while a page loads", () => {
     expect(state.entries.map((e) => e.id)).toEqual(["e0", "e2"]);
   });
 
-  it("keep the latest of several edits to one entry", () => {
+  it("give way to a page with a newer copy of the entry", () => {
     const state = run(
-      refresh(
-        { type: "entryUpdated", entry: entry("e1", { title: "First" }) },
-        { type: "entryUpdated", entry: entry("e1", { title: "Second" }) },
-      )(entries(3)),
+      refresh({
+        type: "entryUpdated",
+        entry: entry("e1", { title: "Mine", version: 1 }),
+      })([entry("e0"), entry("e1", { title: "Newer", version: 2 })]),
+      loaded(entries(3)),
+    );
+
+    expect(state.entries[1].title).toBe("Newer");
+  });
+
+  it("keep the newest of edits whose results arrive out of order", () => {
+    const state = run(
+      [
+        {
+          type: "entryUpdated",
+          entry: entry("e1", { title: "Second", version: 2 }),
+        },
+        {
+          type: "entryUpdated",
+          entry: entry("e1", { title: "First", version: 1 }),
+        },
+      ],
       loaded(entries(3)),
     );
 
     expect(state.entries[1].title).toBe("Second");
   });
 
-  it("apply to an appended page too", () => {
+  it("forget deletions once no page is loading", () => {
+    const state = run([{ type: "entryRemoved", id: "e1" }], loaded(entries(3)));
+
+    expect(state.entries.map((e) => e.id)).toEqual(["e0", "e2"]);
+    expect(state.deletedWhileLoading).toEqual([]);
+  });
+
+  it("forget deletions from before the latest request", () => {
     const state = run(
       [
-        { type: "pageRequested", requestId: 2, append: true },
-        { type: "entryUpdated", entry: entry("e3", { title: "New" }) },
-        {
-          type: "pageLoaded",
-          requestId: 2,
-          entries: entries(2, 3),
-          append: true,
-          limit: PAGE_SIZE,
-        },
+        { type: "pageRequested", requestId: 2, append: false },
+        { type: "entryRemoved", id: "e1" },
+        { type: "pageRequested", requestId: 3, append: false },
       ],
       loaded(entries(3)),
     );
 
-    expect(state.entries[3].title).toBe("New");
-  });
-
-  it("are not kept while no page is loading", () => {
-    const state = run(
-      [{ type: "entryUpdated", entry: entry("e1", { title: "New" }) }],
-      loaded(entries(3)),
-    );
-
-    expect(state.entries[1].title).toBe("New");
-    expect(state.editsSinceRequest).toEqual([]);
-  });
-
-  it("are not applied to a page requested after them", () => {
-    const state = run(
-      [
-        { type: "entryUpdated", entry: entry("e1", { title: "Old" }) },
-        ...refresh()([entry("e0"), entry("e1", { title: "Fresh" })]),
-      ],
-      loaded(entries(3)),
-    );
-
-    expect(state.entries[1].title).toBe("Fresh");
-    expect(state.editsSinceRequest).toEqual([]);
+    expect(state.deletedWhileLoading).toEqual([]);
   });
 });

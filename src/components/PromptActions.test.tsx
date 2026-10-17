@@ -77,6 +77,7 @@ function stored(): PromptEntry {
     title: null,
     projectId: null,
     createdAt: 1,
+    version: 0,
   };
 }
 

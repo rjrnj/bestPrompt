@@ -65,6 +65,7 @@ function entry(id: string, fields: Partial<PromptEntry> = {}): PromptEntry {
     title: null,
     projectId: null,
     createdAt: Date.now(),
+    version: 0,
     ...fields,
   };
 }

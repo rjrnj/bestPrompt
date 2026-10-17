@@ -36,15 +36,13 @@ export type HistoryState = {
    */
   cursor: EntryCursor | null;
   /**
-   * Edits that finished while the latest page request was loading, oldest
-   * first, with null for a deletion. That page may have been read before
-   * them, so they are applied to it again when it arrives.
+   * Entries deleted while the latest page request was loading. That page may
+   * have been read before the deletes, so they are dropped from it when it
+   * arrives. Edits need no such record: of two copies of an entry, the one
+   * with the higher version is kept.
    */
-  editsSinceRequest: EntryEdit[];
+  deletedWhileLoading: string[];
 };
-
-/** An entry as an edit left it, or null when it was deleted. */
-export type EntryEdit = { id: string; entry: PromptEntry | null };
 
 export type HistoryAction =
   | { type: "filtersChanged"; filters: Partial<HistoryFilters> }
@@ -74,7 +72,7 @@ export const initialHistoryState: HistoryState = {
   requestId: 0,
   appending: false,
   cursor: null,
-  editsSinceRequest: [],
+  deletedWhileLoading: [],
 };
 
 function sameProjectFilter(a: ProjectFilter, b: ProjectFilter): boolean {
@@ -82,22 +80,14 @@ function sameProjectFilter(a: ProjectFilter, b: ProjectFilter): boolean {
   return a.kind === b.kind;
 }
 
-/** The rows with each edit applied in turn: replaced, or dropped if deleted. */
-function withEdits(entries: PromptEntry[], edits: EntryEdit[]): PromptEntry[] {
-  return edits.reduce<PromptEntry[]>(
-    (rows, { id, entry }) =>
-      entry === null
-        ? rows.filter((e) => e.id !== id)
-        : rows.map((e) => (e.id === id ? entry : e)),
-    entries,
-  );
-}
-
-/** The edits to apply to the page being loaded, if one is, with `edit` added. */
-function recorded(state: HistoryState, edit: EntryEdit): EntryEdit[] {
-  return state.status === "loading"
-    ? [...state.editsSinceRequest, edit]
-    : state.editsSinceRequest;
+/** Of a listed copy of an entry and an incoming one, the higher version; incoming on a tie. */
+function newer(
+  listed: PromptEntry | undefined,
+  incoming: PromptEntry,
+): PromptEntry {
+  return listed !== undefined && listed.version > incoming.version
+    ? listed
+    : incoming;
 }
 
 export function historyReducer(
@@ -120,11 +110,15 @@ export function historyReducer(
         status: "loading",
         requestId: action.requestId,
         appending: action.append,
-        editsSinceRequest: [],
+        deletedWhileLoading: [],
       };
     case "pageLoaded": {
       if (action.requestId !== state.requestId) return state;
-      const page = withEdits(action.entries, state.editsSinceRequest);
+      // The page may have been read before an edit or delete finished.
+      const listed = new Map(state.entries.map((e) => [e.id, e]));
+      const page = action.entries
+        .filter((e) => !state.deletedWhileLoading.includes(e.id))
+        .map((e) => newer(listed.get(e.id), e));
       const entries = action.append ? [...state.entries, ...page] : page;
       const last: PromptEntry | undefined =
         action.entries[action.entries.length - 1];
@@ -154,23 +148,24 @@ export function historyReducer(
       return { ...state, status: "error", error: action.message };
     case "entrySelected":
       return { ...state, selectedId: action.id };
-    case "entryUpdated": {
-      const edit = { id: action.entry.id, entry: action.entry };
+    case "entryUpdated":
+      // Results of two edits can arrive out of order; the newer one stays.
       return {
         ...state,
-        entries: withEdits(state.entries, [edit]),
-        editsSinceRequest: recorded(state, edit),
+        entries: state.entries.map((e) =>
+          e.id === action.entry.id ? newer(e, action.entry) : e,
+        ),
       };
-    }
-    case "entryRemoved": {
-      const edit = { id: action.id, entry: null };
+    case "entryRemoved":
       return {
         ...state,
-        entries: withEdits(state.entries, [edit]),
+        entries: state.entries.filter((e) => e.id !== action.id),
         selectedId: state.selectedId === action.id ? null : state.selectedId,
-        editsSinceRequest: recorded(state, edit),
+        deletedWhileLoading:
+          state.status === "loading"
+            ? [...state.deletedWhileLoading, action.id]
+            : state.deletedWhileLoading,
       };
-    }
     case "projectRemoved": {
       const { project } = state.filters;
       if (project.kind !== "project" || project.id !== action.id) return state;

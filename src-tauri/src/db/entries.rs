@@ -43,6 +43,10 @@ pub struct PromptEntry {
     /// after the project is deleted).
     pub project_id: Option<String>,
     pub created_at: i64,
+    /// How many times the entry has been edited since it was saved, so of two
+    /// copies read at different times the one with the higher version is the
+    /// newer.
+    pub version: i64,
 }
 
 /// What the frontend sends to save an entry. The id, timestamp and snapshot
@@ -96,6 +100,7 @@ fn insert(
         title: stored_title(new.title.as_deref()),
         project_id: new.project_id.clone(),
         created_at: now,
+        version: 0,
     };
     tx.execute(
         "INSERT INTO prompt_entries
@@ -119,7 +124,7 @@ fn insert(
 
 const ENTRY_COLUMNS: &str =
     "SELECT id, framework_id, framework_snapshot, section_values, rendered_prompt,
-            title, project_id, created_at
+            title, project_id, created_at, version
      FROM prompt_entries";
 
 /// Which project's entries to list.
@@ -235,6 +240,7 @@ fn entry_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PromptEntry> {
         title: row.get(5)?,
         project_id: row.get(6)?,
         created_at: row.get(7)?,
+        version: row.get(8)?,
     })
 }
 
@@ -269,7 +275,7 @@ pub fn set_entry_title(
     title: Option<&str>,
 ) -> Result<PromptEntry, DbError> {
     let changed = conn.execute(
-        "UPDATE prompt_entries SET title = ?1 WHERE id = ?2",
+        "UPDATE prompt_entries SET title = ?1, version = version + 1 WHERE id = ?2",
         params![stored_title(title), id],
     )?;
     if changed == 0 {
@@ -288,7 +294,7 @@ pub fn set_entry_project(
         check_project_exists(conn, project_id)?;
     }
     let changed = conn.execute(
-        "UPDATE prompt_entries SET project_id = ?1 WHERE id = ?2",
+        "UPDATE prompt_entries SET project_id = ?1, version = version + 1 WHERE id = ?2",
         params![project_id, id],
     )?;
     if changed == 0 {
@@ -928,10 +934,28 @@ mod tests {
             changed,
             PromptEntry {
                 title: Some("new".to_owned()),
+                version: 1,
                 ..saved
             }
         );
         assert_eq!(get_prompt_entry(&conn, &changed.id).unwrap(), changed);
+    }
+
+    #[test]
+    fn each_edit_counts_one_version_from_zero() {
+        let mut conn = migrated();
+        insert_framework(&conn, "f", false);
+        insert_project(&conn, "p");
+        let saved = saved_with(&mut conn, None, None);
+        assert_eq!(saved.version, 0);
+        assert_eq!(get_prompt_entry(&conn, &saved.id).unwrap().version, 0);
+
+        let retitled = set_entry_title(&conn, &saved.id, Some("t")).unwrap();
+        let moved = set_entry_project(&conn, &saved.id, Some("p")).unwrap();
+
+        assert_eq!((retitled.version, moved.version), (1, 2));
+        let listed = list_prompt_entries(&conn, &EntryQuery::default(), 10, None).unwrap();
+        assert_eq!(listed[0].version, 2);
     }
 
     #[test]
@@ -959,13 +983,18 @@ mod tests {
             moved,
             PromptEntry {
                 project_id: Some("p".to_owned()),
+                version: 1,
                 ..saved.clone()
             }
         );
 
         let cleared = set_entry_project(&conn, &saved.id, None).unwrap();
-        assert_eq!(cleared, saved);
-        assert_eq!(get_prompt_entry(&conn, &saved.id).unwrap(), saved);
+        let expected = PromptEntry {
+            version: 2,
+            ..saved.clone()
+        };
+        assert_eq!(cleared, expected);
+        assert_eq!(get_prompt_entry(&conn, &saved.id).unwrap(), expected);
     }
 
     #[test]

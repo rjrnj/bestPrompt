@@ -52,6 +52,7 @@ function entry(id: string, fields: Partial<PromptEntry> = {}): PromptEntry {
     title: null,
     projectId: null,
     createdAt: 1,
+    version: 0,
     ...fields,
   };
 }
@@ -319,7 +320,9 @@ describe("HistoryProvider", () => {
     vi.mocked(listPromptEntries)
       .mockResolvedValueOnce(entries(3))
       .mockReturnValueOnce(pending.promise);
-    vi.mocked(setEntryTitle).mockResolvedValue(entry("e1", { title: "New" }));
+    vi.mocked(setEntryTitle).mockResolvedValue(
+      entry("e1", { title: "New", version: 1 }),
+    );
     const { result } = renderHistory();
     await openHistory(result);
 

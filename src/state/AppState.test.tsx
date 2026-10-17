@@ -137,6 +137,16 @@ function Probe() {
       >
         retype
       </button>
+      <button
+        onClick={() =>
+          dispatch({
+            type: "entryOpened",
+            entry: { ...stored("opened"), projectId: "p-api" },
+          })
+        }
+      >
+        open
+      </button>
     </div>
   );
 }
@@ -265,6 +275,7 @@ function stored(prompt: string): PromptEntry {
     title: null,
     projectId: null,
     createdAt: 1,
+    version: 0,
   };
 }
 
@@ -448,6 +459,32 @@ describe("AppStateProvider projects", () => {
     expect(toasts()).toEqual([]);
   });
 
+  it("looks up the starting project alongside the project list", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([rtf]);
+    vi.mocked(listProjects).mockReturnValue(new Promise(() => {}));
+
+    renderProbe();
+
+    await waitFor(() => expect(latestEntryProject).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("projects: loading")).toBeInTheDocument();
+  });
+
+  it("saves a prompt opened while the projects load under its project", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([rtf]);
+    vi.mocked(listProjects).mockReturnValue(new Promise(() => {}));
+    vi.mocked(savePromptEntry).mockResolvedValue(stored("opened"));
+    renderProbe();
+    await screen.findByText("status: ready");
+
+    await click("open");
+    await click("type");
+    await click("save");
+
+    expect(savePromptEntry).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ projectId: "p-api" }),
+    );
+  });
+
   it("keeps a project picked before the startup lookup returns", async () => {
     const lookup = deferred<string | null>();
     vi.mocked(listFrameworks).mockResolvedValue([rtf]);
@@ -529,7 +566,6 @@ describe("AppStateProvider projects", () => {
     expect(await screen.findByText("projects: error")).toBeInTheDocument();
     expect(screen.getByText("status: ready")).toBeInTheDocument();
     expect(screen.getByText("project: none")).toBeInTheDocument();
-    expect(latestEntryProject).not.toHaveBeenCalled();
     expect(toasts()).toEqual([]);
   });
 

@@ -58,6 +58,7 @@ const entry: PromptEntry = {
   title: null,
   projectId: null,
   createdAt: 2,
+  version: 0,
 };
 
 afterEach(clearMocks);

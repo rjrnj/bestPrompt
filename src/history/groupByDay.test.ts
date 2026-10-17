@@ -17,6 +17,7 @@ function at(date: Date, id = "e"): PromptEntry {
     title: null,
     projectId: null,
     createdAt: date.getTime(),
+    version: 0,
   };
 }
 

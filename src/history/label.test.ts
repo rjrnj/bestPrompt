@@ -29,6 +29,7 @@ function entry(
     title: opts.title ?? null,
     projectId: null,
     createdAt: 0,
+    version: 0,
   };
 }
 

@@ -9,6 +9,7 @@ import {
   hasAnyDraftText,
   initialState,
   isBlank,
+  listedProjects,
   needsSave,
   openConflicts,
   reducer,
@@ -413,6 +414,7 @@ function entry(
     title: null,
     projectId: null,
     createdAt: 1,
+    version: 0,
     ...extra,
   };
 }
@@ -608,16 +610,71 @@ describe("projects", () => {
     expect(state.projects).toEqual({ status: "ready", items: [api, web] });
   });
 
-  it("applies a rename and a delete made while the list loads", () => {
-    const renamed = { ...api, name: "zzz" };
-    const state = run([
-      { type: "projectRenamed", project: renamed },
-      { type: "projectDeleted", id: "p-web" },
+  it("renames or deletes a project created while the list loads", () => {
+    const mid = project("p-m", "Mid");
+    const renamed = run([
+      { type: "projectCreated", project: mid },
+      { type: "projectRenamed", project: { ...mid, name: "zzz" } },
+      { type: "projectsLoaded", projects: [api, web] },
+    ]);
+    const deleted = run([
+      { type: "projectCreated", project: mid },
+      { type: "projectDeleted", id: "p-m" },
       { type: "projectsLoaded", projects: [api, web] },
     ]);
 
-    expect(state.projects).toEqual({ status: "ready", items: [renamed] });
-    expect(state.unlistedProjectChanges).toEqual([]);
+    expect(renamed.projects).toEqual({
+      status: "ready",
+      items: [api, web, { ...mid, name: "zzz" }],
+    });
+    expect(renamed.createdProjects).toEqual([]);
+    expect(deleted.projects).toEqual({ status: "ready", items: [api, web] });
+    expect(deleted.selectedProjectId).toBeNull();
+  });
+
+  it("lists the projects created before the list loads, in name order", () => {
+    const state = run([
+      { type: "projectCreated", project: web },
+      { type: "projectCreated", project: api },
+    ]);
+
+    expect(listedProjects(state)).toEqual([api, web]);
+    expect(listedProjects(withProjects)).toEqual([api, web]);
+  });
+
+  it("keeps created projects and their selection when the list fails", () => {
+    const state = run([
+      { type: "projectCreated", project: api },
+      { type: "projectsFailed", message: "no db" },
+    ]);
+
+    expect(listedProjects(state)).toEqual([api]);
+    expect(state.selectedProjectId).toBe("p-api");
+  });
+
+  it("lists a project created after the list failed", () => {
+    const state = run([
+      { type: "projectsFailed", message: "no db" },
+      { type: "projectCreated", project: api },
+    ]);
+
+    expect(listedProjects(state)).toEqual([api]);
+    expect(state.selectedProjectId).toBe("p-api");
+  });
+
+  it("drops a selection the failed list can't confirm", () => {
+    const state = run(
+      [
+        {
+          type: "entryOpened",
+          entry: entry("ab", { a: "one" }, { projectId: "p-api" }),
+        },
+        { type: "projectsFailed", message: "no db" },
+      ],
+      loaded,
+    );
+
+    expect(state.selectedProjectId).toBeNull();
   });
 
   it("keeps a selection that is still there when projects are reloaded", () => {

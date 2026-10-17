@@ -15,4 +15,10 @@ sectionValues: { [key in string]: string }, renderedPrompt: string, title: strin
  * The project the entry is filed under, or `None` for no project (also
  * after the project is deleted).
  */
-projectId: string | null, createdAt: number, };
+projectId: string | null, createdAt: number, 
+/**
+ * How many times the entry has been edited since it was saved, so of two
+ * copies read at different times the one with the higher version is the
+ * newer.
+ */
+version: number, };

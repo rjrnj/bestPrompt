@@ -65,6 +65,7 @@ const saved: PromptEntry = {
   title: "Login fix",
   projectId: null,
   createdAt: new Date(2020, 0, 5).getTime(),
+  version: 0,
 };
 
 /** Dispatches `actions` once the frameworks and projects are loaded. */
