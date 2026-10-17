@@ -54,6 +54,7 @@ export type Action =
   | { type: "saveStarted" }
   | { type: "saveSucceeded"; frameworkId: string; renderedPrompt: string }
   | { type: "saveFailed"; message: string }
+  | { type: "entryDeleted"; frameworkId: string | null; renderedPrompt: string }
   | { type: "toastAdded"; kind: Toast["kind"]; message: string }
   | { type: "toastDismissed"; id: number };
 
@@ -215,6 +216,21 @@ export function reducer(state: State, action: Action): State {
       };
     case "saveFailed":
       return { ...state, saving: false };
+    case "entryDeleted": {
+      // Once the entry last saved for a framework is gone, saving that
+      // prompt again stores it again rather than reporting it as saved.
+      const id = action.frameworkId;
+      if (
+        id === null ||
+        !hasOwn(state.lastSaved, id) ||
+        state.lastSaved[id] !== action.renderedPrompt
+      ) {
+        return state;
+      }
+      const lastSaved = { ...state.lastSaved };
+      delete lastSaved[id];
+      return { ...state, lastSaved };
+    }
     case "toastAdded": {
       const toast = {
         id: state.nextToastId,

@@ -1,10 +1,11 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import builtins from "../src-tauri/builtins/frameworks.json";
 import App from "./App";
 import {
   ApiError,
+  deletePromptEntry,
   latestEntryProject,
   listFrameworks,
   listProjects,
@@ -23,6 +24,7 @@ vi.mock("./api", async (importOriginal) => ({
   listProjects: vi.fn(),
   latestEntryProject: vi.fn(),
   listPromptEntries: vi.fn(),
+  deletePromptEntry: vi.fn(),
 }));
 vi.mock("./clipboard", () => ({ writeText: vi.fn() }));
 
@@ -219,6 +221,67 @@ describe("App", () => {
       await within(notifications).findByText("Copied"),
     ).toBeInTheDocument();
     expect(savePromptEntry).not.toHaveBeenCalled();
+  });
+
+  it("saves again after the saved entry is deleted in History", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue(frameworks);
+    vi.mocked(deletePromptEntry).mockResolvedValue();
+    const costar = frameworks[0];
+    vi.mocked(savePromptEntry).mockImplementation(
+      async (entry) =>
+        ({
+          ...entry,
+          id: "entry",
+          frameworkSnapshot: {
+            name: costar.name,
+            template: costar.template,
+            summaryKey: costar.summaryKey,
+            sections: costar.sections,
+          },
+          createdAt: 1,
+        }) satisfies PromptEntry,
+    );
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Framework" });
+    const user = userEvent.setup();
+    await user.type(
+      screen.getByRole("textbox", { name: "Objective" }),
+      "Write a README section.",
+    );
+    const save = () =>
+      user.click(
+        within(screen.getByRole("region", { name: "Preview" })).getByRole(
+          "button",
+          { name: "Save" },
+        ),
+      );
+    await save();
+    const notifications = await screen.findByRole("region", {
+      name: /notifications/i,
+    });
+    expect(await within(notifications).findByText("Saved")).toBeInTheDocument();
+    const saved = await vi.mocked(savePromptEntry).mock.results[0].value;
+    vi.mocked(listPromptEntries).mockResolvedValue([saved]);
+
+    await user.click(screen.getByRole("tab", { name: "History" }));
+    await user.click(
+      await screen.findByRole("button", { name: /Write a README section/ }),
+    );
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+    await waitFor(() =>
+      expect(deletePromptEntry).toHaveBeenCalledWith("entry"),
+    );
+    await user.click(screen.getByRole("tab", { name: "Builder" }));
+    await save();
+
+    await waitFor(() => expect(savePromptEntry).toHaveBeenCalledTimes(2));
+    expect(within(notifications).queryByText("Already saved")).toBeNull();
+    expect(within(notifications).getAllByText("Saved")).not.toHaveLength(0);
   });
 
   it("shows an error toast and keeps the draft when the save fails", async () => {
