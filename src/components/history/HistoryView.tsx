@@ -19,7 +19,10 @@ export function HistoryView() {
       <div className="w-px shrink-0 bg-slate-200 dark:bg-slate-800" />
       <section
         aria-label="Selected prompt"
-        className="min-w-0 flex-1 overflow-y-auto p-6"
+        // Focusable because it scrolls on its own: WebKitGTK does not make
+        // scrollable containers keyboard-reachable the way WebView2 does.
+        tabIndex={0}
+        className="min-w-0 flex-1 overflow-y-auto p-6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-500"
       >
         <EntryDetail />
       </section>

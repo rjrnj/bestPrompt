@@ -3,7 +3,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useState } from "react";
 import type { Project } from "../bindings/Project";
 import { useAppActions, useAppState } from "../state/AppState";
-import { ProjectNameDialog } from "./NewProjectDialog";
+import { TextFieldDialog } from "./TextFieldDialog";
 import {
   dangerButton,
   dialogButtons,
@@ -94,7 +94,7 @@ function ProjectRow({ project }: { project: Project }) {
       >
         {project.name}
       </span>
-      <ProjectNameDialog
+      <TextFieldDialog
         open={renaming}
         onOpenChange={setRenaming}
         trigger={
@@ -108,8 +108,9 @@ function ProjectRow({ project }: { project: Project }) {
         }
         title="Rename project"
         description="Its prompts stay filed under it."
+        fieldLabel="Name"
         submitLabel="Rename"
-        initialName={project.name}
+        initialValue={project.name}
         onSubmit={(name) =>
           name.trim() === project.name
             ? Promise.resolve(true)

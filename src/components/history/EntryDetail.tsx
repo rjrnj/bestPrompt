@@ -1,13 +1,13 @@
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
-import * as Dialog from "@radix-ui/react-dialog";
 import * as ToggleGroup from "@radix-ui/react-toggle-group";
-import { useId, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PromptEntry } from "../../bindings/PromptEntry";
 import { writeText } from "../../clipboard";
 import { entryLabel } from "../../history/label";
 import { useAppDispatch, useAppState } from "../../state/AppState";
 import { useHistory } from "../../state/HistoryState";
 import { ProjectSelect } from "../ProjectSelect";
+import { TextFieldDialog } from "../TextFieldDialog";
 import {
   dangerButton,
   dialogButtons,
@@ -15,10 +15,7 @@ import {
   dialogOverlay,
   dialogPanel,
   dialogTitle,
-  fieldLabel,
-  primaryButton,
   secondaryButton,
-  textInput,
 } from "../styles";
 
 type View = "sections" | "prompt";
@@ -32,9 +29,25 @@ export function EntryDetail() {
   const { state } = useHistory();
   const entry = state.entries.find((e) => e.id === state.selectedId);
 
+  // Set once a delete succeeds: the pane then shows the hint, and focus
+  // goes there instead of falling to the page.
+  const focusHint = useRef(false);
+  const hint = useRef<HTMLParagraphElement>(null);
+  const hasEntry = entry !== undefined;
+  useEffect(() => {
+    if (!hasEntry && focusHint.current) {
+      focusHint.current = false;
+      hint.current?.focus();
+    }
+  }, [hasEntry]);
+
   if (entry === undefined) {
     return (
-      <p className="text-sm text-slate-600 dark:text-slate-400">
+      <p
+        ref={hint}
+        tabIndex={-1}
+        className="text-sm text-slate-600 focus:outline-none dark:text-slate-400"
+      >
         Select a prompt to read it.
       </p>
     );
@@ -46,11 +59,22 @@ export function EntryDetail() {
       key={entry.id}
       entry={entry}
       label={entryLabel(entry, frameworkItems)}
+      onDeleted={() => {
+        focusHint.current = true;
+      }}
     />
   );
 }
 
-function Detail({ entry, label }: { entry: PromptEntry; label: string }) {
+function Detail({
+  entry,
+  label,
+  onDeleted,
+}: {
+  entry: PromptEntry;
+  label: string;
+  onDeleted(): void;
+}) {
   const { projects } = useAppState();
   const dispatch = useAppDispatch();
   const { setProject, remove } = useHistory();
@@ -109,7 +133,9 @@ function Detail({ entry, label }: { entry: PromptEntry; label: string }) {
         <RenameDialog entry={entry} />
         <DeleteDialog
           onDelete={async () => {
-            await remove(entry.id);
+            const ok = await remove(entry.id);
+            if (ok) onDeleted();
+            return ok;
           }}
         />
       </div>
@@ -132,11 +158,9 @@ function Detail({ entry, label }: { entry: PromptEntry; label: string }) {
       </ToggleGroup.Root>
 
       {view === "prompt" ? (
-        // Focusable because it can scroll; see PromptPreview.
         <pre
           data-testid="saved-prompt"
-          tabIndex={0}
-          className="overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-4 font-mono text-sm wrap-break-word whitespace-pre-wrap text-slate-900 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+          className="rounded-lg border border-slate-200 bg-slate-50 p-4 font-mono text-sm wrap-break-word whitespace-pre-wrap text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
         >
           {entry.renderedPrompt}
         </pre>
@@ -167,92 +191,49 @@ function RenameDialog({ entry }: { entry: PromptEntry }) {
   const { setTitle } = useHistory();
   const [open, setOpen] = useState(false);
   return (
-    <Dialog.Root open={open} onOpenChange={setOpen}>
-      <Dialog.Trigger asChild>
+    <TextFieldDialog
+      open={open}
+      onOpenChange={setOpen}
+      trigger={
         <button type="button" className={secondaryButton}>
           Rename
         </button>
-      </Dialog.Trigger>
-      <Dialog.Portal>
-        <Dialog.Overlay className={dialogOverlay} />
-        <Dialog.Content className={dialogPanel}>
-          <Dialog.Title className={dialogTitle}>Rename prompt</Dialog.Title>
-          <Dialog.Description className={dialogDescription}>
-            Leave the title empty to label the prompt by its text.
-          </Dialog.Description>
-          {/* Mounted with the dialog, so each opening starts from the title. */}
-          <TitleForm
-            initialTitle={entry.title ?? ""}
-            onSubmit={async (title) => {
-              const next = title.trim() === "" ? null : title;
-              if (await setTitle(entry.id, next)) setOpen(false);
-            }}
-          />
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+      }
+      title="Rename prompt"
+      description="Leave the title empty to label the prompt by its text."
+      fieldLabel="Title"
+      submitLabel="Save"
+      initialValue={entry.title ?? ""}
+      allowBlank
+      onSubmit={(title) =>
+        setTitle(entry.id, title.trim() === "" ? null : title)
+      }
+    />
   );
 }
 
-function TitleForm({
-  initialTitle,
-  onSubmit,
-}: {
-  initialTitle: string;
-  onSubmit(title: string): Promise<void>;
-}) {
-  const inputId = useId();
-  const [title, setTitle] = useState(initialTitle);
-  const [pending, setPending] = useState(false);
-
-  return (
-    <form
-      className="flex flex-col gap-4"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (pending) return;
-        setPending(true);
-        void onSubmit(title).finally(() => setPending(false));
-      }}
-    >
-      <div>
-        <label htmlFor={inputId} className={fieldLabel}>
-          Title
-        </label>
-        <input
-          id={inputId}
-          type="text"
-          autoComplete="off"
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-          className={`mt-1.5 ${textInput}`}
-        />
-      </div>
-      <div className={dialogButtons}>
-        <Dialog.Close asChild>
-          <button type="button" className={secondaryButton}>
-            Cancel
-          </button>
-        </Dialog.Close>
-        <button type="submit" className={primaryButton} aria-disabled={pending}>
-          Save
-        </button>
-      </div>
-    </form>
-  );
-}
-
-function DeleteDialog({ onDelete }: { onDelete(): Promise<void> }) {
+function DeleteDialog({ onDelete }: { onDelete(): Promise<boolean> }) {
+  // Set while a delete runs, so reopening the dialog can't start a second.
+  const deleting = useRef(false);
+  const confirmed = useRef(false);
+  const trigger = useRef<HTMLButtonElement>(null);
   return (
     <AlertDialog.Root>
       <AlertDialog.Trigger asChild>
-        <button type="button" className={secondaryButton}>
+        <button type="button" ref={trigger} className={secondaryButton}>
           Delete
         </button>
       </AlertDialog.Trigger>
       <AlertDialog.Portal>
         <AlertDialog.Overlay className={dialogOverlay} />
-        <AlertDialog.Content className={dialogPanel}>
+        <AlertDialog.Content
+          className={dialogPanel}
+          onCloseAutoFocus={(event) => {
+            // After a confirmed delete the trigger is usually gone, so focus
+            // is placed once the outcome is known (below, or by the pane).
+            if (confirmed.current) event.preventDefault();
+          }}
+        >
           <AlertDialog.Title className={dialogTitle}>
             Delete this prompt?
           </AlertDialog.Title>
@@ -269,7 +250,21 @@ function DeleteDialog({ onDelete }: { onDelete(): Promise<void> }) {
               <button
                 type="button"
                 className={dangerButton}
-                onClick={() => void onDelete()}
+                onClick={() => {
+                  if (deleting.current) return;
+                  deleting.current = true;
+                  confirmed.current = true;
+                  void onDelete()
+                    .then((ok) => {
+                      if (!ok) {
+                        confirmed.current = false;
+                        trigger.current?.focus();
+                      }
+                    })
+                    .finally(() => {
+                      deleting.current = false;
+                    });
+                }}
               >
                 Delete
               </button>
