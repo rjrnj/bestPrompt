@@ -31,6 +31,23 @@ export type State = {
     | { status: "error"; message: string };
   /** The project new entries are filed under; one value for all frameworks. */
   selectedProjectId: string | null;
+  /**
+   * Whether the user has chosen the project (opened the project list, picked
+   * one or none, created one, or opened an entry), so the newest entry's
+   * project, looked up at startup, no longer replaces it.
+   */
+  projectChosen: boolean;
+  /**
+   * Projects created while the list is loading or failed to load, in name
+   * order, so they can be listed and selected meanwhile. A list read before
+   * they were created doesn't have them, so they join it when it loads.
+   */
+  createdProjects: Project[];
+  /**
+   * Ids of projects deleted while the list is loading, so a list read before
+   * the delete doesn't bring them back when it loads.
+   */
+  deletedProjects: string[];
   saving: boolean;
   toasts: Toast[];
   nextToastId: number;
@@ -47,6 +64,8 @@ export type Action =
   | { type: "projectsLoaded"; projects: Project[] }
   | { type: "projectsFailed"; message: string }
   | { type: "projectSelected"; id: string | null }
+  | { type: "projectListOpened" }
+  | { type: "startingProjectFound"; id: string | null }
   | { type: "projectCreated"; project: Project }
   | { type: "projectRenamed"; project: Project }
   | { type: "projectDeleted"; id: string }
@@ -71,6 +90,9 @@ export const initialState: State = {
   view: "builder",
   projects: { status: "loading" },
   selectedProjectId: null,
+  projectChosen: false,
+  createdProjects: [],
+  deletedProjects: [],
   saving: false,
   toasts: [],
   nextToastId: 1,
@@ -117,59 +139,70 @@ export function reducer(state: State, action: Action): State {
     }
     case "viewChanged":
       return { ...state, view: action.view };
-    case "projectsLoaded":
+    case "projectsLoaded": {
+      // A list read after a create already has the project, and one read
+      // before a delete still has that one.
+      const loaded = action.projects.filter(
+        (p) =>
+          !state.createdProjects.some((c) => c.id === p.id) &&
+          !state.deletedProjects.includes(p.id),
+      );
+      const items = sortProjects([...loaded, ...state.createdProjects]);
       return {
         ...state,
-        projects: { status: "ready", items: sortProjects(action.projects) },
-        selectedProjectId: projectIfPresent(
-          action.projects,
-          state.selectedProjectId,
-        ),
+        projects: { status: "ready", items },
+        selectedProjectId: projectIfPresent(items, state.selectedProjectId),
+        createdProjects: [],
+        deletedProjects: [],
       };
+    }
     case "projectsFailed":
       return {
         ...state,
         projects: { status: "error", message: action.message },
+        // Only a project created here is known to exist without the list.
+        selectedProjectId: projectIfPresent(
+          state.createdProjects,
+          state.selectedProjectId,
+        ),
+        deletedProjects: [],
       };
     case "projectSelected":
-      return { ...state, selectedProjectId: action.id };
+      return { ...state, selectedProjectId: action.id, projectChosen: true };
+    case "projectListOpened":
+      // Radix reports no pick of the project already selected, so opening
+      // the list counts as choosing: the user has seen what is selected.
+      return state.projectChosen ? state : { ...state, projectChosen: true };
+    case "startingProjectFound": {
+      if (state.projectChosen) return state;
+      const id = projectIfPresent(loadedProjects(state), action.id);
+      return id === null ? state : { ...state, selectedProjectId: id };
+    }
     case "projectCreated":
       return {
-        ...state,
-        projects:
-          state.projects.status === "ready"
-            ? {
-                status: "ready",
-                items: sortProjects([...state.projects.items, action.project]),
-              }
-            : state.projects,
+        ...withListedProjects(state, (projects) =>
+          sortProjects([...projects, action.project]),
+        ),
         selectedProjectId: action.project.id,
+        projectChosen: true,
       };
     case "projectRenamed":
-      return {
-        ...state,
-        projects:
-          state.projects.status === "ready"
-            ? {
-                status: "ready",
-                items: sortProjects(
-                  state.projects.items.map((p) =>
-                    p.id === action.project.id ? action.project : p,
-                  ),
-                ),
-              }
-            : state.projects,
-      };
+      return withListedProjects(state, (projects) =>
+        sortProjects(
+          projects.map((p) =>
+            p.id === action.project.id ? action.project : p,
+          ),
+        ),
+      );
     case "projectDeleted":
       return {
-        ...state,
-        projects:
-          state.projects.status === "ready"
-            ? {
-                status: "ready",
-                items: state.projects.items.filter((p) => p.id !== action.id),
-              }
-            : state.projects,
+        ...withListedProjects(state, (projects) =>
+          projects.filter((p) => p.id !== action.id),
+        ),
+        deletedProjects:
+          state.projects.status === "loading"
+            ? [...state.deletedProjects, action.id]
+            : state.deletedProjects,
         selectedProjectId:
           state.selectedProjectId === action.id
             ? null
@@ -197,10 +230,8 @@ export function reducer(state: State, action: Action): State {
         selectedId: target.id,
         drafts: { ...state.drafts, [target.id]: draft },
         titles: { ...state.titles, [target.id]: entry.title ?? "" },
-        selectedProjectId: projectIfPresent(
-          loadedProjects(state),
-          entry.projectId,
-        ),
+        selectedProjectId: openedProject(state, entry),
+        projectChosen: true,
         lastSaved: { ...state.lastSaved, [target.id]: entry.renderedPrompt },
       };
     }
@@ -268,6 +299,29 @@ function sortProjects(projects: Project[]): Project[] {
   return [...projects].sort((a, b) =>
     key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : a.id < b.id ? -1 : 1,
   );
+}
+
+/**
+ * The projects the pickers offer: the loaded list, or the projects created
+ * here while it loads or after it failed.
+ */
+export function listedProjects(state: State): Project[] {
+  return state.projects.status === "ready"
+    ? state.projects.items
+    : state.createdProjects;
+}
+
+/** `state` with `change` applied to the projects `listedProjects` returns. */
+function withListedProjects(
+  state: State,
+  change: (projects: Project[]) => Project[],
+): State {
+  return state.projects.status === "ready"
+    ? {
+        ...state,
+        projects: { status: "ready", items: change(state.projects.items) },
+      }
+    : { ...state, createdProjects: change(state.createdProjects) };
 }
 
 /** `id` if a project with that id is in `projects`, else null. */
@@ -383,12 +437,22 @@ export function openConflicts(
     ((hasOwn(state.titles, id) && filled(state.titles[id])) ||
       (hasOwn(state.drafts, id) &&
         Object.values(state.drafts[id]).some(filled)));
-  const entryProject = projectIfPresent(loadedProjects(state), entry.projectId);
   return {
     replacesDraft,
     changesProject:
-      hasAnyDraftText(state) && entryProject !== state.selectedProjectId,
+      hasAnyDraftText(state) &&
+      openedProject(state, entry) !== state.selectedProjectId,
   };
+}
+
+/**
+ * The project opening `entry` selects: its own while the list loads, since
+ * projectsLoaded checks it then, else its own if listed, else none.
+ */
+export function openedProject(state: State, entry: PromptEntry): string | null {
+  return state.projects.status === "loading"
+    ? entry.projectId
+    : projectIfPresent(listedProjects(state), entry.projectId);
 }
 
 /**

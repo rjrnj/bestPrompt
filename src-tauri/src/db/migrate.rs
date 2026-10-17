@@ -21,6 +21,7 @@ use super::DbError;
 const MIGRATIONS: &[&str] = &[
     include_str!("migrations/001_initial.sql"),
     include_str!("migrations/002_history.sql"),
+    include_str!("migrations/003_entry_version.sql"),
 ];
 
 /// The schema version of a database that `migrate` would have to change,
@@ -134,6 +135,25 @@ mod tests {
         let mut conn = open_in_memory().unwrap();
         migrate(&mut conn).unwrap();
         assert_eq!(user_version(&conn).unwrap(), MIGRATIONS.len());
+    }
+
+    #[test]
+    fn entries_saved_before_versions_start_at_version_zero() {
+        let mut conn = open_in_memory().unwrap();
+        apply(&mut conn, &MIGRATIONS[..2]).unwrap();
+        conn.execute(
+            "INSERT INTO prompt_entries (id, framework_snapshot, section_values, rendered_prompt, created_at)
+             VALUES ('e', '{}', '{}', 'rendered', 0)",
+            [],
+        )
+        .unwrap();
+
+        apply(&mut conn, MIGRATIONS).unwrap();
+
+        assert_eq!(
+            count(&conn, "SELECT version FROM prompt_entries WHERE id = 'e'"),
+            0
+        );
     }
 
     #[test]

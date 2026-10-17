@@ -3,7 +3,12 @@ import { useId } from "react";
 import { flushSync } from "react-dom";
 import type { PromptEntry } from "../../bindings/PromptEntry";
 import { useAppDispatch, useAppState } from "../../state/AppState";
-import { openConflicts, unplacedSections } from "../../state/reducer";
+import {
+  listedProjects,
+  openConflicts,
+  openedProject,
+  unplacedSections,
+} from "../../state/reducer";
 import {
   dialogButtons,
   dialogDescription,
@@ -52,10 +57,14 @@ export function OpenInBuilder({ entry }: { entry: PromptEntry }) {
   }
 
   const { replacesDraft, changesProject } = openConflicts(state, entry);
-  const projects =
-    state.projects.status === "ready" ? state.projects.items : [];
+  const target = openedProject(state, entry);
+  // While the projects load, the entry's project is kept before the list
+  // can name it.
   const projectName =
-    projects.find((p) => p.id === entry.projectId)?.name ?? "No project";
+    target === null
+      ? "No project"
+      : (listedProjects(state).find((p) => p.id === target)?.name ??
+        "this prompt's project");
 
   function open() {
     // Rendered at once, so the Builder's title is showing to take focus;

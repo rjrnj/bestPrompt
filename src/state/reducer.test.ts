@@ -9,6 +9,7 @@ import {
   hasAnyDraftText,
   initialState,
   isBlank,
+  listedProjects,
   needsSave,
   openConflicts,
   reducer,
@@ -413,6 +414,7 @@ function entry(
     title: null,
     projectId: null,
     createdAt: 1,
+    version: 0,
     ...extra,
   };
 }
@@ -588,6 +590,106 @@ describe("projects", () => {
     expect(state.selectedProjectId).toBeNull();
   });
 
+  it("keeps a project created while the list loads, and its selection", () => {
+    const mid = project("p-m", "Mid");
+    const state = run([
+      { type: "projectCreated", project: mid },
+      { type: "projectsLoaded", projects: [api, web] },
+    ]);
+
+    expect(state.projects).toEqual({ status: "ready", items: [api, mid, web] });
+    expect(state.selectedProjectId).toBe("p-m");
+  });
+
+  it("lists a project created while loading once when the list already has it", () => {
+    const state = run([
+      { type: "projectCreated", project: api },
+      { type: "projectsLoaded", projects: [api, web] },
+    ]);
+
+    expect(state.projects).toEqual({ status: "ready", items: [api, web] });
+  });
+
+  it("renames or deletes a project created while the list loads", () => {
+    const mid = project("p-m", "Mid");
+    const renamed = run([
+      { type: "projectCreated", project: mid },
+      { type: "projectRenamed", project: { ...mid, name: "zzz" } },
+      { type: "projectsLoaded", projects: [api, web] },
+    ]);
+    const deleted = run([
+      { type: "projectCreated", project: mid },
+      { type: "projectDeleted", id: "p-m" },
+      { type: "projectsLoaded", projects: [api, web] },
+    ]);
+
+    expect(renamed.projects).toEqual({
+      status: "ready",
+      items: [api, web, { ...mid, name: "zzz" }],
+    });
+    expect(renamed.createdProjects).toEqual([]);
+    expect(deleted.projects).toEqual({ status: "ready", items: [api, web] });
+    expect(deleted.selectedProjectId).toBeNull();
+  });
+
+  it("leaves out a project deleted while the list loads when the list has it", () => {
+    const mid = project("p-m", "Mid");
+    const state = run([
+      { type: "projectCreated", project: mid },
+      { type: "projectDeleted", id: "p-m" },
+      // The list was read after the create and before the delete.
+      { type: "projectsLoaded", projects: [api, mid, web] },
+    ]);
+
+    expect(state.projects).toEqual({ status: "ready", items: [api, web] });
+    expect(state.selectedProjectId).toBeNull();
+  });
+
+  it("lists the projects created before the list loads, in name order", () => {
+    const state = run([
+      { type: "projectCreated", project: web },
+      { type: "projectCreated", project: api },
+    ]);
+
+    expect(listedProjects(state)).toEqual([api, web]);
+    expect(listedProjects(withProjects)).toEqual([api, web]);
+  });
+
+  it("keeps created projects and their selection when the list fails", () => {
+    const state = run([
+      { type: "projectCreated", project: api },
+      { type: "projectsFailed", message: "no db" },
+    ]);
+
+    expect(listedProjects(state)).toEqual([api]);
+    expect(state.selectedProjectId).toBe("p-api");
+  });
+
+  it("lists a project created after the list failed", () => {
+    const state = run([
+      { type: "projectsFailed", message: "no db" },
+      { type: "projectCreated", project: api },
+    ]);
+
+    expect(listedProjects(state)).toEqual([api]);
+    expect(state.selectedProjectId).toBe("p-api");
+  });
+
+  it("drops a selection the failed list can't confirm", () => {
+    const state = run(
+      [
+        {
+          type: "entryOpened",
+          entry: entry("ab", { a: "one" }, { projectId: "p-api" }),
+        },
+        { type: "projectsFailed", message: "no db" },
+      ],
+      loaded,
+    );
+
+    expect(state.selectedProjectId).toBeNull();
+  });
+
   it("keeps a selection that is still there when projects are reloaded", () => {
     const state = run(
       [
@@ -598,6 +700,107 @@ describe("projects", () => {
     );
 
     expect(state.selectedProjectId).toBe("p-web");
+  });
+});
+
+describe("the starting project", () => {
+  it("is selected when the user has not chosen one", () => {
+    const state = reducer(withProjects, {
+      type: "startingProjectFound",
+      id: "p-web",
+    });
+
+    expect(state.selectedProjectId).toBe("p-web");
+  });
+
+  it("is ignored when it is not in the list", () => {
+    const state = reducer(withProjects, {
+      type: "startingProjectFound",
+      id: "gone",
+    });
+
+    expect(state.selectedProjectId).toBeNull();
+  });
+
+  it("does not replace a project the user picked, even none", () => {
+    const picked = run(
+      [
+        { type: "projectSelected", id: "p-api" },
+        { type: "startingProjectFound", id: "p-web" },
+      ],
+      withProjects,
+    );
+    const none = run(
+      [
+        { type: "projectSelected", id: null },
+        { type: "startingProjectFound", id: "p-web" },
+      ],
+      withProjects,
+    );
+
+    expect(picked.selectedProjectId).toBe("p-api");
+    expect(none.selectedProjectId).toBeNull();
+  });
+
+  it("does not replace no project once the user opened the list", () => {
+    const state = run(
+      [
+        { type: "projectListOpened" },
+        { type: "startingProjectFound", id: "p-web" },
+      ],
+      withProjects,
+    );
+
+    expect(state.selectedProjectId).toBeNull();
+  });
+
+  it("does not replace a project the user created", () => {
+    const state = run(
+      [
+        { type: "projectCreated", project: project("p-m", "Mid") },
+        { type: "startingProjectFound", id: "p-web" },
+      ],
+      withProjects,
+    );
+
+    expect(state.selectedProjectId).toBe("p-m");
+  });
+
+  it("does not replace the project of an opened entry", () => {
+    const state = run(
+      [
+        {
+          type: "entryOpened",
+          entry: entry("ab", { a: "one" }, { projectId: "p-api" }),
+        },
+        { type: "startingProjectFound", id: "p-web" },
+      ],
+      withProjects,
+    );
+
+    expect(state.selectedProjectId).toBe("p-api");
+  });
+});
+
+describe("opening an entry while the projects load", () => {
+  const opened = reducer(loaded, {
+    type: "entryOpened",
+    entry: entry("ab", { a: "one" }, { projectId: "p-api" }),
+  });
+
+  it("keeps the entry's project once the list has it", () => {
+    const state = reducer(opened, {
+      type: "projectsLoaded",
+      projects: [api, web],
+    });
+
+    expect(state.selectedProjectId).toBe("p-api");
+  });
+
+  it("drops the entry's project when the list does not have it", () => {
+    const state = reducer(opened, { type: "projectsLoaded", projects: [web] });
+
+    expect(state.selectedProjectId).toBeNull();
   });
 });
 
@@ -811,6 +1014,43 @@ describe("openConflicts", () => {
     expect(
       openConflicts(state, entry("xy", { x: "x" }, { projectId: "p-web" })),
     ).toEqual(none);
+  });
+
+  it("reports a changed project for an entry opened while the projects load", () => {
+    // The entry keeps its project until the list arrives, so the drafts
+    // move to it.
+    const state = run([{ type: "editSection", key: "a", value: "t" }], loaded);
+
+    expect(
+      openConflicts(state, entry("xy", {}, { projectId: "p-web" }))
+        .changesProject,
+    ).toBe(true);
+    expect(
+      openConflicts(
+        reducer(state, {
+          type: "entryOpened",
+          entry: entry("xy", {}, { projectId: "p-web" }),
+        }),
+        entry("ab", {}, { projectId: "p-web" }),
+      ).changesProject,
+    ).toBe(false);
+  });
+
+  it("counts a project created after the projects failed to load", () => {
+    const state = run(
+      [
+        { type: "projectsFailed", message: "no" },
+        { type: "projectCreated", project: project("p-c", "C") },
+        { type: "editSection", key: "a", value: "t" },
+        { type: "projectSelected", id: null },
+      ],
+      loaded,
+    );
+
+    expect(
+      openConflicts(state, entry("xy", {}, { projectId: "p-c" }))
+        .changesProject,
+    ).toBe(true);
   });
 
   it("treats a deleted project as no project", () => {

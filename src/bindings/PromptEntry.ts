@@ -15,4 +15,11 @@ sectionValues: { [key in string]: string }, renderedPrompt: string, title: strin
  * The project the entry is filed under, or `None` for no project (also
  * after the project is deleted).
  */
-projectId: string | null, createdAt: number, };
+projectId: string | null, createdAt: number, 
+/**
+ * How many title or project edits the entry has had since it was saved,
+ * so of two copies read at different times the one with the higher
+ * version is the newer. Clearing the project when it is deleted doesn't
+ * count: ties go to the copy read later.
+ */
+version: number, };

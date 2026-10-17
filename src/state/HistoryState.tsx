@@ -19,6 +19,7 @@ import {
   setEntryProject,
   setEntryTitle,
 } from "../api";
+import type { EntryCursor } from "../bindings/EntryCursor";
 import type { EntryQuery } from "../bindings/EntryQuery";
 import type { PromptEntry } from "../bindings/PromptEntry";
 import { useAppDispatch, useAppState } from "./AppState";
@@ -95,12 +96,12 @@ export function HistoryProvider({ children }: { children: ReactNode }) {
   const requestCount = useRef(0);
 
   const load = useCallback(
-    async (offset: number, append: boolean, limit = PAGE_SIZE) => {
+    async (after: EntryCursor | null, append: boolean, limit = PAGE_SIZE) => {
       const requestId = ++requestCount.current;
       dispatch({ type: "pageRequested", requestId, append });
       let entries: PromptEntry[];
       try {
-        entries = await listPromptEntries(query, limit, offset);
+        entries = await listPromptEntries(query, limit, after);
       } catch (error) {
         dispatch({ type: "pageFailed", requestId, message: messageOf(error) });
         return;
@@ -110,19 +111,19 @@ export function HistoryProvider({ children }: { children: ReactNode }) {
     [query],
   );
 
-  const refresh = useCallback(() => load(0, false), [load]);
+  const refresh = useCallback(() => load(null, false), [load]);
 
   // Only from a settled, full list: while a first page loads, the listed
   // entries may belong to the previous filters, and appending to them would
   // mix two queries.
-  const { offset } = state;
+  const { cursor } = state;
   const canShowMore = state.status === "ready" && state.hasMore;
   // A failed Show more left the list as it was, so it can be run again.
   const canRetryMore =
     state.status === "error" && state.appending && state.hasMore;
   const showMore = useCallback(async () => {
-    if (canShowMore || canRetryMore) await load(offset, true);
-  }, [load, offset, canShowMore, canRetryMore]);
+    if (canShowMore || canRetryMore) await load(cursor, true);
+  }, [load, cursor, canShowMore, canRetryMore]);
 
   // How many rows are listed, read when the tab is shown again.
   const listed = useRef(0);
@@ -147,7 +148,7 @@ export function HistoryProvider({ children }: { children: ReactNode }) {
     const shown = shownQuery.current === null;
     shownQuery.current = query;
     const pages = Math.max(1, Math.ceil(listed.current / PAGE_SIZE));
-    void load(0, false, shown ? pages * PAGE_SIZE : PAGE_SIZE);
+    void load(null, false, shown ? pages * PAGE_SIZE : PAGE_SIZE);
   }, [view, query, load]);
 
   // A project deleted elsewhere (the Builder's Manage dialog) can't stay the

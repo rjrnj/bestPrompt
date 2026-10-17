@@ -23,6 +23,7 @@ function entry(id: string, fields: Partial<PromptEntry> = {}): PromptEntry {
     title: null,
     projectId: null,
     createdAt: 1,
+    version: 0,
     ...fields,
   };
 }
@@ -64,7 +65,8 @@ describe("the history state", () => {
       selectedId: null,
       requestId: 0,
       appending: false,
-      offset: 0,
+      cursor: null,
+      deletedWhileLoading: [],
     });
   });
 
@@ -245,12 +247,12 @@ describe("the history state", () => {
 
     const full = reload(entries(limit));
     expect(full.hasMore).toBe(true);
-    expect(full.offset).toBe(limit);
+    expect(full.cursor?.id).toBe(`e${limit - 1}`);
     expect(full.selectedId).toBe(`e${PAGE_SIZE + 5}`);
 
     const short = reload(entries(limit - 1));
     expect(short.hasMore).toBe(false);
-    expect(short.offset).toBe(limit - 1);
+    expect(short.cursor?.id).toBe(`e${limit - 2}`);
   });
 
   it("records whether the failed request was a show more", () => {
@@ -391,43 +393,30 @@ describe("the history state", () => {
   });
 });
 
-describe("the paging offset", () => {
-  /** A first page of `items` loaded under `project`. */
-  function filtered(
-    project: HistoryState["filters"]["project"],
-    items: PromptEntry[],
-  ): HistoryState {
-    return run([
-      { type: "filtersChanged", filters: { project } },
-      { type: "pageRequested", requestId: 1, append: false },
+describe("the paging cursor", () => {
+  /** Request 2, a Show more that returns `items`. */
+  function more(items: PromptEntry[]): HistoryAction[] {
+    return [
+      { type: "pageRequested", requestId: 2, append: true },
       {
         type: "pageLoaded",
-        requestId: 1,
+        requestId: 2,
         entries: items,
-        append: false,
+        append: true,
         limit: PAGE_SIZE,
       },
-    ]);
+    ];
   }
 
-  it("advances by the rows each page returned", () => {
-    const first = loaded(entries(PAGE_SIZE));
-    expect(first.offset).toBe(PAGE_SIZE);
+  it("sits after the last row of the latest page", () => {
+    const first = loaded([
+      entry("a", { createdAt: 3 }),
+      entry("b", { createdAt: 2 }),
+    ]);
+    expect(first.cursor).toEqual({ createdAt: 2, id: "b" });
 
-    const second = run(
-      [
-        { type: "pageRequested", requestId: 2, append: true },
-        {
-          type: "pageLoaded",
-          requestId: 2,
-          entries: entries(3, PAGE_SIZE),
-          append: true,
-          limit: PAGE_SIZE,
-        },
-      ],
-      first,
-    );
-    expect(second.offset).toBe(PAGE_SIZE + 3);
+    const second = run(more([entry("c", { createdAt: 1 })]), first);
+    expect(second.cursor).toEqual({ createdAt: 1, id: "c" });
 
     const reloaded = run(
       [
@@ -435,96 +424,129 @@ describe("the paging offset", () => {
         {
           type: "pageLoaded",
           requestId: 3,
-          entries: entries(2),
+          entries: [entry("a", { createdAt: 3 })],
           append: false,
           limit: PAGE_SIZE,
         },
       ],
       second,
     );
-    expect(reloaded.offset).toBe(2);
+    expect(reloaded.cursor).toEqual({ createdAt: 3, id: "a" });
   });
 
-  it("moves back for a removed entry", () => {
+  it("is none after an empty first page", () => {
+    expect(loaded([]).cursor).toBeNull();
+  });
+
+  it("stays put after an empty Show more", () => {
+    const state = run(more([]), loaded(entries(2)));
+
+    expect(state.cursor?.id).toBe("e1");
+  });
+
+  it("stays on the last row when that row is removed", () => {
+    const state = run([{ type: "entryRemoved", id: "e2" }], loaded(entries(3)));
+
+    expect(state.entries.map((e) => e.id)).toEqual(["e0", "e1"]);
+    expect(state.cursor?.id).toBe("e2");
+  });
+
+  it("stays put when a row is edited", () => {
+    const state = run(
+      [{ type: "entryUpdated", entry: entry("e2", { projectId: "p-web" }) }],
+      loaded(entries(3)),
+    );
+
+    expect(state.cursor?.id).toBe("e2");
+  });
+});
+
+describe("edits made while a page loads", () => {
+  /** Request 2, a refresh that returns `items` as read before the edits. */
+  function refresh(
+    ...edits: HistoryAction[]
+  ): (items: PromptEntry[]) => HistoryAction[] {
+    return (items) => [
+      { type: "pageRequested", requestId: 2, append: false },
+      ...edits,
+      {
+        type: "pageLoaded",
+        requestId: 2,
+        entries: items,
+        append: false,
+        limit: PAGE_SIZE,
+      },
+    ];
+  }
+
+  it("keep a newer title when the page read before it arrives", () => {
+    const state = run(
+      refresh({
+        type: "entryUpdated",
+        entry: entry("e1", { title: "New", version: 1 }),
+      })(entries(3)),
+      loaded(entries(3)),
+    );
+
+    expect(state.entries.map((e) => e.title)).toEqual([null, "New", null]);
+  });
+
+  it("keep a deleted entry out of the page read before it", () => {
+    const state = run(
+      refresh({ type: "entryRemoved", id: "e1" })(entries(3)),
+      loaded(entries(3)),
+    );
+
+    expect(state.entries.map((e) => e.id)).toEqual(["e0", "e2"]);
+  });
+
+  it("give way to a page with a newer copy of the entry", () => {
+    const state = run(
+      refresh({
+        type: "entryUpdated",
+        entry: entry("e1", { title: "Mine", version: 1 }),
+      })([entry("e0"), entry("e1", { title: "Newer", version: 2 })]),
+      loaded(entries(3)),
+    );
+
+    expect(state.entries[1].title).toBe("Newer");
+  });
+
+  it("keep the newest of edits whose results arrive out of order", () => {
+    const state = run(
+      [
+        {
+          type: "entryUpdated",
+          entry: entry("e1", { title: "Second", version: 2 }),
+        },
+        {
+          type: "entryUpdated",
+          entry: entry("e1", { title: "First", version: 1 }),
+        },
+      ],
+      loaded(entries(3)),
+    );
+
+    expect(state.entries[1].title).toBe("Second");
+  });
+
+  it("forget deletions once no page is loading", () => {
     const state = run([{ type: "entryRemoved", id: "e1" }], loaded(entries(3)));
 
-    expect(state.offset).toBe(2);
+    expect(state.entries.map((e) => e.id)).toEqual(["e0", "e2"]);
+    expect(state.deletedWhileLoading).toEqual([]);
   });
 
-  it("stays put when an entry that is not listed is removed", () => {
-    const state = run(
-      [{ type: "entryRemoved", id: "elsewhere" }],
-      loaded(entries(3)),
-    );
-
-    expect(state.offset).toBe(3);
-  });
-
-  it("moves back for an edit that leaves the project filter", () => {
-    const unassigned = run(
-      [{ type: "entryUpdated", entry: entry("e1", { projectId: "p-web" }) }],
-      filtered({ kind: "unassigned" }, entries(3)),
-    );
-    const inProject = run(
-      [{ type: "entryUpdated", entry: entry("a", { projectId: null }) }],
-      filtered({ kind: "project", id: "p-api" }, [
-        entry("a", { projectId: "p-api" }),
-        entry("b", { projectId: "p-api" }),
-      ]),
-    );
-
-    expect(unassigned.offset).toBe(2);
-    expect(unassigned.entries[1].projectId).toBe("p-web");
-    expect(inProject.offset).toBe(1);
-  });
-
-  it("stays put for an edit that keeps matching", () => {
-    const retitled = run(
-      [{ type: "entryUpdated", entry: entry("e1", { title: "New" }) }],
-      filtered({ kind: "unassigned" }, entries(3)),
-    );
-    const anyProject = run(
-      [{ type: "entryUpdated", entry: entry("e1", { projectId: "p-web" }) }],
-      loaded(entries(3)),
-    );
-
-    expect(retitled.offset).toBe(3);
-    expect(anyProject.offset).toBe(3);
-  });
-
-  it("moves back only once for an entry that already left the filter", () => {
+  it("forget deletions from before the latest request", () => {
     const state = run(
       [
-        { type: "entryUpdated", entry: entry("e1", { projectId: "p-web" }) },
-        { type: "entryUpdated", entry: entry("e1", { projectId: "p-api" }) },
-      ],
-      filtered({ kind: "unassigned" }, entries(3)),
-    );
-
-    expect(state.offset).toBe(2);
-  });
-
-  it("moves forward again for an entry moved back into the filter", () => {
-    const state = run(
-      [
-        { type: "entryUpdated", entry: entry("e1", { projectId: "p-web" }) },
-        { type: "entryUpdated", entry: entry("e1", { projectId: null }) },
-      ],
-      filtered({ kind: "unassigned" }, entries(3)),
-    );
-
-    expect(state.offset).toBe(3);
-  });
-
-  it("does not move back twice for a removed entry that already left", () => {
-    const state = run(
-      [
-        { type: "entryUpdated", entry: entry("e1", { projectId: "p-web" }) },
+        { type: "pageRequested", requestId: 2, append: false },
         { type: "entryRemoved", id: "e1" },
+        { type: "pageRequested", requestId: 3, append: false },
       ],
-      filtered({ kind: "unassigned" }, entries(3)),
+      loaded(entries(3)),
     );
 
-    expect(state.offset).toBe(2);
+    expect(state.deletedWhileLoading).toEqual([]);
   });
 });

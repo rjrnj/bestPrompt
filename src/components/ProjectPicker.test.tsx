@@ -1,14 +1,21 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  createProject,
   latestEntryProject,
   listFrameworks,
   listProjects,
 } from "../api";
+import type { Framework } from "../bindings/Framework";
 import type { Project } from "../bindings/Project";
-import { AppStateProvider, useAppState } from "../state/AppState";
+import type { PromptEntry } from "../bindings/PromptEntry";
+import {
+  AppStateProvider,
+  useAppDispatch,
+  useAppState,
+} from "../state/AppState";
 import { ProjectPicker } from "./ProjectPicker";
 
 // Only the commands are mocked; ApiError stays the real class.
@@ -17,6 +24,7 @@ vi.mock("../api", async (importOriginal) => ({
   listFrameworks: vi.fn(),
   listProjects: vi.fn(),
   latestEntryProject: vi.fn(),
+  createProject: vi.fn(),
 }));
 
 function project(id: string, name: string): Project {
@@ -30,11 +38,61 @@ function Selected() {
   return <p>selected: {useAppState().selectedProjectId ?? "none"}</p>;
 }
 
+const rtf: Framework = {
+  id: "rtf",
+  name: "RTF",
+  description: "",
+  template: "{{role}}",
+  summaryKey: null,
+  isCustom: false,
+  sections: [{ key: "role", label: "Role", helpText: "" }],
+  createdAt: 1,
+  updatedAt: 1,
+};
+
+/** A saved prompt filed under the api project. */
+const savedUnderApi: PromptEntry = {
+  id: "e1",
+  frameworkId: "rtf",
+  frameworkSnapshot: {
+    name: rtf.name,
+    template: rtf.template,
+    summaryKey: null,
+    sections: rtf.sections,
+  },
+  sectionValues: { role: "x" },
+  renderedPrompt: "x",
+  title: null,
+  projectId: api.id,
+  createdAt: 1,
+  version: 0,
+};
+
+/** Opens `savedUnderApi` in the Builder, as History's Open in Builder does. */
+function Opener() {
+  const dispatch = useAppDispatch();
+  return (
+    <button
+      onClick={() => dispatch({ type: "entryOpened", entry: savedUnderApi })}
+    >
+      open
+    </button>
+  );
+}
+
+/** A promise the test resolves by hand. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
+}
+
 function renderPicker() {
   render(
     <AppStateProvider>
       <ProjectPicker />
       <Selected />
+      <Opener />
     </AppStateProvider>,
   );
 }
@@ -101,6 +159,68 @@ describe("ProjectPicker", () => {
 
     expect(screen.getByText(`selected: ${api.id}`)).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Project" })).toHaveFocus();
+  });
+
+  it("lists and shows a project created while the projects load", async () => {
+    vi.mocked(listProjects).mockReturnValue(new Promise(() => {}));
+    vi.mocked(createProject).mockResolvedValue(web);
+    renderPicker();
+    const user = userEvent.setup();
+    const trigger = screen.getByRole("combobox", { name: "Project" });
+
+    await user.click(trigger);
+    await user.click(
+      await screen.findByRole("option", { name: "New project…" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "New project" });
+    await user.type(
+      within(dialog).getByRole("textbox", { name: "Name" }),
+      "web",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Create" }));
+
+    expect(await screen.findByText(`selected: ${web.id}`)).toBeInTheDocument();
+    expect(trigger).toHaveTextContent("web");
+    await user.click(trigger);
+    expect(
+      await screen.findByRole("option", { name: "web" }),
+    ).toBeInTheDocument();
+  });
+
+  it("labels an opened prompt's project until the projects load, then names it", async () => {
+    const listing = deferred<Project[]>();
+    vi.mocked(listFrameworks).mockResolvedValue([rtf]);
+    vi.mocked(listProjects).mockReturnValue(listing.promise);
+    renderPicker();
+    const user = userEvent.setup();
+    const trigger = screen.getByRole("combobox", { name: "Project" });
+
+    await user.click(screen.getByRole("button", { name: "open" }));
+
+    expect(await screen.findByText(`selected: ${api.id}`)).toBeInTheDocument();
+    expect(trigger).toHaveTextContent("Loading projects…");
+
+    await act(async () => listing.resolve([api, web]));
+
+    expect(trigger).toHaveTextContent("api");
+  });
+
+  it("keeps No project picked while the projects load", async () => {
+    // Picking the item already selected changes no value, so this is the
+    // pick most easily lost to the newest entry's project.
+    const listing = deferred<Project[]>();
+    vi.mocked(listProjects).mockReturnValue(listing.promise);
+    vi.mocked(latestEntryProject).mockResolvedValue(web.id);
+    renderPicker();
+    const user = userEvent.setup();
+    const trigger = screen.getByRole("combobox", { name: "Project" });
+
+    await user.click(trigger);
+    await user.click(await screen.findByRole("option", { name: "No project" }));
+    await act(async () => listing.resolve([api, web]));
+
+    expect(screen.getByText("selected: none")).toBeInTheDocument();
+    expect(trigger).toHaveTextContent("No project");
   });
 
   it("offers No project when the projects fail to load", async () => {

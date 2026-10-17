@@ -17,7 +17,11 @@ type Props = {
   projects: Project[];
   /** The selected project's id, or null for No project. */
   value: string | null;
+  /** Shown for a `value` that isn't among `projects`, which lists no item for it. */
+  unlistedLabel?: string;
   onChange(id: string | null): void;
+  /** Runs as the list opens. */
+  onOpen?(): void;
   label: string;
   /** Listed after a separator; choosing one runs it and keeps the value. */
   extraItems?: ExtraItem[];
@@ -33,11 +37,15 @@ const NONE = "none";
 export function ProjectSelect({
   projects,
   value,
+  unlistedLabel,
   onChange,
+  onOpen,
   label,
   extraItems = [],
   ref,
 }: Props) {
+  const unlisted =
+    value !== null && !projects.some((project) => project.id === value);
   const labelId = useId();
   // Set when an extra item is chosen. Its action usually opens a dialog,
   // which takes focus as it mounts; the closing list would otherwise move
@@ -62,6 +70,9 @@ export function ProjectSelect({
             onChange(next === NONE ? null : next);
           }
         }}
+        onOpenChange={(open) => {
+          if (open) onOpen?.();
+        }}
       >
         <Select.Trigger
           ref={ref}
@@ -69,7 +80,7 @@ export function ProjectSelect({
           className={`max-w-60 ${selectTrigger}`}
         >
           <span className="min-w-0 truncate">
-            <Select.Value />
+            <Select.Value>{unlisted ? unlistedLabel : undefined}</Select.Value>
           </span>
           <Select.Icon>
             <Chevron />

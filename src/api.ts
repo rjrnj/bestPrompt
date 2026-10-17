@@ -4,6 +4,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type { DbError, DbErrorKind } from "./bindings/DbError";
+import type { EntryCursor } from "./bindings/EntryCursor";
 import type { EntryQuery } from "./bindings/EntryQuery";
 import type { Framework } from "./bindings/Framework";
 import type { NewPromptEntry } from "./bindings/NewPromptEntry";
@@ -98,9 +99,9 @@ export function savePromptEntry(entry: NewPromptEntry): Promise<PromptEntry> {
 export function listPromptEntries(
   query: EntryQuery,
   limit: number,
-  offset: number,
+  after: EntryCursor | null,
 ): Promise<PromptEntry[]> {
-  return call("list_prompt_entries", { query, limit, offset });
+  return call("list_prompt_entries", { query, limit, after });
 }
 
 export function getPromptEntry(id: string): Promise<PromptEntry> {

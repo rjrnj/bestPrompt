@@ -43,6 +43,11 @@ pub struct PromptEntry {
     /// after the project is deleted).
     pub project_id: Option<String>,
     pub created_at: i64,
+    /// How many title or project edits the entry has had since it was saved,
+    /// so of two copies read at different times the one with the higher
+    /// version is the newer. Clearing the project when it is deleted doesn't
+    /// count: ties go to the copy read later.
+    pub version: i64,
 }
 
 /// What the frontend sends to save an entry. The id, timestamp and snapshot
@@ -96,6 +101,7 @@ fn insert(
         title: stored_title(new.title.as_deref()),
         project_id: new.project_id.clone(),
         created_at: now,
+        version: 0,
     };
     tx.execute(
         "INSERT INTO prompt_entries
@@ -119,7 +125,7 @@ fn insert(
 
 const ENTRY_COLUMNS: &str =
     "SELECT id, framework_id, framework_snapshot, section_values, rendered_prompt,
-            title, project_id, created_at
+            title, project_id, created_at, version
      FROM prompt_entries";
 
 /// Which project's entries to list.
@@ -148,13 +154,26 @@ pub struct EntryQuery {
     pub search: Option<String>,
 }
 
-/// A page of the entries matching `query`, newest first. The filters are
-/// bound as parameters; only fixed SQL fragments are joined into the text.
+/// Where the next page starts: just after the listed entry with this time and
+/// id, in newest-first order. Unlike an offset it stays put when entries are
+/// saved, deleted or moved after the earlier pages were listed, and the entry
+/// it names need not still exist.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EntryCursor {
+    pub created_at: i64,
+    pub id: String,
+}
+
+/// A page of the entries matching `query`, newest first, starting after
+/// `after` or at the newest. The filters are bound as parameters; only fixed
+/// SQL fragments are joined into the text.
 pub fn list_prompt_entries(
     conn: &Connection,
     query: &EntryQuery,
     limit: u32,
-    offset: u32,
+    after: Option<&EntryCursor>,
 ) -> Result<Vec<PromptEntry>, DbError> {
     let mut conditions: Vec<&str> = Vec::new();
     let mut args: Vec<Box<dyn ToSql>> = Vec::new();
@@ -176,17 +195,22 @@ pub fn list_prompt_entries(
         );
         args.push(Box::new(words));
     }
+    if let Some(after) = after {
+        // The same order as ORDER BY, so the page starts right after it.
+        conditions.push("(created_at, id) < (?, ?)");
+        args.push(Box::new(after.created_at));
+        args.push(Box::new(after.id.clone()));
+    }
     let where_clause = if conditions.is_empty() {
         String::new()
     } else {
         format!(" WHERE {}", conditions.join(" AND "))
     };
     args.push(Box::new(limit));
-    args.push(Box::new(offset));
 
     let entries = conn
         .prepare(&format!(
-            "{ENTRY_COLUMNS}{where_clause} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
+            "{ENTRY_COLUMNS}{where_clause} ORDER BY created_at DESC, id DESC LIMIT ?"
         ))?
         .query_map(
             params_from_iter(args.iter().map(|arg| arg.as_ref())),
@@ -217,6 +241,7 @@ fn entry_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PromptEntry> {
         title: row.get(5)?,
         project_id: row.get(6)?,
         created_at: row.get(7)?,
+        version: row.get(8)?,
     })
 }
 
@@ -251,7 +276,7 @@ pub fn set_entry_title(
     title: Option<&str>,
 ) -> Result<PromptEntry, DbError> {
     let changed = conn.execute(
-        "UPDATE prompt_entries SET title = ?1 WHERE id = ?2",
+        "UPDATE prompt_entries SET title = ?1, version = version + 1 WHERE id = ?2",
         params![stored_title(title), id],
     )?;
     if changed == 0 {
@@ -270,7 +295,7 @@ pub fn set_entry_project(
         check_project_exists(conn, project_id)?;
     }
     let changed = conn.execute(
-        "UPDATE prompt_entries SET project_id = ?1 WHERE id = ?2",
+        "UPDATE prompt_entries SET project_id = ?1, version = version + 1 WHERE id = ?2",
         params![project_id, id],
     )?;
     if changed == 0 {
@@ -475,24 +500,74 @@ mod tests {
         entries.iter().map(|entry| entry.id.as_str()).collect()
     }
 
+    fn cursor_after(entry: &PromptEntry) -> EntryCursor {
+        EntryCursor {
+            created_at: entry.created_at,
+            id: entry.id.clone(),
+        }
+    }
+
     #[test]
     fn lists_entries_newest_first() {
         let mut conn = migrated();
         save_three(&mut conn);
 
-        let entries = list_prompt_entries(&conn, &EntryQuery::default(), 10, 0).unwrap();
+        let entries = list_prompt_entries(&conn, &EntryQuery::default(), 10, None).unwrap();
 
         assert_eq!(ids(&entries), ["a", "b", "c"]);
     }
 
     #[test]
-    fn lists_a_page_of_entries() {
+    fn lists_the_page_after_a_cursor() {
         let mut conn = migrated();
         save_three(&mut conn);
+        let first = list_prompt_entries(&conn, &EntryQuery::default(), 1, None).unwrap();
 
-        let entries = list_prompt_entries(&conn, &EntryQuery::default(), 1, 1).unwrap();
+        let entries = list_prompt_entries(
+            &conn,
+            &EntryQuery::default(),
+            1,
+            Some(&cursor_after(&first[0])),
+        )
+        .unwrap();
 
         assert_eq!(ids(&entries), ["b"]);
+    }
+
+    #[test]
+    fn an_entry_saved_after_the_first_page_does_not_repeat_a_row() {
+        let mut conn = migrated();
+        save_three(&mut conn);
+        let first = list_prompt_entries(&conn, &EntryQuery::default(), 2, None).unwrap();
+        insert(&mut conn, &new_entry("f"), "new".to_owned(), 4).unwrap();
+
+        let next = list_prompt_entries(
+            &conn,
+            &EntryQuery::default(),
+            2,
+            Some(&cursor_after(&first[1])),
+        )
+        .unwrap();
+
+        assert_eq!(ids(&next), ["c"]);
+    }
+
+    #[test]
+    fn deleting_a_listed_entry_does_not_skip_a_row() {
+        let mut conn = migrated();
+        save_three(&mut conn);
+        let first = list_prompt_entries(&conn, &EntryQuery::default(), 2, None).unwrap();
+        delete_prompt_entry(&conn, "b").unwrap();
+
+        let next = list_prompt_entries(
+            &conn,
+            &EntryQuery::default(),
+            2,
+            Some(&cursor_after(&first[1])),
+        )
+        .unwrap();
+
+        assert_eq!(ids(&next), ["c"]);
     }
 
     /// Saves an entry at a given time with the given title, project, framework
@@ -524,7 +599,7 @@ mod tests {
     }
 
     fn found(conn: &Connection, query: &EntryQuery) -> Vec<String> {
-        list_prompt_entries(conn, query, 50, 0)
+        list_prompt_entries(conn, query, 50, None)
             .unwrap()
             .into_iter()
             .map(|entry| entry.id)
@@ -675,7 +750,7 @@ mod tests {
             "^a",
             "\" *",
         ] {
-            let result = list_prompt_entries(&conn, &searching(text), 50, 0);
+            let result = list_prompt_entries(&conn, &searching(text), 50, None);
             assert!(result.is_ok(), "{text:?}: {result:?}");
         }
         // Operators are words: "AND" matches the title instead of combining terms.
@@ -689,16 +764,21 @@ mod tests {
     fn paging_is_newest_first_without_gaps_or_repeats() {
         let mut conn = migrated();
         insert_framework(&conn, "f", false);
-        // Two entries share a time, so the id tie-break decides their order.
-        for (id, time) in [("a", 1), ("b", 2), ("c", 2), ("d", 3), ("e", 4)] {
+        // Two entries share a time and fall on either side of a page break
+        // (e d | c b | a), so the cursor's id tie-break decides where the
+        // next page starts.
+        for (id, time) in [("a", 1), ("b", 2), ("c", 3), ("d", 3), ("e", 4)] {
             save_at(&mut conn, id, time, "f", Some("page"), None, &[]);
         }
         let all = found(&conn, &searching("page"));
         assert_eq!(all, ["e", "d", "c", "b", "a"]);
 
         let mut paged = Vec::new();
-        for offset in (0..5).step_by(2) {
-            let page = list_prompt_entries(&conn, &searching("page"), 2, offset).unwrap();
+        let mut after = None;
+        loop {
+            let page = list_prompt_entries(&conn, &searching("page"), 2, after.as_ref()).unwrap();
+            let Some(last) = page.last() else { break };
+            after = Some(cursor_after(last));
             paged.extend(page.into_iter().map(|entry| entry.id));
         }
 
@@ -719,7 +799,7 @@ mod tests {
         assert_eq!(read.framework_id, None);
         assert_eq!(read.framework_snapshot, saved.framework_snapshot);
         assert_eq!(
-            ids(&list_prompt_entries(&conn, &EntryQuery::default(), 10, 0).unwrap()),
+            ids(&list_prompt_entries(&conn, &EntryQuery::default(), 10, None).unwrap()),
             [saved.id.as_str()]
         );
     }
@@ -855,10 +935,28 @@ mod tests {
             changed,
             PromptEntry {
                 title: Some("new".to_owned()),
+                version: 1,
                 ..saved
             }
         );
         assert_eq!(get_prompt_entry(&conn, &changed.id).unwrap(), changed);
+    }
+
+    #[test]
+    fn each_edit_counts_one_version_from_zero() {
+        let mut conn = migrated();
+        insert_framework(&conn, "f", false);
+        insert_project(&conn, "p");
+        let saved = saved_with(&mut conn, None, None);
+        assert_eq!(saved.version, 0);
+        assert_eq!(get_prompt_entry(&conn, &saved.id).unwrap().version, 0);
+
+        let retitled = set_entry_title(&conn, &saved.id, Some("t")).unwrap();
+        let moved = set_entry_project(&conn, &saved.id, Some("p")).unwrap();
+
+        assert_eq!((retitled.version, moved.version), (1, 2));
+        let listed = list_prompt_entries(&conn, &EntryQuery::default(), 10, None).unwrap();
+        assert_eq!(listed[0].version, 2);
     }
 
     #[test]
@@ -886,13 +984,18 @@ mod tests {
             moved,
             PromptEntry {
                 project_id: Some("p".to_owned()),
+                version: 1,
                 ..saved.clone()
             }
         );
 
         let cleared = set_entry_project(&conn, &saved.id, None).unwrap();
-        assert_eq!(cleared, saved);
-        assert_eq!(get_prompt_entry(&conn, &saved.id).unwrap(), saved);
+        let expected = PromptEntry {
+            version: 2,
+            ..saved.clone()
+        };
+        assert_eq!(cleared, expected);
+        assert_eq!(get_prompt_entry(&conn, &saved.id).unwrap(), expected);
     }
 
     #[test]

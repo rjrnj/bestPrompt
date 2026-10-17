@@ -149,6 +149,7 @@ describe("App", () => {
             sections: [],
           },
           createdAt: 1,
+          version: 0,
         }) satisfies PromptEntry,
     );
     render(<App />);
@@ -195,6 +196,7 @@ describe("App", () => {
       title: null,
       projectId: null,
       createdAt: 1,
+      version: 0,
     };
     vi.mocked(listPromptEntries).mockResolvedValue([entry]);
     render(<App />);
@@ -240,6 +242,7 @@ describe("App", () => {
       title: "Readme",
       projectId: null,
       createdAt: 1,
+      version: 0,
     };
     vi.mocked(listPromptEntries).mockResolvedValue([entry]);
     render(<App />);
@@ -287,6 +290,7 @@ describe("App", () => {
             sections: costar.sections,
           },
           createdAt: 1,
+          version: 0,
         }) satisfies PromptEntry,
     );
     render(<App />);

@@ -52,6 +52,7 @@ function entry(id: string, fields: Partial<PromptEntry> = {}): PromptEntry {
     title: null,
     projectId: null,
     createdAt: 1,
+    version: 0,
     ...fields,
   };
 }
@@ -69,6 +70,11 @@ function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((r) => (resolve = r));
   return { promise, resolve };
+}
+
+/** The cursor for the page after the entry with this id; `entry` saves at time 1. */
+function after(id: string) {
+  return { createdAt: 1, id };
 }
 
 const everything: EntryQuery = {
@@ -143,7 +149,7 @@ describe("HistoryProvider", () => {
     expect(listPromptEntries).toHaveBeenLastCalledWith(
       everything,
       PAGE_SIZE,
-      0,
+      null,
     );
     expect(ids(result)).toEqual(["e0", "e1"]);
 
@@ -175,7 +181,7 @@ describe("HistoryProvider", () => {
     expect(listPromptEntries).toHaveBeenLastCalledWith(
       everything,
       2 * PAGE_SIZE,
-      0,
+      null,
     );
     expect(ids(result)).toHaveLength(2 * PAGE_SIZE);
     expect(result.current.history.state.selectedId).toBe(`e${PAGE_SIZE + 7}`);
@@ -186,7 +192,7 @@ describe("HistoryProvider", () => {
     expect(listPromptEntries).toHaveBeenLastCalledWith(
       everything,
       PAGE_SIZE,
-      2 * PAGE_SIZE,
+      after(`e${2 * PAGE_SIZE - 1}`),
     );
     expect(ids(result)).toHaveLength(2 * PAGE_SIZE + 3);
   });
@@ -210,7 +216,7 @@ describe("HistoryProvider", () => {
     expect(listPromptEntries).toHaveBeenLastCalledWith(
       everything,
       2 * PAGE_SIZE,
-      0,
+      null,
     );
   });
 
@@ -234,7 +240,7 @@ describe("HistoryProvider", () => {
     expect(listPromptEntries).toHaveBeenLastCalledWith(
       { ...everything, frameworkId: "rtf" },
       PAGE_SIZE,
-      0,
+      null,
     );
   });
 
@@ -248,11 +254,11 @@ describe("HistoryProvider", () => {
     expect(listPromptEntries).toHaveBeenLastCalledWith(
       everything,
       PAGE_SIZE,
-      0,
+      null,
     );
   });
 
-  it("show more asks for the page after the listed entries", async () => {
+  it("show more asks for the page after the last listed entry", async () => {
     vi.mocked(listPromptEntries)
       .mockResolvedValueOnce(entries(PAGE_SIZE))
       .mockResolvedValueOnce(entries(1, PAGE_SIZE));
@@ -264,16 +270,17 @@ describe("HistoryProvider", () => {
     expect(listPromptEntries).toHaveBeenLastCalledWith(
       everything,
       PAGE_SIZE,
-      PAGE_SIZE,
+      after(`e${PAGE_SIZE - 1}`),
     );
     expect(ids(result)).toHaveLength(PAGE_SIZE + 1);
     expect(result.current.history.state.hasMore).toBe(false);
   });
 
-  it("show more skips none after an entry leaves the project filter", async () => {
+  it("show more starts after the last row the page returned, even once it moves away", async () => {
+    const last = `e${PAGE_SIZE - 1}`;
     vi.mocked(listPromptEntries).mockResolvedValue(entries(PAGE_SIZE));
     vi.mocked(setEntryProject).mockResolvedValue(
-      entry("e3", { projectId: "p-web" }),
+      entry(last, { projectId: "p-web" }),
     );
     const { result } = renderHistory();
     act(() =>
@@ -281,50 +288,54 @@ describe("HistoryProvider", () => {
     );
     await openHistory(result);
 
-    await act(() => result.current.history.setProject("e3", "p-web"));
+    await act(() => result.current.history.setProject(last, "p-web"));
     await act(() => result.current.history.showMore());
 
     expect(listPromptEntries).toHaveBeenLastCalledWith(
       { ...everything, project: { kind: "unassigned" } },
       PAGE_SIZE,
-      PAGE_SIZE - 1,
+      after(last),
     );
   });
 
-  it("show more skips none after a delete", async () => {
+  it("show more starts after the last row the page returned, even once it is deleted", async () => {
+    const last = `e${PAGE_SIZE - 1}`;
     vi.mocked(listPromptEntries).mockResolvedValue(entries(PAGE_SIZE));
     vi.mocked(deletePromptEntry).mockResolvedValue();
     const { result } = renderHistory();
     await openHistory(result);
 
-    await act(() => result.current.history.remove("e3"));
+    await act(() => result.current.history.remove(last));
     await act(() => result.current.history.showMore());
 
     expect(listPromptEntries).toHaveBeenLastCalledWith(
       everything,
       PAGE_SIZE,
-      PAGE_SIZE - 1,
+      after(last),
     );
   });
 
-  it("show more is unchanged by an edit that keeps matching", async () => {
-    vi.mocked(listPromptEntries).mockResolvedValue(entries(PAGE_SIZE));
-    vi.mocked(setEntryTitle).mockResolvedValue(entry("e3", { title: "New" }));
-    vi.mocked(setEntryProject).mockResolvedValue(
-      entry("e4", { projectId: "p-web" }),
+  it("an edit that finishes while a refresh loads survives the older page", async () => {
+    const pending = deferred<PromptEntry[]>();
+    vi.mocked(listPromptEntries)
+      .mockResolvedValueOnce(entries(3))
+      .mockReturnValueOnce(pending.promise);
+    vi.mocked(setEntryTitle).mockResolvedValue(
+      entry("e1", { title: "New", version: 1 }),
     );
     const { result } = renderHistory();
     await openHistory(result);
 
-    await act(() => result.current.history.setTitle("e3", "New"));
-    await act(() => result.current.history.setProject("e4", "p-web"));
-    await act(() => result.current.history.showMore());
+    let refreshed!: Promise<void>;
+    act(() => {
+      refreshed = result.current.history.refresh();
+    });
+    await act(() => result.current.history.setTitle("e1", "New"));
+    // The page was read before the title changed.
+    pending.resolve(entries(3));
+    await act(() => refreshed);
 
-    expect(listPromptEntries).toHaveBeenLastCalledWith(
-      everything,
-      PAGE_SIZE,
-      PAGE_SIZE,
-    );
+    expect(result.current.history.state.entries[1].title).toBe("New");
   });
 
   it("offers show more only when the list is ready and has more", async () => {
@@ -394,7 +405,7 @@ describe("HistoryProvider", () => {
     expect(listPromptEntries).toHaveBeenLastCalledWith(
       { ...everything, frameworkId: "rtf" },
       PAGE_SIZE,
-      0,
+      null,
     );
     expect(result.current.history.state.filters.frameworkId).toBe("rtf");
   });
@@ -442,7 +453,7 @@ describe("HistoryProvider", () => {
     expect(listPromptEntries).toHaveBeenLastCalledWith(
       { ...everything, search: "hello" },
       PAGE_SIZE,
-      0,
+      null,
     );
   });
 
@@ -473,7 +484,7 @@ describe("HistoryProvider", () => {
     expect(listPromptEntries).toHaveBeenLastCalledWith(
       everything,
       PAGE_SIZE,
-      0,
+      null,
     );
   });
 
