@@ -632,6 +632,19 @@ describe("projects", () => {
     expect(deleted.selectedProjectId).toBeNull();
   });
 
+  it("leaves out a project deleted while the list loads when the list has it", () => {
+    const mid = project("p-m", "Mid");
+    const state = run([
+      { type: "projectCreated", project: mid },
+      { type: "projectDeleted", id: "p-m" },
+      // The list was read after the create and before the delete.
+      { type: "projectsLoaded", projects: [api, mid, web] },
+    ]);
+
+    expect(state.projects).toEqual({ status: "ready", items: [api, web] });
+    expect(state.selectedProjectId).toBeNull();
+  });
+
   it("lists the projects created before the list loads, in name order", () => {
     const state = run([
       { type: "projectCreated", project: web },

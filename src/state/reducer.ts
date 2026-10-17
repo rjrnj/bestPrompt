@@ -43,6 +43,11 @@ export type State = {
    * they were created doesn't have them, so they join it when it loads.
    */
   createdProjects: Project[];
+  /**
+   * Ids of projects deleted while the list is loading, so a list read before
+   * the delete doesn't bring them back when it loads.
+   */
+  deletedProjects: string[];
   saving: boolean;
   toasts: Toast[];
   nextToastId: number;
@@ -87,6 +92,7 @@ export const initialState: State = {
   selectedProjectId: null,
   projectChosen: false,
   createdProjects: [],
+  deletedProjects: [],
   saving: false,
   toasts: [],
   nextToastId: 1,
@@ -134,9 +140,12 @@ export function reducer(state: State, action: Action): State {
     case "viewChanged":
       return { ...state, view: action.view };
     case "projectsLoaded": {
-      // A list read after a create already has the project.
+      // A list read after a create already has the project, and one read
+      // before a delete still has that one.
       const loaded = action.projects.filter(
-        (p) => !state.createdProjects.some((c) => c.id === p.id),
+        (p) =>
+          !state.createdProjects.some((c) => c.id === p.id) &&
+          !state.deletedProjects.includes(p.id),
       );
       const items = sortProjects([...loaded, ...state.createdProjects]);
       return {
@@ -144,6 +153,7 @@ export function reducer(state: State, action: Action): State {
         projects: { status: "ready", items },
         selectedProjectId: projectIfPresent(items, state.selectedProjectId),
         createdProjects: [],
+        deletedProjects: [],
       };
     }
     case "projectsFailed":
@@ -155,6 +165,7 @@ export function reducer(state: State, action: Action): State {
           state.createdProjects,
           state.selectedProjectId,
         ),
+        deletedProjects: [],
       };
     case "projectSelected":
       return { ...state, selectedProjectId: action.id, projectChosen: true };
@@ -188,6 +199,10 @@ export function reducer(state: State, action: Action): State {
         ...withListedProjects(state, (projects) =>
           projects.filter((p) => p.id !== action.id),
         ),
+        deletedProjects:
+          state.projects.status === "loading"
+            ? [...state.deletedProjects, action.id]
+            : state.deletedProjects,
         selectedProjectId:
           state.selectedProjectId === action.id
             ? null
