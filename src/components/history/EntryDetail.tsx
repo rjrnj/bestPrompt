@@ -3,7 +3,7 @@ import * as ToggleGroup from "@radix-ui/react-toggle-group";
 import { useEffect, useRef, useState } from "react";
 import type { PromptEntry } from "../../bindings/PromptEntry";
 import { writeText } from "../../clipboard";
-import { entryLabel } from "../../history/label";
+import { entryLabel, sectionText } from "../../history/label";
 import { useAppDispatch, useAppState } from "../../state/AppState";
 import { useHistory } from "../../state/HistoryState";
 import { OpenInBuilder } from "./OpenInBuilder";
@@ -105,7 +105,7 @@ function Detail({
   }
 
   const filled = entry.frameworkSnapshot.sections.filter(
-    (section) => (entry.sectionValues[section.key] ?? "").trim() !== "",
+    (section) => sectionText(entry, section.key).trim() !== "",
   );
 
   return (
@@ -177,7 +177,7 @@ function Detail({
                 {section.label}
               </h3>
               <p className="text-sm wrap-break-word whitespace-pre-wrap text-slate-900 dark:text-slate-100">
-                {entry.sectionValues[section.key]}
+                {sectionText(entry, section.key)}
               </p>
             </section>
           ))}
