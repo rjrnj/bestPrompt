@@ -187,6 +187,93 @@ describe("HistoryProvider", () => {
     expect(result.current.history.state.hasMore).toBe(false);
   });
 
+  it("show more skips none after an entry leaves the project filter", async () => {
+    vi.mocked(listPromptEntries).mockResolvedValue(entries(PAGE_SIZE));
+    vi.mocked(setEntryProject).mockResolvedValue(
+      entry("e3", { projectId: "p-web" }),
+    );
+    const { result } = renderHistory();
+    act(() =>
+      result.current.history.setFilters({ project: { kind: "unassigned" } }),
+    );
+    await openHistory(result);
+
+    await act(() => result.current.history.setProject("e3", "p-web"));
+    await act(() => result.current.history.showMore());
+
+    expect(listPromptEntries).toHaveBeenLastCalledWith(
+      { ...everything, project: { kind: "unassigned" } },
+      PAGE_SIZE,
+      PAGE_SIZE - 1,
+    );
+  });
+
+  it("show more skips none after a delete", async () => {
+    vi.mocked(listPromptEntries).mockResolvedValue(entries(PAGE_SIZE));
+    vi.mocked(deletePromptEntry).mockResolvedValue();
+    const { result } = renderHistory();
+    await openHistory(result);
+
+    await act(() => result.current.history.remove("e3"));
+    await act(() => result.current.history.showMore());
+
+    expect(listPromptEntries).toHaveBeenLastCalledWith(
+      everything,
+      PAGE_SIZE,
+      PAGE_SIZE - 1,
+    );
+  });
+
+  it("show more is unchanged by an edit that keeps matching", async () => {
+    vi.mocked(listPromptEntries).mockResolvedValue(entries(PAGE_SIZE));
+    vi.mocked(setEntryTitle).mockResolvedValue(entry("e3", { title: "New" }));
+    vi.mocked(setEntryProject).mockResolvedValue(
+      entry("e4", { projectId: "p-web" }),
+    );
+    const { result } = renderHistory();
+    await openHistory(result);
+
+    await act(() => result.current.history.setTitle("e3", "New"));
+    await act(() => result.current.history.setProject("e4", "p-web"));
+    await act(() => result.current.history.showMore());
+
+    expect(listPromptEntries).toHaveBeenLastCalledWith(
+      everything,
+      PAGE_SIZE,
+      PAGE_SIZE,
+    );
+  });
+
+  it("offers show more only when the list is ready and has more", async () => {
+    const pending = deferred<PromptEntry[]>();
+    vi.mocked(listPromptEntries)
+      .mockResolvedValueOnce(entries(PAGE_SIZE))
+      .mockReturnValueOnce(pending.promise);
+    const { result } = renderHistory();
+    expect(result.current.history.canShowMore).toBe(false);
+    await openHistory(result);
+    expect(result.current.history.canShowMore).toBe(true);
+
+    act(() => result.current.history.setFilters({ frameworkId: "rtf" }));
+    await waitFor(() =>
+      expect(result.current.history.state.status).toBe("loading"),
+    );
+    expect(result.current.history.canShowMore).toBe(false);
+
+    await act(async () => pending.resolve(entries(2)));
+    expect(result.current.history.canShowMore).toBe(false);
+  });
+
+  it("does not refetch for a project filter equal to the current one", async () => {
+    const { result } = renderHistory();
+    await openHistory(result);
+
+    act(() => result.current.history.setFilters({ project: { kind: "any" } }));
+    await act(async () => {});
+
+    expect(listPromptEntries).toHaveBeenCalledTimes(1);
+  });
+
   it("show more does nothing after a short page or while a page loads", async () => {
     const pending = deferred<PromptEntry[]>();
     vi.mocked(listPromptEntries)
