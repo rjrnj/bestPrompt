@@ -95,17 +95,17 @@ export function HistoryProvider({ children }: { children: ReactNode }) {
   const requestCount = useRef(0);
 
   const load = useCallback(
-    async (offset: number, append: boolean) => {
+    async (offset: number, append: boolean, limit = PAGE_SIZE) => {
       const requestId = ++requestCount.current;
       dispatch({ type: "pageRequested", requestId });
       let entries: PromptEntry[];
       try {
-        entries = await listPromptEntries(query, PAGE_SIZE, offset);
+        entries = await listPromptEntries(query, limit, offset);
       } catch (error) {
         dispatch({ type: "pageFailed", requestId, message: messageOf(error) });
         return;
       }
-      dispatch({ type: "pageLoaded", requestId, entries, append });
+      dispatch({ type: "pageLoaded", requestId, entries, append, limit });
     },
     [query],
   );
@@ -121,11 +121,31 @@ export function HistoryProvider({ children }: { children: ReactNode }) {
     if (canShowMore) await load(offset, true);
   }, [load, offset, canShowMore]);
 
-  // The list reloads whenever the tab is shown and, while it shows, whenever
-  // the query changes.
+  // How many rows are listed, read when the tab is shown again.
+  const listed = useRef(0);
   useEffect(() => {
-    if (view === "history") void refresh();
-  }, [view, refresh]);
+    listed.current = state.entries.length;
+  });
+
+  // The query the shown tab last loaded; null while the tab is hidden.
+  const shownQuery = useRef<EntryQuery | null>(null);
+
+  // The list reloads whenever the tab is shown and, while it shows, whenever
+  // the query changes. Showing the tab again reloads as many whole pages as
+  // were listed, so the rows read before and a selection among them
+  // survive; a query change starts over at one page.
+  useEffect(() => {
+    if (view !== "history") {
+      shownQuery.current = null;
+      return;
+    }
+    // Strict Mode runs the effect twice for one change.
+    if (shownQuery.current === query) return;
+    const shown = shownQuery.current === null;
+    shownQuery.current = query;
+    const pages = Math.max(1, Math.ceil(listed.current / PAGE_SIZE));
+    void load(0, false, shown ? pages * PAGE_SIZE : PAGE_SIZE);
+  }, [view, query, load]);
 
   // A project deleted elsewhere (the Builder's Manage dialog) can't stay the
   // filter; the reducer falls back to all projects, which reloads the list.

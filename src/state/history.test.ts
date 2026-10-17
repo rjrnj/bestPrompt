@@ -43,7 +43,13 @@ function run(
 function loaded(items: PromptEntry[]): HistoryState {
   return run([
     { type: "pageRequested", requestId: 1 },
-    { type: "pageLoaded", requestId: 1, entries: items, append: false },
+    {
+      type: "pageLoaded",
+      requestId: 1,
+      entries: items,
+      append: false,
+      limit: PAGE_SIZE,
+    },
   ]);
 }
 
@@ -77,12 +83,14 @@ describe("the history state", () => {
         requestId: 2,
         entries: [entry("new")],
         append: false,
+        limit: PAGE_SIZE,
       },
       {
         type: "pageLoaded",
         requestId: 1,
         entries: [entry("old")],
         append: false,
+        limit: PAGE_SIZE,
       },
       { type: "pageFailed", requestId: 1, message: "late" },
     ]);
@@ -104,6 +112,7 @@ describe("the history state", () => {
           requestId: 2,
           entries: entries(3, PAGE_SIZE),
           append: true,
+          limit: PAGE_SIZE,
         },
       ],
       first,
@@ -124,6 +133,7 @@ describe("the history state", () => {
           requestId: 2,
           entries: [entry("b")],
           append: false,
+          limit: PAGE_SIZE,
         },
       ],
       loaded([entry("a")]),
@@ -167,6 +177,7 @@ describe("the history state", () => {
           requestId: 2,
           entries: entries(3),
           append: false,
+          limit: PAGE_SIZE,
         },
       ],
       loaded(entries(2)),
@@ -185,6 +196,7 @@ describe("the history state", () => {
           requestId: 2,
           entries: [entry("x")],
           append: false,
+          limit: PAGE_SIZE,
         },
       ],
       loaded(entries(2)),
@@ -203,12 +215,41 @@ describe("the history state", () => {
           requestId: 2,
           entries: [entry("x")],
           append: true,
+          limit: PAGE_SIZE,
         },
       ],
       loaded(entries(2)),
     );
 
     expect(state.selectedId).toBe("e1");
+  });
+
+  it("a first page larger than one page has more only when it came back full", () => {
+    const limit = 2 * PAGE_SIZE;
+    const reload = (items: PromptEntry[]) =>
+      run(
+        [
+          { type: "entrySelected", id: `e${PAGE_SIZE + 5}` },
+          { type: "pageRequested", requestId: 3 },
+          {
+            type: "pageLoaded",
+            requestId: 3,
+            entries: items,
+            append: false,
+            limit,
+          },
+        ],
+        loaded(entries(PAGE_SIZE)),
+      );
+
+    const full = reload(entries(limit));
+    expect(full.hasMore).toBe(true);
+    expect(full.offset).toBe(limit);
+    expect(full.selectedId).toBe(`e${PAGE_SIZE + 5}`);
+
+    const short = reload(entries(limit - 1));
+    expect(short.hasMore).toBe(false);
+    expect(short.offset).toBe(limit - 1);
   });
 
   it("a failed page reports the error and keeps the entries", () => {
@@ -232,7 +273,13 @@ describe("the history state", () => {
         { type: "pageRequested", requestId: 2 },
         { type: "pageFailed", requestId: 2, message: "no db" },
         { type: "pageRequested", requestId: 3 },
-        { type: "pageLoaded", requestId: 3, entries: [], append: false },
+        {
+          type: "pageLoaded",
+          requestId: 3,
+          entries: [],
+          append: false,
+          limit: PAGE_SIZE,
+        },
       ],
       loaded(entries(2)),
     );
@@ -338,7 +385,13 @@ describe("the paging offset", () => {
     return run([
       { type: "filtersChanged", filters: { project } },
       { type: "pageRequested", requestId: 1 },
-      { type: "pageLoaded", requestId: 1, entries: items, append: false },
+      {
+        type: "pageLoaded",
+        requestId: 1,
+        entries: items,
+        append: false,
+        limit: PAGE_SIZE,
+      },
     ]);
   }
 
@@ -354,6 +407,7 @@ describe("the paging offset", () => {
           requestId: 2,
           entries: entries(3, PAGE_SIZE),
           append: true,
+          limit: PAGE_SIZE,
         },
       ],
       first,
@@ -368,6 +422,7 @@ describe("the paging offset", () => {
           requestId: 3,
           entries: entries(2),
           append: false,
+          limit: PAGE_SIZE,
         },
       ],
       second,
