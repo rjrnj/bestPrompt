@@ -50,7 +50,7 @@ export function HistoryList() {
     if (status === "error") {
       return (
         <LoadError
-          text={`Couldn't load the saved prompts: ${error}`}
+          text="Couldn't load the saved prompts."
           onRetry={() => void refresh()}
         />
       );
@@ -97,9 +97,9 @@ export function HistoryList() {
     <div className="flex flex-col gap-4">
       {groups.map((group) => (
         <section key={group.heading}>
-          <h3 className="px-3 pb-1 text-xs font-semibold tracking-wide text-slate-600 uppercase dark:text-slate-400">
+          <h2 className="px-3 pb-1 text-xs font-semibold tracking-wide text-slate-600 uppercase dark:text-slate-400">
             {group.heading}
-          </h3>
+          </h2>
           <ul className="flex flex-col">
             {group.entries.map((entry) => {
               const project = projectItems.find(

@@ -216,11 +216,18 @@ describe("HistoryView list pane", () => {
   });
 
   it("no_results_offers_to_clear_filters", async () => {
+    vi.mocked(listPromptEntries).mockImplementation((query) =>
+      Promise.resolve(query.search === null ? [entry("a")] : []),
+    );
     renderView();
     const user = userEvent.setup();
     const box = await screen.findByRole("searchbox", {
       name: "Search prompts",
     });
+    expect(
+      await screen.findByRole("button", { name: /task a/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No prompts match.")).not.toBeInTheDocument();
     await user.type(box, "zzz");
 
     expect(await screen.findByText("No prompts match.")).toBeInTheDocument();

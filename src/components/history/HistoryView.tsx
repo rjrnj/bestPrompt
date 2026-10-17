@@ -1,4 +1,5 @@
 import { HistoryFilters } from "./HistoryFilters";
+import { EntryDetail } from "./EntryDetail";
 import { HistoryList } from "./HistoryList";
 
 /**
@@ -20,9 +21,7 @@ export function HistoryView() {
         aria-label="Selected prompt"
         className="min-w-0 flex-1 overflow-y-auto p-6"
       >
-        <p className="text-sm text-slate-600 dark:text-slate-400">
-          Pick a prompt from the list to read it here.
-        </p>
+        <EntryDetail />
       </section>
     </div>
   );
