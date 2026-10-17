@@ -1,14 +1,20 @@
 import { describe, expect, it } from "vitest";
 import builtins from "../../src-tauri/builtins/frameworks.json";
 import type { Framework } from "../bindings/Framework";
+import type { Project } from "../bindings/Project";
+import type { PromptEntry } from "../bindings/PromptEntry";
 import {
   currentDraft,
+  currentTitle,
+  hasAnyDraftText,
   initialState,
   isBlank,
   needsSave,
+  openConflicts,
   reducer,
   renderedPrompt,
   selectedFramework,
+  unplacedSections,
   type Action,
   type State,
 } from "./reducer";
@@ -351,5 +357,430 @@ describe("toasts", () => {
       { id: 2, kind: "error", message: "Nope" },
       { id: 3, kind: "info", message: "Copied" },
     ]);
+  });
+});
+
+function project(id: string, name: string): Project {
+  return { id, name, createdAt: 1, updatedAt: 1 };
+}
+
+const api = project("p-api", "api");
+const web = project("p-web", "Web");
+
+function entry(
+  frameworkId: string | null,
+  values: Record<string, string>,
+  extra: Partial<PromptEntry> = {},
+): PromptEntry {
+  const source = frameworkId === "xy" ? xy : ab;
+  return {
+    id: "e1",
+    frameworkId,
+    frameworkSnapshot: {
+      name: source.name,
+      template: source.template,
+      summaryKey: null,
+      sections: source.sections,
+    },
+    sectionValues: values,
+    renderedPrompt: Object.values(values).join("\n"),
+    title: null,
+    projectId: null,
+    createdAt: 1,
+    ...extra,
+  };
+}
+
+const withProjects = run(
+  [{ type: "projectsLoaded", projects: [api, web] }],
+  loaded,
+);
+
+describe("titles", () => {
+  it("starts on the builder with no projects, titles or selected project", () => {
+    expect(initialState.view).toBe("builder");
+    expect(initialState.projects).toEqual({ status: "loading" });
+    expect(initialState.selectedProjectId).toBeNull();
+    expect(initialState.titles).toEqual({});
+  });
+
+  it("keeps a title per framework", () => {
+    const state = run(
+      [
+        { type: "editTitle", value: "First" },
+        { type: "selectFramework", id: "xy" },
+        { type: "editTitle", value: "Second" },
+      ],
+      loaded,
+    );
+
+    expect(currentTitle(state)).toBe("Second");
+    expect(
+      currentTitle(reducer(state, { type: "selectFramework", id: "ab" })),
+    ).toBe("First");
+  });
+
+  it("is empty, and cannot be edited, when no framework is selected", () => {
+    expect(currentTitle(initialState)).toBe("");
+    expect(reducer(initialState, { type: "editTitle", value: "x" })).toBe(
+      initialState,
+    );
+  });
+
+  it("is emptied by clearing the draft, which keeps the project", () => {
+    const state = run(
+      [
+        { type: "projectSelected", id: "p-api" },
+        { type: "editTitle", value: "T" },
+        { type: "editSection", key: "a", value: "text" },
+        { type: "clearDraft" },
+      ],
+      withProjects,
+    );
+
+    expect(currentTitle(state)).toBe("");
+    expect(currentDraft(state)).toEqual({ a: "", b: "" });
+    expect(state.selectedProjectId).toBe("p-api");
+  });
+});
+
+describe("projects", () => {
+  it("loads, and records a failure", () => {
+    expect(withProjects.projects).toEqual({
+      status: "ready",
+      items: [api, web],
+    });
+    expect(
+      reducer(initialState, { type: "projectsFailed", message: "no" }).projects,
+    ).toEqual({ status: "error", message: "no" });
+  });
+
+  it("selects a project or none", () => {
+    const state = reducer(withProjects, {
+      type: "projectSelected",
+      id: "p-web",
+    });
+
+    expect(state.selectedProjectId).toBe("p-web");
+    expect(
+      reducer(state, { type: "projectSelected", id: null }).selectedProjectId,
+    ).toBeNull();
+  });
+
+  it("adds a created project in name order and selects it", () => {
+    const mid = project("p-m", "Mid");
+    const state = reducer(withProjects, {
+      type: "projectCreated",
+      project: mid,
+    });
+
+    expect(state.projects).toEqual({
+      status: "ready",
+      items: [api, mid, web],
+    });
+    expect(state.selectedProjectId).toBe("p-m");
+  });
+
+  it("replaces a renamed project and keeps the list sorted", () => {
+    const renamed = { ...api, name: "zzz" };
+    const state = reducer(withProjects, {
+      type: "projectRenamed",
+      project: renamed,
+    });
+
+    expect(state.projects).toEqual({ status: "ready", items: [web, renamed] });
+  });
+
+  it("clears the selection when the selected project is deleted", () => {
+    const state = run(
+      [
+        { type: "projectSelected", id: "p-api" },
+        { type: "projectDeleted", id: "p-api" },
+      ],
+      withProjects,
+    );
+
+    expect(state.projects).toEqual({ status: "ready", items: [web] });
+    expect(state.selectedProjectId).toBeNull();
+  });
+
+  it("keeps the selection when another project is deleted", () => {
+    const state = run(
+      [
+        { type: "projectSelected", id: "p-web" },
+        { type: "projectDeleted", id: "p-api" },
+      ],
+      withProjects,
+    );
+
+    expect(state.selectedProjectId).toBe("p-web");
+  });
+
+  it("drops a selection that no longer exists when projects are reloaded", () => {
+    const state = run(
+      [
+        { type: "projectSelected", id: "p-api" },
+        { type: "projectsLoaded", projects: [web] },
+      ],
+      withProjects,
+    );
+
+    expect(state.selectedProjectId).toBeNull();
+  });
+
+  it("keeps a selection that is still there when projects are reloaded", () => {
+    const state = run(
+      [
+        { type: "projectSelected", id: "p-web" },
+        { type: "projectsLoaded", projects: [web] },
+      ],
+      withProjects,
+    );
+
+    expect(state.selectedProjectId).toBe("p-web");
+  });
+});
+
+describe("changing the view", () => {
+  it("switches between builder and history", () => {
+    const state = reducer(loaded, { type: "viewChanged", view: "history" });
+
+    expect(state.view).toBe("history");
+  });
+});
+
+describe("opening a saved entry", () => {
+  it("loads values, title and project and switches to the builder", () => {
+    const from = run(
+      [
+        { type: "viewChanged", view: "history" },
+        { type: "selectFramework", id: "xy" },
+      ],
+      withProjects,
+    );
+    const state = reducer(from, {
+      type: "entryOpened",
+      entry: entry(
+        "ab",
+        { a: "one", b: "two" },
+        { title: "Hi", projectId: "p-web" },
+      ),
+    });
+
+    expect(state.view).toBe("builder");
+    expect(state.selectedId).toBe("ab");
+    expect(currentDraft(state)).toEqual({ a: "one", b: "two" });
+    expect(currentTitle(state)).toBe("Hi");
+    expect(state.selectedProjectId).toBe("p-web");
+  });
+
+  it("uses an empty title when the entry has none", () => {
+    const state = run(
+      [
+        { type: "editTitle", value: "old" },
+        { type: "entryOpened", entry: entry("ab", { a: "one" }) },
+      ],
+      loaded,
+    );
+
+    expect(currentTitle(state)).toBe("");
+  });
+
+  it("loads only the sections the framework still has", () => {
+    const state = reducer(loaded, {
+      type: "entryOpened",
+      entry: entry("ab", { a: "one", gone: "lost", constructor: "x" }),
+    });
+
+    expect(state.drafts.ab).toEqual({ a: "one" });
+    expect(currentDraft(state)).toEqual({ a: "one", b: "" });
+  });
+
+  it("replaces the draft the framework already had", () => {
+    const state = run(
+      [
+        { type: "editSection", key: "b", value: "mine" },
+        { type: "entryOpened", entry: entry("ab", { a: "one" }) },
+      ],
+      loaded,
+    );
+
+    expect(currentDraft(state)).toEqual({ a: "one", b: "" });
+  });
+
+  it("selects no project when the entry's project was deleted", () => {
+    const state = reducer(withProjects, {
+      type: "entryOpened",
+      entry: entry("ab", { a: "one" }, { projectId: "p-gone" }),
+    });
+
+    expect(state.selectedProjectId).toBeNull();
+  });
+
+  it("selects no project when the entry has none", () => {
+    const state = run(
+      [
+        { type: "projectSelected", id: "p-api" },
+        { type: "entryOpened", entry: entry("ab", { a: "one" }) },
+      ],
+      withProjects,
+    );
+
+    expect(state.selectedProjectId).toBeNull();
+  });
+
+  it("marks the prompt as already saved until it is edited", () => {
+    const opened = reducer(loaded, {
+      type: "entryOpened",
+      entry: entry("ab", { a: "one", b: "two" }),
+    });
+
+    expect(needsSave(opened)).toBe(false);
+    expect(
+      needsSave(reducer(opened, { type: "editSection", key: "a", value: "x" })),
+    ).toBe(true);
+  });
+
+  it("changes nothing for an unknown or deleted framework", () => {
+    expect(
+      reducer(loaded, {
+        type: "entryOpened",
+        entry: entry("nope", { a: "1" }),
+      }),
+    ).toBe(loaded);
+    expect(
+      reducer(loaded, { type: "entryOpened", entry: entry(null, { a: "1" }) }),
+    ).toBe(loaded);
+    expect(
+      reducer(initialState, { type: "entryOpened", entry: entry("ab", {}) }),
+    ).toBe(initialState);
+  });
+});
+
+describe("hasAnyDraftText", () => {
+  it("is false for blank drafts and titles", () => {
+    expect(hasAnyDraftText(loaded)).toBe(false);
+    expect(
+      hasAnyDraftText(
+        run(
+          [
+            { type: "editSection", key: "a", value: "  " },
+            { type: "editTitle", value: "" },
+          ],
+          loaded,
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it("sees text in any framework's section", () => {
+    const state = run(
+      [
+        { type: "selectFramework", id: "xy" },
+        { type: "editSection", key: "y", value: "t" },
+        { type: "selectFramework", id: "ab" },
+      ],
+      loaded,
+    );
+
+    expect(hasAnyDraftText(state)).toBe(true);
+  });
+
+  it("sees a title on its own", () => {
+    expect(
+      hasAnyDraftText(reducer(loaded, { type: "editTitle", value: "T" })),
+    ).toBe(true);
+  });
+});
+
+describe("openConflicts", () => {
+  const none = { replacesDraft: false, changesProject: false };
+
+  it("reports neither for an empty builder", () => {
+    expect(
+      openConflicts(
+        withProjects,
+        entry("ab", { a: "x" }, { projectId: "p-web" }),
+      ),
+    ).toEqual(none);
+  });
+
+  it("reports a replaced draft for the same framework with text", () => {
+    const state = reducer(withProjects, {
+      type: "editSection",
+      key: "a",
+      value: "mine",
+    });
+
+    expect(openConflicts(state, entry("ab", { a: "x" }))).toEqual({
+      replacesDraft: true,
+      changesProject: false,
+    });
+  });
+
+  it("reports a replaced draft for a title alone", () => {
+    const state = reducer(withProjects, { type: "editTitle", value: "T" });
+
+    expect(openConflicts(state, entry("ab", {})).replacesDraft).toBe(true);
+  });
+
+  it("reports a changed project when another framework has text", () => {
+    const state = run(
+      [
+        { type: "selectFramework", id: "xy" },
+        { type: "editSection", key: "x", value: "mine" },
+        { type: "selectFramework", id: "ab" },
+      ],
+      withProjects,
+    );
+
+    expect(
+      openConflicts(state, entry("ab", { a: "x" }, { projectId: "p-web" })),
+    ).toEqual({ replacesDraft: false, changesProject: true });
+  });
+
+  it("reports no changed project when it is the same", () => {
+    const state = run(
+      [
+        { type: "projectSelected", id: "p-web" },
+        { type: "editSection", key: "b", value: "mine" },
+      ],
+      withProjects,
+    );
+
+    expect(
+      openConflicts(state, entry("xy", { x: "x" }, { projectId: "p-web" })),
+    ).toEqual(none);
+  });
+
+  it("treats a deleted project as no project", () => {
+    const state = run(
+      [{ type: "editSection", key: "a", value: "t" }],
+      withProjects,
+    );
+
+    expect(
+      openConflicts(state, entry("xy", {}, { projectId: "p-gone" }))
+        .changesProject,
+    ).toBe(false);
+  });
+});
+
+describe("unplacedSections", () => {
+  const snapshot = entry("ab", { a: "one", b: "two", c: "three", d: "  " });
+  snapshot.frameworkSnapshot.sections = [
+    { key: "a", label: "A", helpText: "" },
+    { key: "b", label: "B", helpText: "" },
+    { key: "c", label: "C label", helpText: "" },
+    { key: "d", label: "D", helpText: "" },
+    { key: "e", label: "E", helpText: "" },
+  ];
+
+  it("names only missing keys that have text", () => {
+    expect(unplacedSections(snapshot, ab)).toEqual(["C label"]);
+  });
+
+  it("names every section with text when there is no framework", () => {
+    expect(unplacedSections(snapshot, null)).toEqual(["A", "B", "C label"]);
   });
 });

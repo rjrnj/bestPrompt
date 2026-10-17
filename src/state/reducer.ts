@@ -3,6 +3,8 @@
 // AppState.tsx owns the async work and dispatches these actions.
 
 import type { Framework } from "../bindings/Framework";
+import type { Project } from "../bindings/Project";
+import type { PromptEntry } from "../bindings/PromptEntry";
 import { renderTemplate, TemplateSyntaxError } from "../template";
 
 export type Toast = { id: number; kind: "info" | "error"; message: string };
@@ -18,6 +20,16 @@ export type State = {
   drafts: Record<string, Record<string, string>>;
   /** The rendered prompt last saved for each framework, for the duplicate check. */
   lastSaved: Record<string, string>;
+  /** The title typed for each framework, by framework id. */
+  titles: Record<string, string>;
+  /** Which tab is showing. */
+  view: "builder" | "history";
+  projects:
+    | { status: "loading" }
+    | { status: "ready"; items: Project[] }
+    | { status: "error"; message: string };
+  /** The project new entries are filed under; one value for all frameworks. */
+  selectedProjectId: string | null;
   saving: boolean;
   toasts: Toast[];
   nextToastId: number;
@@ -30,6 +42,15 @@ export type Action =
   | { type: "selectFramework"; id: string }
   | { type: "editSection"; key: string; value: string }
   | { type: "clearDraft" }
+  | { type: "viewChanged"; view: State["view"] }
+  | { type: "projectsLoaded"; projects: Project[] }
+  | { type: "projectsFailed"; message: string }
+  | { type: "projectSelected"; id: string | null }
+  | { type: "projectCreated"; project: Project }
+  | { type: "projectRenamed"; project: Project }
+  | { type: "projectDeleted"; id: string }
+  | { type: "editTitle"; value: string }
+  | { type: "entryOpened"; entry: PromptEntry }
   | { type: "saveStarted" }
   | { type: "saveSucceeded"; frameworkId: string; renderedPrompt: string }
   | { type: "saveFailed"; message: string }
@@ -44,6 +65,10 @@ export const initialState: State = {
   selectedId: null,
   drafts: {},
   lastSaved: {},
+  titles: {},
+  view: "builder",
+  projects: { status: "loading" },
+  selectedProjectId: null,
   saving: false,
   toasts: [],
   nextToastId: 1,
@@ -82,7 +107,91 @@ export function reducer(state: State, action: Action): State {
     case "clearDraft": {
       const id = state.selectedId;
       if (id === null) return state;
-      return { ...state, drafts: { ...state.drafts, [id]: {} } };
+      return {
+        ...state,
+        drafts: { ...state.drafts, [id]: {} },
+        titles: { ...state.titles, [id]: "" },
+      };
+    }
+    case "viewChanged":
+      return { ...state, view: action.view };
+    case "projectsLoaded":
+      return {
+        ...state,
+        projects: { status: "ready", items: sortProjects(action.projects) },
+        selectedProjectId: projectIfPresent(
+          action.projects,
+          state.selectedProjectId,
+        ),
+      };
+    case "projectsFailed":
+      return {
+        ...state,
+        projects: { status: "error", message: action.message },
+      };
+    case "projectSelected":
+      return { ...state, selectedProjectId: action.id };
+    case "projectCreated":
+      return {
+        ...state,
+        projects: {
+          status: "ready",
+          items: sortProjects([...loadedProjects(state), action.project]),
+        },
+        selectedProjectId: action.project.id,
+      };
+    case "projectRenamed":
+      return {
+        ...state,
+        projects: {
+          status: "ready",
+          items: sortProjects(
+            loadedProjects(state).map((p) =>
+              p.id === action.project.id ? action.project : p,
+            ),
+          ),
+        },
+      };
+    case "projectDeleted":
+      return {
+        ...state,
+        projects: {
+          status: "ready",
+          items: loadedProjects(state).filter((p) => p.id !== action.id),
+        },
+        selectedProjectId:
+          state.selectedProjectId === action.id
+            ? null
+            : state.selectedProjectId,
+      };
+    case "editTitle": {
+      const id = state.selectedId;
+      if (id === null) return state;
+      return { ...state, titles: { ...state.titles, [id]: action.value } };
+    }
+    case "entryOpened": {
+      const target = loadedFrameworks(state).find(
+        (f) => f.id === action.entry.frameworkId,
+      );
+      if (target === undefined) return state;
+      const { entry } = action;
+      const draft = Object.fromEntries(
+        target.sections
+          .filter((section) => hasOwn(entry.sectionValues, section.key))
+          .map((section) => [section.key, entry.sectionValues[section.key]]),
+      );
+      return {
+        ...state,
+        view: "builder",
+        selectedId: target.id,
+        drafts: { ...state.drafts, [target.id]: draft },
+        titles: { ...state.titles, [target.id]: entry.title ?? "" },
+        selectedProjectId: projectIfPresent(
+          loadedProjects(state),
+          entry.projectId,
+        ),
+        lastSaved: { ...state.lastSaved, [target.id]: entry.renderedPrompt },
+      };
     }
     case "saveStarted":
       return { ...state, saving: true };
@@ -125,6 +234,26 @@ export function reducer(state: State, action: Action): State {
 
 function hasOwn(object: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(object, key);
+}
+
+function loadedProjects(state: State): Project[] {
+  return state.projects.status === "ready" ? state.projects.items : [];
+}
+
+/** Projects in name order, ignoring case, as the database lists them. */
+function sortProjects(projects: Project[]): Project[] {
+  const key = (p: Project) => p.name.toLowerCase();
+  return [...projects].sort((a, b) =>
+    key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : a.id < b.id ? -1 : 1,
+  );
+}
+
+/** `id` if a project with that id is in `projects`, else null. */
+function projectIfPresent(
+  projects: Project[],
+  id: string | null,
+): string | null {
+  return id !== null && projects.some((p) => p.id === id) ? id : null;
 }
 
 function loadedFrameworks(state: State): Framework[] {
@@ -196,4 +325,66 @@ export function needsSave(state: State): boolean {
   if (state.selectedId === null || isBlank(state)) return false;
   const prompt = renderedPrompt(state);
   return prompt !== "" && state.lastSaved[state.selectedId] !== prompt;
+}
+
+/** The selected framework's title, empty when none has been typed. */
+export function currentTitle(state: State): string {
+  const id = state.selectedId;
+  if (id === null || !hasOwn(state.titles, id)) return "";
+  return state.titles[id];
+}
+
+/** True when any framework has a non-blank section or title. */
+export function hasAnyDraftText(state: State): boolean {
+  const filled = (text: string) => text.trim() !== "";
+  return (
+    Object.values(state.titles).some(filled) ||
+    Object.values(state.drafts).some((draft) =>
+      Object.values(draft).some(filled),
+    )
+  );
+}
+
+/**
+ * What opening `entry` in the Builder would overwrite: the draft and title
+ * of the entry's framework, and the selected project (when any draft has
+ * text, since that text was written under it).
+ */
+export function openConflicts(
+  state: State,
+  entry: PromptEntry,
+): { replacesDraft: boolean; changesProject: boolean } {
+  const id = entry.frameworkId;
+  const filled = (text: string) => text.trim() !== "";
+  const replacesDraft =
+    id !== null &&
+    ((hasOwn(state.titles, id) && filled(state.titles[id])) ||
+      (hasOwn(state.drafts, id) &&
+        Object.values(state.drafts[id]).some(filled)));
+  const entryProject = projectIfPresent(loadedProjects(state), entry.projectId);
+  return {
+    replacesDraft,
+    changesProject:
+      hasAnyDraftText(state) && entryProject !== state.selectedProjectId,
+  };
+}
+
+/**
+ * Labels of the entry's sections that have text but no section with the
+ * same key in `framework` (all of them when there is no framework).
+ */
+export function unplacedSections(
+  entry: PromptEntry,
+  framework: Framework | null,
+): string[] {
+  return entry.frameworkSnapshot.sections
+    .filter((section) => {
+      const text = hasOwn(entry.sectionValues, section.key)
+        ? entry.sectionValues[section.key]
+        : "";
+      const placed =
+        framework?.sections.some((s) => s.key === section.key) ?? false;
+      return text.trim() !== "" && !placed;
+    })
+    .map((section) => section.label);
 }
