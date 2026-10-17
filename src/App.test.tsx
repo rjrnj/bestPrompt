@@ -8,6 +8,7 @@ import {
   latestEntryProject,
   listFrameworks,
   listProjects,
+  listPromptEntries,
   savePromptEntry,
 } from "./api";
 import type { Framework } from "./bindings/Framework";
@@ -21,6 +22,7 @@ vi.mock("./api", async (importOriginal) => ({
   savePromptEntry: vi.fn(),
   listProjects: vi.fn(),
   latestEntryProject: vi.fn(),
+  listPromptEntries: vi.fn(),
 }));
 vi.mock("./clipboard", () => ({ writeText: vi.fn() }));
 
@@ -40,6 +42,7 @@ const frameworks: Framework[] = builtins.map((f) => ({
 beforeEach(() => {
   vi.mocked(listProjects).mockResolvedValue([]);
   vi.mocked(latestEntryProject).mockResolvedValue(null);
+  vi.mocked(listPromptEntries).mockResolvedValue([]);
 });
 
 afterEach(() => {
