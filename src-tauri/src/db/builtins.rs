@@ -10,6 +10,7 @@
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::Deserialize;
 
+use super::frameworks::free_name;
 use super::{DbError, now_millis};
 
 const FRAMEWORKS_JSON: &str = include_str!("../../builtins/frameworks.json");
@@ -63,6 +64,9 @@ fn sync(conn: &mut Connection, builtins: &[Builtin], now: i64) -> Result<(), DbE
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     remove_dropped(&tx, builtins)?;
     for builtin in builtins {
+        // Before the upsert: the name index would reject a built-in that
+        // takes a name a live custom framework has.
+        rename_clashing_customs(&tx, builtin, now)?;
         // Skipping unchanged built-ins keeps `updated_at` meaning "last
         // changed" rather than "last launched".
         if stored(&tx, &builtin.id)?.as_ref() != Some(builtin) {
@@ -82,11 +86,42 @@ fn needs_sync(conn: &mut Connection, builtins: &[Builtin]) -> Result<bool, DbErr
         return Ok(true);
     }
     for builtin in builtins {
-        if stored(&tx, &builtin.id)?.as_ref() != Some(builtin) {
+        if stored(&tx, &builtin.id)?.as_ref() != Some(builtin)
+            || !clashing_customs(&tx, builtin)?.is_empty()
+        {
             return Ok(true);
         }
     }
     Ok(false)
+}
+
+/// The ids and names of live custom frameworks that have this built-in's name,
+/// ignoring case. Deleted ones don't count: the name index ignores them.
+fn clashing_customs(
+    conn: &Connection,
+    builtin: &Builtin,
+) -> Result<Vec<(String, String)>, DbError> {
+    let customs = conn
+        .prepare(
+            "SELECT id, name FROM frameworks
+             WHERE is_custom = 1 AND deleted_at IS NULL AND name = ?1 COLLATE NOCASE",
+        )?
+        .query_map([&builtin.name], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    Ok(customs)
+}
+
+/// Gives each live custom framework that has the built-in's name a free
+/// "<name> (n)" name, so a built-in added by an update never loses its name
+/// to something the user made earlier.
+fn rename_clashing_customs(conn: &Connection, builtin: &Builtin, now: i64) -> Result<(), DbError> {
+    for (id, name) in clashing_customs(conn, builtin)? {
+        conn.execute(
+            "UPDATE frameworks SET name = ?1, updated_at = ?2 WHERE id = ?3",
+            params![free_name(conn, &name)?, now, id],
+        )?;
+    }
+    Ok(())
 }
 
 /// The built-ins' ids as a JSON array, for `json_each` in SQL.
@@ -501,6 +536,61 @@ mod tests {
             ),
             1
         );
+    }
+
+    const CUSTOM_ID: &str = "0192d4c8-7b3a-7f00-8a1e-3c5d7e9f0b2a";
+
+    fn insert_custom(conn: &Connection, id: &str, name: &str, deleted_at: Option<i64>) {
+        conn.execute(
+            "INSERT INTO frameworks
+                 (id, name, description, template, is_custom, created_at, updated_at, deleted_at)
+             VALUES (?1, ?2, '', '', 1, 5, 5, ?3)",
+            params![id, name, deleted_at],
+        )
+        .unwrap();
+    }
+
+    fn name_and_updated_at(conn: &Connection, id: &str) -> (String, i64) {
+        conn.query_row(
+            "SELECT name, updated_at FROM frameworks WHERE id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn seeding_renames_a_custom_framework_that_takes_a_new_builtins_name() {
+        let mut conn = migrated();
+        insert_custom(&conn, CUSTOM_ID, "Fresh", None);
+        let other = "0192d4c8-7b3a-7f00-8a1e-3c5d7e9f0b2b";
+        insert_custom(&conn, other, "fresh (2)", None);
+
+        sync(&mut conn, &[builtin("fresh", "FRESH", &["x"])], 9).unwrap();
+
+        assert_eq!(
+            name_and_updated_at(&conn, CUSTOM_ID),
+            ("Fresh (3)".to_owned(), 9)
+        );
+        assert_eq!(
+            name_and_updated_at(&conn, other),
+            ("fresh (2)".to_owned(), 5)
+        );
+        assert_eq!(stored(&conn, "fresh").unwrap().unwrap().name, "FRESH");
+    }
+
+    #[test]
+    fn seeding_never_touches_deleted_custom_frameworks() {
+        let mut conn = migrated();
+        insert_custom(&conn, CUSTOM_ID, "Fresh", Some(3));
+
+        sync(&mut conn, &[builtin("fresh", "Fresh", &["x"])], 9).unwrap();
+
+        assert_eq!(
+            name_and_updated_at(&conn, CUSTOM_ID),
+            ("Fresh".to_owned(), 5)
+        );
+        assert_eq!(stored(&conn, "fresh").unwrap().unwrap().name, "Fresh");
     }
 
     #[test]

@@ -84,6 +84,14 @@ fn insert(
     // the framework changed or gone when it came to insert.
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let framework = get_framework(&tx, &new.framework_id)?;
+    // A deleted framework is gone as far as saving is concerned; only history
+    // can still show it.
+    if framework.deleted_at.is_some() {
+        return Err(DbError::NotFound {
+            entity: Entity::Framework,
+            id: new.framework_id.clone(),
+        });
+    }
     if let Some(project_id) = &new.project_id {
         check_project_exists(&tx, project_id)?;
     }
@@ -472,6 +480,26 @@ mod tests {
                 ..
             })
         ));
+        assert_eq!(count(&conn, "SELECT count(*) FROM prompt_entries"), 0);
+    }
+
+    #[test]
+    fn saving_against_a_deleted_framework_is_not_found() {
+        let mut conn = migrated();
+        let id = "0192d4c8-7b3a-7f00-8a1e-3c5d7e9f0b2a";
+        insert_framework(&conn, id, true);
+        conn.execute("UPDATE frameworks SET deleted_at = 1", [])
+            .unwrap();
+
+        let result = save_prompt_entry(&mut conn, &new_entry(id));
+
+        match result {
+            Err(DbError::NotFound {
+                entity: Entity::Framework,
+                id: missing,
+            }) => assert_eq!(missing, id),
+            other => panic!("{other:?}"),
+        }
         assert_eq!(count(&conn, "SELECT count(*) FROM prompt_entries"), 0);
     }
 

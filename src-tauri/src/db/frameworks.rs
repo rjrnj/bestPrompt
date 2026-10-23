@@ -1,4 +1,5 @@
-//! Reading frameworks and their sections.
+//! Frameworks and their sections: reading them, and creating, editing,
+//! deleting and restoring custom ones.
 
 use std::collections::HashSet;
 
@@ -71,12 +72,16 @@ fn framework_without_sections(row: &rusqlite::Row<'_>) -> rusqlite::Result<Frame
     })
 }
 
-/// Every framework with its sections in form order. Built-ins come first,
-/// then custom frameworks, each group by name.
+/// The live frameworks, and deleted ones that still have saved entries, with
+/// their sections in form order. Built-ins come first, then custom
+/// frameworks, each group by name.
 pub fn list_frameworks(conn: &Connection) -> Result<Vec<Framework>, DbError> {
     let mut frameworks: Vec<Framework> = conn
         .prepare(&format!(
-            "{FRAMEWORK_COLUMNS} ORDER BY is_custom, name COLLATE NOCASE, id"
+            "{FRAMEWORK_COLUMNS}
+             WHERE deleted_at IS NULL
+                OR EXISTS (SELECT 1 FROM prompt_entries e WHERE e.framework_id = frameworks.id)
+             ORDER BY is_custom, name COLLATE NOCASE, id"
         ))?
         .query_map([], framework_without_sections)?
         .collect::<Result<_, _>>()?;
@@ -204,6 +209,73 @@ pub fn update_framework(
     let framework = get_framework(&tx, id)?;
     tx.commit()?;
     Ok(framework)
+}
+
+/// Marks a custom framework deleted and returns it. Its saved entries stay
+/// linked to it. Deleting one that is already deleted changes nothing.
+pub fn delete_framework(conn: &Connection, id: &str) -> Result<Framework, DbError> {
+    // One guarded statement, so a framework deleted a moment ago keeps its
+    // original timestamps.
+    let now = now_millis();
+    conn.execute(
+        "UPDATE frameworks SET deleted_at = ?1, updated_at = ?1
+         WHERE id = ?2 AND is_custom = 1 AND deleted_at IS NULL",
+        rusqlite::params![now, id],
+    )?;
+    let framework = get_framework(conn, id)?;
+    if !framework.is_custom {
+        return Err(DbError::BuiltinReadOnly);
+    }
+    Ok(framework)
+}
+
+/// Brings a deleted framework back. If a live framework has taken its name in
+/// the meantime it comes back as "<name> (2)", or the next number that is
+/// free. A framework that is not deleted is returned unchanged.
+pub fn restore_framework(conn: &mut Connection, id: &str) -> Result<Framework, DbError> {
+    // IMMEDIATE so the free name found is still free when it is written.
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let framework = get_framework(&tx, id)?;
+    if framework.deleted_at.is_none() {
+        return Ok(framework);
+    }
+    let name = if live_name_taken(&tx, &framework.name)? {
+        free_name(&tx, &framework.name)?
+    } else {
+        framework.name
+    };
+    tx.execute(
+        "UPDATE frameworks SET name = ?1, deleted_at = NULL, updated_at = ?2 WHERE id = ?3",
+        rusqlite::params![name, now_millis(), id],
+    )?;
+    let restored = get_framework(&tx, id)?;
+    tx.commit()?;
+    Ok(restored)
+}
+
+/// Whether a live framework already has this name, ignoring case as the
+/// unique index does.
+pub(super) fn live_name_taken(conn: &Connection, name: &str) -> Result<bool, DbError> {
+    let taken = conn.query_row(
+        "SELECT EXISTS (
+             SELECT 1 FROM frameworks
+             WHERE name = ?1 COLLATE NOCASE AND deleted_at IS NULL
+         )",
+        [name],
+        |row| row.get(0),
+    )?;
+    Ok(taken)
+}
+
+/// "<name> (n)" for the first n from 2 that no live framework has.
+pub(super) fn free_name(conn: &Connection, name: &str) -> Result<String, DbError> {
+    for number in 2.. {
+        let candidate = format!("{name} ({number})");
+        if !live_name_taken(conn, &candidate)? {
+            return Ok(candidate);
+        }
+    }
+    unreachable!("the numbers do not run out")
 }
 
 fn insert_sections(
@@ -679,6 +751,216 @@ mod tests {
                 "{id}: {result:?}"
             );
         }
+    }
+
+    fn save_entry(conn: &mut Connection, framework_id: &str) -> String {
+        save_prompt_entry(
+            conn,
+            &NewPromptEntry {
+                framework_id: framework_id.to_owned(),
+                section_values: [("goal".to_owned(), "ship".to_owned())].into(),
+                rendered_prompt: "ship".to_owned(),
+                title: None,
+                project_id: None,
+            },
+        )
+        .unwrap()
+        .id
+    }
+
+    fn entry_link(conn: &Connection, entry_id: &str) -> Option<String> {
+        conn.query_row(
+            "SELECT framework_id FROM prompt_entries WHERE id = ?1",
+            [entry_id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    fn set_updated_at(conn: &Connection, value: i64) {
+        conn.execute("UPDATE frameworks SET updated_at = ?1", [value])
+            .unwrap();
+    }
+
+    #[test]
+    fn delete_marks_the_framework_and_keeps_its_entries_linked() {
+        let mut conn = migrated();
+        let created = create_framework(&mut conn, &input()).unwrap();
+        let entry_id = save_entry(&mut conn, &created.id);
+        set_updated_at(&conn, 0);
+        let before = now_millis();
+
+        let deleted = delete_framework(&conn, &created.id).unwrap();
+
+        let at = deleted.deleted_at.expect("marked deleted");
+        assert!(at >= before && at <= now_millis());
+        assert_eq!(deleted.updated_at, at);
+        assert_eq!(deleted.sections, created.sections);
+        assert_eq!(get_framework(&conn, &created.id).unwrap(), deleted);
+        assert_eq!(
+            entry_link(&conn, &entry_id).as_deref(),
+            Some(created.id.as_str())
+        );
+    }
+
+    #[test]
+    fn delete_refuses_a_builtin() {
+        let conn = migrated();
+        insert_named(&conn, "rtf", "RTF", false);
+
+        let result = delete_framework(&conn, "rtf");
+
+        assert!(
+            matches!(result, Err(DbError::BuiltinReadOnly)),
+            "{result:?}"
+        );
+        assert_eq!(get_framework(&conn, "rtf").unwrap().deleted_at, None);
+    }
+
+    #[test]
+    fn delete_of_an_unknown_id_is_not_found() {
+        let conn = migrated();
+
+        let result = delete_framework(&conn, "missing");
+
+        assert!(matches!(
+            result,
+            Err(DbError::NotFound {
+                entity: Entity::Framework,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn deleting_twice_is_harmless() {
+        let mut conn = migrated();
+        let created = create_framework(&mut conn, &input()).unwrap();
+        let first = delete_framework(&conn, &created.id).unwrap();
+        conn.execute("UPDATE frameworks SET deleted_at = 1, updated_at = 1", [])
+            .unwrap();
+
+        let second = delete_framework(&conn, &created.id).unwrap();
+
+        assert_eq!(second.deleted_at, Some(1));
+        assert_eq!(second.updated_at, 1);
+        assert_eq!(second.id, first.id);
+    }
+
+    #[test]
+    fn list_leaves_out_deleted_frameworks_without_entries() {
+        let mut conn = migrated();
+        let created = create_framework(&mut conn, &input()).unwrap();
+        delete_framework(&conn, &created.id).unwrap();
+
+        assert!(list_frameworks(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn list_includes_deleted_frameworks_that_have_entries_with_deleted_at() {
+        let mut conn = migrated();
+        let created = create_framework(&mut conn, &input()).unwrap();
+        save_entry(&mut conn, &created.id);
+        let deleted = delete_framework(&conn, &created.id).unwrap();
+
+        let listed = list_frameworks(&conn).unwrap();
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0], deleted);
+        assert!(listed[0].deleted_at.is_some());
+    }
+
+    #[test]
+    fn get_returns_a_deleted_framework() {
+        let mut conn = migrated();
+        let created = create_framework(&mut conn, &input()).unwrap();
+        delete_framework(&conn, &created.id).unwrap();
+
+        let got = get_framework(&conn, &created.id).unwrap();
+
+        assert!(got.deleted_at.is_some());
+        assert_eq!(got.sections, created.sections);
+    }
+
+    #[test]
+    fn restore_brings_back_the_definition_as_deleted() {
+        let mut conn = migrated();
+        let created = create_framework(&mut conn, &input()).unwrap();
+        delete_framework(&conn, &created.id).unwrap();
+        set_updated_at(&conn, 0);
+        let before = now_millis();
+
+        let restored = restore_framework(&mut conn, &created.id).unwrap();
+
+        assert_eq!(restored.deleted_at, None);
+        assert!(restored.updated_at >= before);
+        assert_eq!(restored.name, created.name);
+        assert_eq!(restored.template, created.template);
+        assert_eq!(restored.sections, created.sections);
+        assert_eq!(get_framework(&conn, &created.id).unwrap(), restored);
+    }
+
+    #[test]
+    fn restore_renames_when_the_name_is_taken() {
+        let mut conn = migrated();
+        let old = create_framework(&mut conn, &input()).unwrap();
+        delete_framework(&conn, &old.id).unwrap();
+        let mut taker = input();
+        taker.name = "MINE".to_owned();
+        create_framework(&mut conn, &taker).unwrap();
+        let mut second = input();
+        second.name = "mine (2)".to_owned();
+        create_framework(&mut conn, &second).unwrap();
+        // A deleted framework's name does not count as taken.
+        let mut gone = input();
+        gone.name = "Mine (3)".to_owned();
+        let gone = create_framework(&mut conn, &gone).unwrap();
+        delete_framework(&conn, &gone.id).unwrap();
+
+        let restored = restore_framework(&mut conn, &old.id).unwrap();
+
+        assert_eq!(restored.name, "Mine (3)");
+        assert_eq!(restored.deleted_at, None);
+    }
+
+    #[test]
+    fn restoring_a_live_framework_changes_nothing() {
+        let mut conn = migrated();
+        let created = create_framework(&mut conn, &input()).unwrap();
+        insert_named(&conn, "rtf", "RTF", false);
+        set_updated_at(&conn, 7);
+        let custom = get_framework(&conn, &created.id).unwrap();
+        let builtin = get_framework(&conn, "rtf").unwrap();
+
+        assert_eq!(restore_framework(&mut conn, &created.id).unwrap(), custom);
+        assert_eq!(restore_framework(&mut conn, "rtf").unwrap(), builtin);
+    }
+
+    #[test]
+    fn restore_of_an_unknown_id_is_not_found() {
+        let mut conn = migrated();
+
+        let result = restore_framework(&mut conn, "missing");
+
+        assert!(matches!(
+            result,
+            Err(DbError::NotFound {
+                entity: Entity::Framework,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_deleted_name_can_be_reused_by_a_new_framework() {
+        let mut conn = migrated();
+        let old = create_framework(&mut conn, &input()).unwrap();
+        delete_framework(&conn, &old.id).unwrap();
+
+        let reused = create_framework(&mut conn, &input()).unwrap();
+
+        assert_eq!(reused.name, old.name);
+        assert_ne!(reused.id, old.id);
     }
 
     #[test]
