@@ -86,6 +86,8 @@ fn needs_sync(conn: &mut Connection, builtins: &[Builtin]) -> Result<bool, DbErr
         return Ok(true);
     }
     for builtin in builtins {
+        // A safeguard: the live-name index already rules a clash out when the
+        // stored built-in matches the file.
         if stored(&tx, &builtin.id)?.as_ref() != Some(builtin)
             || !clashing_customs(&tx, builtin)?.is_empty()
         {

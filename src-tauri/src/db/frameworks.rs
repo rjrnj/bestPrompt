@@ -136,6 +136,9 @@ pub fn create_framework(
     let id = Uuid::now_v7().to_string();
     let now = now_millis();
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if live_name_taken(&tx, &input.name, None)? {
+        return Err(DbError::FrameworkNameTaken { name: input.name });
+    }
     tx.execute(
         "INSERT INTO frameworks
              (id, name, description, template, summary_key, is_custom, created_at, updated_at)
@@ -185,6 +188,9 @@ pub fn update_framework(
         Some((true, None)) => {}
     }
     let input = checked(input)?;
+    if live_name_taken(&tx, &input.name, Some(id))? {
+        return Err(DbError::FrameworkNameTaken { name: input.name });
+    }
     tx.execute(
         "UPDATE frameworks
          SET name = ?1, description = ?2, template = ?3, summary_key = ?4, updated_at = ?5
@@ -239,7 +245,7 @@ pub fn restore_framework(conn: &mut Connection, id: &str) -> Result<Framework, D
     if framework.deleted_at.is_none() {
         return Ok(framework);
     }
-    let name = if live_name_taken(&tx, &framework.name)? {
+    let name = if live_name_taken(&tx, &framework.name, None)? {
         free_name(&tx, &framework.name)?
     } else {
         framework.name
@@ -253,25 +259,32 @@ pub fn restore_framework(conn: &mut Connection, id: &str) -> Result<Framework, D
     Ok(restored)
 }
 
-/// Whether a live framework already has this name, ignoring case as the
-/// unique index does.
-pub(super) fn live_name_taken(conn: &Connection, name: &str) -> Result<bool, DbError> {
-    let taken = conn.query_row(
-        "SELECT EXISTS (
-             SELECT 1 FROM frameworks
-             WHERE name = ?1 COLLATE NOCASE AND deleted_at IS NULL
-         )",
-        [name],
-        |row| row.get(0),
-    )?;
-    Ok(taken)
+/// Whether a live framework other than `except` already has this name. The
+/// unique index folds only ASCII case, so names are also compared here with
+/// Unicode case folding.
+pub(super) fn live_name_taken(
+    conn: &Connection,
+    name: &str,
+    except: Option<&str>,
+) -> Result<bool, DbError> {
+    let wanted = name.to_lowercase();
+    let mut live = conn.prepare("SELECT id, name FROM frameworks WHERE deleted_at IS NULL")?;
+    let mut rows = live.query([])?;
+    while let Some(row) = rows.next()? {
+        let id: String = row.get(0)?;
+        let existing: String = row.get(1)?;
+        if Some(id.as_str()) != except && existing.to_lowercase() == wanted {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// "<name> (n)" for the first n from 2 that no live framework has.
 pub(super) fn free_name(conn: &Connection, name: &str) -> Result<String, DbError> {
     for number in 2.. {
         let candidate = format!("{name} ({number})");
-        if !live_name_taken(conn, &candidate)? {
+        if !live_name_taken(conn, &candidate, None)? {
             return Ok(candidate);
         }
     }
@@ -964,8 +977,13 @@ mod tests {
     }
 
     #[test]
-    fn updating_never_changes_saved_entries() {
+    fn framework_changes_never_change_saved_entries() {
         let mut conn = migrated();
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at) VALUES ('p', 'P', 0, 0)",
+            [],
+        )
+        .unwrap();
         let created = create_framework(&mut conn, &input()).unwrap();
         let saved = save_prompt_entry(
             &mut conn,
@@ -973,17 +991,41 @@ mod tests {
                 framework_id: created.id.clone(),
                 section_values: [("goal".to_owned(), "ship".to_owned())].into(),
                 rendered_prompt: "ship".to_owned(),
-                title: None,
-                project_id: None,
+                title: Some("Titled".to_owned()),
+                project_id: Some("p".to_owned()),
             },
         )
         .unwrap();
-        let stored = |conn: &Connection| -> (String, String, String) {
+        type Row = (
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+            String,
+            String,
+            i64,
+            i64,
+            Option<String>,
+        );
+        let stored = |conn: &Connection| -> Row {
             conn.query_row(
-                "SELECT framework_snapshot, section_values, rendered_prompt
+                "SELECT id, framework_id, project_id, framework_snapshot, section_values,
+                        rendered_prompt, created_at, version, title
                  FROM prompt_entries WHERE id = ?1",
                 [&saved.id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                        row.get(8)?,
+                    ))
+                },
             )
             .unwrap()
         };
@@ -997,7 +1039,64 @@ mod tests {
         };
 
         update_framework(&mut conn, &created.id, &changed).unwrap();
-
         assert_eq!(stored(&conn), before);
+        delete_framework(&conn, &created.id).unwrap();
+        assert_eq!(stored(&conn), before);
+        restore_framework(&mut conn, &created.id).unwrap();
+        assert_eq!(stored(&conn), before);
+    }
+
+    fn named(name: &str) -> FrameworkInput {
+        let mut new = input();
+        new.name = name.to_owned();
+        new
+    }
+
+    #[test]
+    fn create_rejects_a_name_that_differs_only_in_non_ascii_case() {
+        let mut conn = migrated();
+        create_framework(&mut conn, &named("Équipe")).unwrap();
+
+        let result = create_framework(&mut conn, &named(" équipe "));
+
+        match result {
+            Err(DbError::FrameworkNameTaken { name }) => assert_eq!(name, "équipe"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(count(&conn, "SELECT count(*) FROM frameworks"), 1);
+    }
+
+    #[test]
+    fn update_rejects_a_name_that_differs_only_in_non_ascii_case() {
+        let mut conn = migrated();
+        create_framework(&mut conn, &named("Équipe")).unwrap();
+        let other = create_framework(&mut conn, &named("Other")).unwrap();
+
+        let result = update_framework(&mut conn, &other.id, &named("équipe"));
+
+        assert!(matches!(result, Err(DbError::FrameworkNameTaken { .. })));
+        assert_eq!(get_framework(&conn, &other.id).unwrap(), other);
+    }
+
+    #[test]
+    fn update_may_rename_to_its_own_name_in_another_non_ascii_case() {
+        let mut conn = migrated();
+        let created = create_framework(&mut conn, &named("Équipe")).unwrap();
+
+        let updated = update_framework(&mut conn, &created.id, &named("équipe")).unwrap();
+
+        assert_eq!(updated.name, "équipe");
+    }
+
+    #[test]
+    fn restore_renames_when_a_name_differs_only_in_non_ascii_case() {
+        let mut conn = migrated();
+        let old = create_framework(&mut conn, &named("équipe")).unwrap();
+        delete_framework(&conn, &old.id).unwrap();
+        create_framework(&mut conn, &named("Équipe")).unwrap();
+
+        let restored = restore_framework(&mut conn, &old.id).unwrap();
+
+        assert_eq!(restored.name, "équipe (2)");
     }
 }
