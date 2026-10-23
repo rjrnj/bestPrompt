@@ -26,6 +26,7 @@ function framework(id: string, sections: Section[]): Framework {
     template: "",
     summaryKey: null,
     isCustom: false,
+    deletedAt: null,
     sections,
     createdAt: 1,
     updatedAt: 1,

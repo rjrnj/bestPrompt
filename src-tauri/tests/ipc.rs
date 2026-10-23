@@ -405,3 +405,76 @@ fn the_webview_can_retitle_move_and_delete_an_entry() {
     assert_eq!(deleted, Value::Null);
     assert_eq!(gone["kind"], "notFound");
 }
+
+fn framework_input(name: &str, sections: Value) -> Value {
+    json!({
+        "name": name,
+        "description": "",
+        "template": "{{goal}}",
+        "summaryKey": "goal",
+        "sections": sections,
+    })
+}
+
+#[test]
+fn create_update_delete_restore_through_ipc() {
+    let window = main_window();
+    let goal = json!({ "key": "goal", "label": "Goal", "helpText": "" });
+    let tone = json!({ "key": "tone", "label": "Tone", "helpText": "" });
+
+    let created: Framework = serde_json::from_value(
+        invoke(
+            &window,
+            "create_framework",
+            json!({ "input": framework_input("Mine", json!([goal])) }),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let updated: Framework = serde_json::from_value(
+        invoke(
+            &window,
+            "update_framework",
+            json!({ "id": created.id, "input": framework_input("Yours", json!([goal, tone])) }),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let deleted: Framework = serde_json::from_value(
+        invoke(&window, "delete_framework", json!({ "id": created.id })).unwrap(),
+    )
+    .unwrap();
+    let after_delete: Vec<Framework> =
+        serde_json::from_value(invoke(&window, "list_frameworks", json!({})).unwrap()).unwrap();
+    let restored: Framework = serde_json::from_value(
+        invoke(&window, "restore_framework", json!({ "id": created.id })).unwrap(),
+    )
+    .unwrap();
+    let after_restore: Vec<Framework> =
+        serde_json::from_value(invoke(&window, "list_frameworks", json!({})).unwrap()).unwrap();
+
+    assert!(created.is_custom);
+    assert_eq!(created.name, "Mine");
+    assert_eq!(updated.id, created.id);
+    assert_eq!(updated.name, "Yours");
+    assert_eq!(updated.sections.len(), 2);
+    assert!(deleted.deleted_at.is_some());
+    assert!(after_delete.iter().all(|f| f.id != created.id));
+    assert_eq!(restored.id, created.id);
+    assert_eq!(restored.deleted_at, None);
+    assert!(after_restore.iter().any(|f| f.id == created.id));
+}
+
+#[test]
+fn an_invalid_framework_reaches_the_webview_as_invalid() {
+    let window = main_window();
+
+    let error = invoke(
+        &window,
+        "create_framework",
+        json!({ "input": framework_input("Mine", json!([])) }),
+    )
+    .unwrap_err();
+
+    assert_eq!(error["kind"], "invalid");
+}

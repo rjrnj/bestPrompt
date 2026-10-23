@@ -319,3 +319,35 @@ fn fts_ignores_diacritics_and_case() {
 
     assert_eq!(fts_matches(&conn, "CAFE"), 1);
 }
+
+#[test]
+fn deleted_at_is_only_allowed_on_custom_frameworks() {
+    let conn = migrated();
+    let uuid = "0192d4c8-7b3a-7f00-8a1e-3c5d7e9f0b2a";
+    try_insert_framework(&conn, uuid, true).unwrap();
+    try_insert_framework(&conn, "rtf", false).unwrap();
+
+    // Proves the statement itself is fine, so the failure below comes from the check.
+    conn.execute("UPDATE frameworks SET deleted_at = 5 WHERE id = ?1", [uuid])
+        .unwrap();
+    let builtin = conn.execute("UPDATE frameworks SET deleted_at = 5 WHERE id = 'rtf'", []);
+
+    assert!(builtin.is_err(), "a built-in can't be deleted");
+}
+
+#[test]
+fn live_names_are_unique_ignoring_case_but_deleted_names_are_free() {
+    let conn = migrated();
+    let insert = |id: &str, name: &str, deleted_at: Option<i64>| {
+        conn.execute(
+            "INSERT INTO frameworks (id, name, description, template, is_custom, created_at, updated_at, deleted_at)
+             VALUES (?1, ?2, '', '', 1, 0, 0, ?3)",
+            rusqlite::params![id, name, deleted_at],
+        )
+    };
+    insert("0192d4c8-7b3a-7f00-8a1e-3c5d7e9f0b01", "Mine", None).unwrap();
+
+    assert!(insert("0192d4c8-7b3a-7f00-8a1e-3c5d7e9f0b02", "MINE", None).is_err());
+    insert("0192d4c8-7b3a-7f00-8a1e-3c5d7e9f0b03", "mine", Some(1)).unwrap();
+    insert("0192d4c8-7b3a-7f00-8a1e-3c5d7e9f0b04", "Mine", Some(2)).unwrap();
+}

@@ -41,6 +41,7 @@ function framework(id: string, summaryKey: string | null): Framework {
     template: "",
     summaryKey,
     isCustom: false,
+    deletedAt: null,
     sections: [],
     createdAt: 0,
     updatedAt: 0,

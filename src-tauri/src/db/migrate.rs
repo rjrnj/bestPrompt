@@ -22,6 +22,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/001_initial.sql"),
     include_str!("migrations/002_history.sql"),
     include_str!("migrations/003_entry_version.sql"),
+    include_str!("migrations/004_custom_frameworks.sql"),
 ];
 
 /// The schema version of a database that `migrate` would have to change,
@@ -154,6 +155,43 @@ mod tests {
             count(&conn, "SELECT version FROM prompt_entries WHERE id = 'e'"),
             0
         );
+    }
+
+    #[test]
+    fn custom_framework_migration_keeps_existing_rows() {
+        let mut conn = open_in_memory().unwrap();
+        apply(&mut conn, &MIGRATIONS[..3]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO frameworks (id, name, description, template, is_custom, created_at, updated_at)
+                 VALUES ('rtf', 'RTF', '', '{{a}}', 0, 0, 0);
+             INSERT INTO framework_sections (framework_id, position, key, label, help_text)
+                 VALUES ('rtf', 0, 'a', 'A', '');
+             INSERT INTO prompt_entries (id, framework_id, framework_snapshot, section_values, rendered_prompt, created_at)
+                 VALUES ('e', 'rtf', '{}', '{}', 'rendered', 0);",
+        )
+        .unwrap();
+
+        apply(&mut conn, MIGRATIONS).unwrap();
+
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT count(*) FROM frameworks WHERE id = 'rtf' AND deleted_at IS NULL"
+            ),
+            1
+        );
+        assert_eq!(count(&conn, "SELECT count(*) FROM framework_sections"), 1);
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT count(*) FROM prompt_entries WHERE id = 'e' AND framework_id = 'rtf'"
+            ),
+            1
+        );
+        let listed = crate::db::frameworks::list_frameworks(&conn).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "rtf");
+        assert_eq!(listed[0].sections.len(), 1);
     }
 
     #[test]

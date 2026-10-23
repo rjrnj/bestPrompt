@@ -6,4 +6,8 @@ export type Framework = { id: string, name: string, description: string, templat
  * The key of the section that best summarises a prompt built with this
  * framework, used to label entries that have no title.
  */
-summaryKey: string | null, isCustom: boolean, sections: Array<Section>, createdAt: number, updatedAt: number, };
+summaryKey: string | null, isCustom: boolean, sections: Array<Section>, createdAt: number, updatedAt: number, 
+/**
+ * When a custom framework was deleted; `None` while it is live.
+ */
+deletedAt: number | null, };

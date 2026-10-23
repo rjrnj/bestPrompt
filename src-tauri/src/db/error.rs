@@ -38,6 +38,18 @@ pub enum DbError {
     /// Another project already has this name, ignoring ASCII case.
     #[error("A project named “{name}” already exists.")]
     ProjectNameTaken { name: String },
+
+    /// A framework whose structure can't be saved; the message says why.
+    #[error("{message}")]
+    InvalidFramework { message: String },
+
+    /// Another live framework already has this name, ignoring ASCII case.
+    #[error("A framework named “{name}” already exists.")]
+    FrameworkNameTaken { name: String },
+
+    /// Built-in frameworks are never changed by the user.
+    #[error("Built-in frameworks can't be changed. Make a copy instead.")]
+    BuiltinReadOnly,
 }
 
 /// What a `NotFound` error was looking for.
@@ -88,7 +100,11 @@ impl DbError {
             | DbError::BuiltinsUnreadable(_)
             | DbError::BackupPathNotUnicode { .. } => Kind::Database,
             DbError::NotFound { .. } => Kind::NotFound,
-            DbError::BlankProjectName | DbError::ProjectNameTaken { .. } => Kind::Invalid,
+            DbError::BlankProjectName
+            | DbError::ProjectNameTaken { .. }
+            | DbError::InvalidFramework { .. }
+            | DbError::FrameworkNameTaken { .. }
+            | DbError::BuiltinReadOnly => Kind::Invalid,
         }
     }
 
@@ -103,7 +119,10 @@ impl DbError {
             DbError::SchemaTooNew { .. }
             | DbError::NotFound { .. }
             | DbError::BlankProjectName
-            | DbError::ProjectNameTaken { .. } => self.to_string(),
+            | DbError::ProjectNameTaken { .. }
+            | DbError::InvalidFramework { .. }
+            | DbError::FrameworkNameTaken { .. }
+            | DbError::BuiltinReadOnly => self.to_string(),
         }
     }
 }
@@ -212,6 +231,35 @@ mod tests {
         );
         assert_eq!(blank_log, Vec::<String>::new());
         assert_eq!(taken_log, Vec::<String>::new());
+    }
+
+    #[test]
+    fn framework_errors_serialize_as_invalid_with_their_message() {
+        let cases = [
+            (
+                DbError::InvalidFramework {
+                    message: "A framework needs at least one section.".to_owned(),
+                },
+                "A framework needs at least one section.",
+            ),
+            (
+                DbError::FrameworkNameTaken {
+                    name: "RTF".to_owned(),
+                },
+                "A framework named “RTF” already exists.",
+            ),
+            (
+                DbError::BuiltinReadOnly,
+                "Built-in frameworks can't be changed. Make a copy instead.",
+            ),
+        ];
+
+        for (error, message) in cases {
+            let (serialized, log) = logged(|| serde_json::to_value(&error).unwrap());
+
+            assert_eq!(serialized, json!({ "kind": "invalid", "message": message }));
+            assert_eq!(log, Vec::<String>::new());
+        }
     }
 
     #[test]

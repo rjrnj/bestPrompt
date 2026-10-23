@@ -29,6 +29,7 @@ function framework(id: string, keys: string[]): Framework {
     template: keys.map((key) => `{{${key}}}`).join("\n"),
     summaryKey: null,
     isCustom: false,
+    deletedAt: null,
     sections: keys.map((key) => ({ key, label: key, helpText: "" })),
     createdAt: 1,
     updatedAt: 1,
@@ -47,6 +48,7 @@ const rtf: Framework = {
   summaryKey: rtfJson.summaryKey,
   sections: rtfJson.sections,
   isCustom: false,
+  deletedAt: null,
   createdAt: 1,
   updatedAt: 1,
 };

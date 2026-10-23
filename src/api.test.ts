@@ -2,7 +2,9 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ApiError,
+  createFramework,
   createProject,
+  deleteFramework,
   deleteProject,
   deletePromptEntry,
   getFramework,
@@ -12,12 +14,15 @@ import {
   listProjects,
   listPromptEntries,
   renameProject,
+  restoreFramework,
   savePromptEntry,
   setEntryProject,
   setEntryTitle,
+  updateFramework,
 } from "./api";
 import type { EntryQuery } from "./bindings/EntryQuery";
 import type { Framework } from "./bindings/Framework";
+import type { FrameworkInput } from "./bindings/FrameworkInput";
 import type { PromptEntry } from "./bindings/PromptEntry";
 
 type Call = { cmd: string; args: unknown };
@@ -39,6 +44,7 @@ const rtf: Framework = {
   template: "{{role}}",
   summaryKey: null,
   isCustom: false,
+  deletedAt: null,
   sections: [{ key: "role", label: "Role", helpText: "" }],
   createdAt: 1,
   updatedAt: 1,
@@ -78,6 +84,54 @@ describe("api", () => {
     await expect(getFramework("rtf")).resolves.toEqual(rtf);
 
     expect(calls).toEqual([{ cmd: "get_framework", args: { id: "rtf" } }]);
+  });
+
+  it("creates a framework through create_framework with its input", async () => {
+    const calls = answering(rtf);
+    const input: FrameworkInput = {
+      name: "RTF",
+      description: "",
+      template: "{{role}}",
+      summaryKey: "",
+      sections: rtf.sections,
+    };
+
+    await expect(createFramework(input)).resolves.toEqual(rtf);
+
+    expect(calls).toEqual([{ cmd: "create_framework", args: { input } }]);
+  });
+
+  it("updates a framework through update_framework with its id and input", async () => {
+    const calls = answering(rtf);
+    const input: FrameworkInput = {
+      name: "RTF",
+      description: "",
+      template: "{{role}}",
+      summaryKey: "",
+      sections: rtf.sections,
+    };
+
+    await expect(updateFramework("rtf", input)).resolves.toEqual(rtf);
+
+    expect(calls).toEqual([
+      { cmd: "update_framework", args: { id: "rtf", input } },
+    ]);
+  });
+
+  it("deletes a framework through delete_framework with its id", async () => {
+    const calls = answering(rtf);
+
+    await expect(deleteFramework("rtf")).resolves.toEqual(rtf);
+
+    expect(calls).toEqual([{ cmd: "delete_framework", args: { id: "rtf" } }]);
+  });
+
+  it("restores a framework through restore_framework with its id", async () => {
+    const calls = answering(rtf);
+
+    await expect(restoreFramework("rtf")).resolves.toEqual(rtf);
+
+    expect(calls).toEqual([{ cmd: "restore_framework", args: { id: "rtf" } }]);
   });
 
   it("saves an entry through save_prompt_entry under the key entry", async () => {

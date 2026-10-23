@@ -39,7 +39,8 @@ pub fn table_exists(conn: &Connection, name: &str) -> bool {
     schema_object_exists(conn, "table", name)
 }
 
-/// Inserts a framework with placeholder text in every other column.
+/// Inserts a framework named after its id, with placeholder text in every other
+/// column. Live names are unique, so each id gets its own name.
 pub fn try_insert_framework(
     conn: &Connection,
     id: &str,
@@ -47,7 +48,7 @@ pub fn try_insert_framework(
 ) -> rusqlite::Result<usize> {
     conn.execute(
         "INSERT INTO frameworks (id, name, description, template, is_custom, created_at, updated_at)
-         VALUES (?1, 'Framework', '', '', ?2, 0, 0)",
+         VALUES (?1, 'Framework ' || ?1, '', '', ?2, 0, 0)",
         rusqlite::params![id, is_custom],
     )
 }

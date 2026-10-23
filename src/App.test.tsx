@@ -37,6 +37,7 @@ const frameworks: Framework[] = builtins.map((f) => ({
   summaryKey: f.summaryKey,
   sections: f.sections,
   isCustom: false,
+  deletedAt: null,
   createdAt: 1,
   updatedAt: 1,
 }));
