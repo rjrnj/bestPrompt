@@ -39,6 +39,7 @@ const rtf: Framework = {
   template: "{{role}}",
   summaryKey: null,
   isCustom: false,
+  deletedAt: null,
   sections: [{ key: "role", label: "Role", helpText: "" }],
   createdAt: 1,
   updatedAt: 1,

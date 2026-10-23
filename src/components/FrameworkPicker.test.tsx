@@ -20,6 +20,7 @@ function framework(id: string, name: string, description: string): Framework {
     template: "",
     summaryKey: null,
     isCustom: false,
+    deletedAt: null,
     sections: [],
     createdAt: 1,
     updatedAt: 1,

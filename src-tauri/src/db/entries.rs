@@ -390,7 +390,7 @@ mod tests {
         assert_eq!(
             entry.framework_snapshot,
             FrameworkSnapshot {
-                name: "Framework".to_owned(),
+                name: "Framework f".to_owned(),
                 template: String::new(),
                 summary_key: None,
                 sections: vec![

@@ -37,6 +37,7 @@ const rtf: Framework = {
   template: "{{task}}",
   summaryKey: "task",
   isCustom: false,
+  deletedAt: null,
   sections: [{ key: "task", label: "Task", helpText: "" }],
   createdAt: 1,
   updatedAt: 1,

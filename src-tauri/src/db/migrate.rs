@@ -22,6 +22,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/001_initial.sql"),
     include_str!("migrations/002_history.sql"),
     include_str!("migrations/003_entry_version.sql"),
+    include_str!("migrations/004_custom_frameworks.sql"),
 ];
 
 /// The schema version of a database that `migrate` would have to change,
