@@ -11,7 +11,7 @@ use tauri::{Builder, Runtime, State};
 
 use crate::db::DbError;
 use crate::db::entries::{self, EntryCursor, EntryQuery, NewPromptEntry, PromptEntry};
-use crate::db::frameworks::{self, Framework};
+use crate::db::frameworks::{self, Framework, FrameworkInput};
 use crate::db::projects::{self, Project};
 
 /// The app's database connection, held in Tauri's managed state.
@@ -31,6 +31,10 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
     builder.invoke_handler(tauri::generate_handler![
         list_frameworks,
         get_framework,
+        create_framework,
+        update_framework,
+        delete_framework,
+        restore_framework,
         save_prompt_entry,
         list_prompt_entries,
         get_prompt_entry,
@@ -53,6 +57,30 @@ fn list_frameworks(db: State<'_, Db>) -> Result<Vec<Framework>, DbError> {
 #[tauri::command(async)]
 fn get_framework(db: State<'_, Db>, id: String) -> Result<Framework, DbError> {
     db.with(|conn| frameworks::get_framework(conn, &id))
+}
+
+#[tauri::command(async)]
+fn create_framework(db: State<'_, Db>, input: FrameworkInput) -> Result<Framework, DbError> {
+    db.with(|conn| frameworks::create_framework(conn, &input))
+}
+
+#[tauri::command(async)]
+fn update_framework(
+    db: State<'_, Db>,
+    id: String,
+    input: FrameworkInput,
+) -> Result<Framework, DbError> {
+    db.with(|conn| frameworks::update_framework(conn, &id, &input))
+}
+
+#[tauri::command(async)]
+fn delete_framework(db: State<'_, Db>, id: String) -> Result<Framework, DbError> {
+    db.with(|conn| frameworks::delete_framework(conn, &id))
+}
+
+#[tauri::command(async)]
+fn restore_framework(db: State<'_, Db>, id: String) -> Result<Framework, DbError> {
+    db.with(|conn| frameworks::restore_framework(conn, &id))
 }
 
 #[tauri::command(async)]

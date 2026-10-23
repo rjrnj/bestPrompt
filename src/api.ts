@@ -7,6 +7,7 @@ import type { DbError, DbErrorKind } from "./bindings/DbError";
 import type { EntryCursor } from "./bindings/EntryCursor";
 import type { EntryQuery } from "./bindings/EntryQuery";
 import type { Framework } from "./bindings/Framework";
+import type { FrameworkInput } from "./bindings/FrameworkInput";
 import type { NewPromptEntry } from "./bindings/NewPromptEntry";
 import type { Project } from "./bindings/Project";
 import type { PromptEntry } from "./bindings/PromptEntry";
@@ -90,6 +91,25 @@ export function listFrameworks(): Promise<Framework[]> {
 
 export function getFramework(id: string): Promise<Framework> {
   return call("get_framework", { id });
+}
+
+export function createFramework(input: FrameworkInput): Promise<Framework> {
+  return call("create_framework", { input });
+}
+
+export function updateFramework(
+  id: string,
+  input: FrameworkInput,
+): Promise<Framework> {
+  return call("update_framework", { id, input });
+}
+
+export function deleteFramework(id: string): Promise<Framework> {
+  return call("delete_framework", { id });
+}
+
+export function restoreFramework(id: string): Promise<Framework> {
+  return call("restore_framework", { id });
 }
 
 export function savePromptEntry(entry: NewPromptEntry): Promise<PromptEntry> {

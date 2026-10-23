@@ -6,6 +6,10 @@ use tauri_build::{AppManifest, Attributes};
 const COMMANDS: &[&str] = &[
     "list_frameworks",
     "get_framework",
+    "create_framework",
+    "update_framework",
+    "delete_framework",
+    "restore_framework",
     "save_prompt_entry",
     "list_prompt_entries",
     "get_prompt_entry",
