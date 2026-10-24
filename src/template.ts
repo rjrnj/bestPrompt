@@ -1,3 +1,6 @@
+import { sectionBlock } from "./frameworks/autoTemplate";
+import type { Section } from "./bindings/Section";
+
 // Prompt templates: `{{key}}` inserts a section's value, and
 // `{{#key}} … {{/key}}` wraps text that is dropped when that value is blank.
 // `\{{` is a literal `{{` and `\\{{` is a backslash followed by a tag; a
@@ -59,8 +62,13 @@ function readTag(src: string, start: number): { tag: Tag; next: number } {
 }
 
 export function parseTemplate(src: string): ParseResult {
+  return parse(src);
+}
+
+/** Parses `src`; when `ends` is given, it receives the offset just past each tag or block. */
+function parse(src: string, ends?: Map<TemplateNode, number>): ParseResult {
   const root: TemplateNode[] = [];
-  const stack: { key: string; offset: number; children: TemplateNode[] }[] = [];
+  const stack: Extract<TemplateNode, { type: "block" }>[] = [];
   let current = root;
   let text = "";
   const flushText = () => {
@@ -96,13 +104,19 @@ export function parseTemplate(src: string): ParseResult {
     }
     flushText();
     if (tag.kind === "placeholder") {
-      current.push({ type: "placeholder", key: tag.key, offset: tag.offset });
+      const node: TemplateNode = {
+        type: "placeholder",
+        key: tag.key,
+        offset: tag.offset,
+      };
+      current.push(node);
+      ends?.set(node, next);
     } else if (tag.kind === "open") {
       const block = {
         type: "block" as const,
         key: tag.key,
         offset: tag.offset,
-        children: [],
+        children: [] as TemplateNode[],
       };
       current.push(block);
       stack.push(block);
@@ -117,6 +131,7 @@ export function parseTemplate(src: string): ParseResult {
         const message = `{{/${tag.key}}} closes {{#${block.key}}}; expected {{/${block.key}}}`;
         return { ok: false, errors: [{ message, offset: tag.offset }] };
       }
+      ends?.set(block, next);
       current = stack.length > 0 ? stack[stack.length - 1].children : root;
     }
   }
@@ -229,4 +244,91 @@ export function renderTemplate(
   return renderNodes(parsed.nodes, normalized)
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function collectUsed(nodes: TemplateNode[], used: Set<string>): void {
+  for (const node of nodes) {
+    if (node.type === "placeholder") {
+      used.add(node.key);
+    } else if (node.type === "block") {
+      collectUsed(node.children, used);
+    }
+  }
+}
+
+/** The keys of the `{{key}}` placeholders at any depth; empty if the template does not parse. */
+export function usedKeys(template: string): Set<string> {
+  const used = new Set<string>();
+  const parsed = parseTemplate(template);
+  if (parsed.ok) {
+    collectUsed(parsed.nodes, used);
+  }
+  return used;
+}
+
+type Removal = { start: number; end: number; spot: boolean };
+
+function collectRemovals(
+  nodes: TemplateNode[],
+  key: string,
+  ends: Map<TemplateNode, number>,
+  out: Removal[],
+): void {
+  for (const node of nodes) {
+    if (node.type === "text") continue;
+    const end = ends.get(node) ?? node.offset;
+    if (node.key === key) {
+      out.push({ start: node.offset, end, spot: node.type === "placeholder" });
+    } else if (node.type === "block") {
+      collectRemovals(node.children, key, ends, out);
+    }
+  }
+}
+
+/**
+ * Drops a section from a template. Its generated block goes with the blank
+ * line that separated it from a neighbour; any other `{{#key}}…{{/key}}` block
+ * of the section goes whole, and so does every remaining `{{key}}`
+ * placeholder. `spots` lists, in ascending order, where in the returned
+ * template each placeholder stood that was not inside a block of the
+ * section's own, so the caller can point at text that may now read oddly.
+ * A template that does not parse is returned unchanged.
+ */
+export function removeSectionFromTemplate(
+  template: string,
+  section: Section,
+): { template: string; spots: number[] } {
+  const unchanged = { template, spots: [] };
+  if (!parseTemplate(template).ok) return unchanged;
+
+  let text = template;
+  const block = sectionBlock(section);
+  const at = text.indexOf(block);
+  if (at !== -1) {
+    const sep = "\n\n";
+    if (at >= sep.length && text.startsWith(sep, at - sep.length)) {
+      text = text.slice(0, at - sep.length) + text.slice(at + block.length);
+    } else if (at === 0 && text.startsWith(sep, block.length)) {
+      text = text.slice(0, at) + text.slice(at + block.length + sep.length);
+    } else {
+      text = text.slice(0, at) + text.slice(at + block.length);
+    }
+  }
+
+  const ends = new Map<TemplateNode, number>();
+  const parsed = parse(text, ends);
+  if (!parsed.ok) return unchanged;
+  const removals: Removal[] = [];
+  collectRemovals(parsed.nodes, section.key, ends, removals);
+
+  let out = "";
+  let last = 0;
+  const spots: number[] = [];
+  for (const { start, end, spot } of removals) {
+    out += text.slice(last, start);
+    if (spot) spots.push(out.length);
+    last = end;
+  }
+  out += text.slice(last);
+  return { template: out, spots };
 }

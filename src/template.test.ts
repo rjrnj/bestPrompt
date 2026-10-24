@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { autoTemplate, sectionBlock } from "./frameworks/autoTemplate";
 import {
   parseTemplate,
+  removeSectionFromTemplate,
   renderTemplate,
   TemplateSyntaxError,
+  usedKeys,
   validateTemplate,
 } from "./template";
 
@@ -279,5 +282,110 @@ describe("validateTemplate", () => {
     expect(validateTemplate("{{#role}}", keys)).toEqual([
       { message: "Block {{#role}} is never closed", offset: 0 },
     ]);
+  });
+});
+
+describe("usedKeys", () => {
+  it("finds placeholders at any depth", () => {
+    expect(usedKeys("{{a}} {{#b}}x {{c}} {{#d}}{{e}}{{/d}}{{/b}}")).toEqual(
+      new Set(["a", "c", "e"]),
+    );
+  });
+
+  it("does not count a key that only opens a block", () => {
+    expect(usedKeys("{{#a}}text{{/a}}")).toEqual(new Set());
+  });
+
+  it("is empty when the template does not parse", () => {
+    expect(usedKeys("{{a}} {{#b}}")).toEqual(new Set());
+  });
+});
+
+describe("removeSectionFromTemplate", () => {
+  const role = { key: "role", label: "Role", helpText: "" };
+  const task = { key: "task", label: "Task", helpText: "" };
+  const goal = { key: "goal", label: "Goal", helpText: "" };
+
+  it("removes the generated block and the separator after it", () => {
+    const template = autoTemplate([role, task, goal]);
+    expect(removeSectionFromTemplate(template, role)).toEqual({
+      template: autoTemplate([task, goal]),
+      spots: [],
+    });
+  });
+
+  it("removes the separator before a middle or last block", () => {
+    const template = autoTemplate([role, task, goal]);
+    expect(removeSectionFromTemplate(template, task).template).toBe(
+      autoTemplate([role, goal]),
+    );
+    expect(removeSectionFromTemplate(template, goal).template).toBe(
+      autoTemplate([role, task]),
+    );
+  });
+
+  it("removes only the block when text precedes it without a separator", () => {
+    const template = `Intro ${sectionBlock(role)}\n\nNext`;
+    expect(removeSectionFromTemplate(template, role)).toEqual({
+      template: "Intro \n\nNext",
+      spots: [],
+    });
+  });
+
+  it("removes a generated block nested inside another section's block", () => {
+    const template = `{{#task}}${sectionBlock(role)}{{/task}}`;
+    expect(removeSectionFromTemplate(template, role)).toEqual({
+      template: "{{#task}}{{/task}}",
+      spots: [],
+    });
+  });
+
+  it("leaves an empty template when the only block is removed", () => {
+    expect(removeSectionFromTemplate(autoTemplate([role]), role)).toEqual({
+      template: "",
+      spots: [],
+    });
+  });
+
+  it("removes a hand-written block whole with no spot", () => {
+    expect(
+      removeSectionFromTemplate("Hi {{#role}}as {{role}}{{/role}}!", role),
+    ).toEqual({ template: "Hi !", spots: [] });
+  });
+
+  it("removes a loose placeholder and records where it was", () => {
+    expect(
+      removeSectionFromTemplate("I expected {{expected}}, but", {
+        key: "expected",
+        label: "Expected",
+        helpText: "",
+      }),
+    ).toEqual({ template: "I expected , but", spots: [11] });
+  });
+
+  it("records spots in the new template, in ascending order", () => {
+    expect(
+      removeSectionFromTemplate("a{{role}}b{{task}}c{{role}}d", role),
+    ).toEqual({ template: "ab{{task}}cd", spots: [1, 11] });
+  });
+
+  it("removes a placeholder that sits inside another section's block", () => {
+    expect(
+      removeSectionFromTemplate("{{#task}}see {{role}} now{{/task}}", role),
+    ).toEqual({ template: "{{#task}}see  now{{/task}}", spots: [13] });
+  });
+
+  it("leaves other sections untouched", () => {
+    expect(removeSectionFromTemplate("{{task}} and {{goal}}", role)).toEqual({
+      template: "{{task}} and {{goal}}",
+      spots: [],
+    });
+  });
+
+  it("returns a template that does not parse unchanged", () => {
+    expect(removeSectionFromTemplate("{{role}} {{#task}}", role)).toEqual({
+      template: "{{role}} {{#task}}",
+      spots: [],
+    });
   });
 });
