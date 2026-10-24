@@ -6,10 +6,12 @@ import type { PromptEntry } from "../bindings/PromptEntry";
 import {
   currentDraft,
   currentTitle,
+  draftTextIn,
   hasAnyDraftText,
   initialState,
   isBlank,
   listedProjects,
+  liveFrameworks,
   needsSave,
   openConflicts,
   reducer,
@@ -1084,5 +1086,212 @@ describe("unplacedSections", () => {
 
   it("names every section with text when there is no framework", () => {
     expect(unplacedSections(snapshot, null)).toEqual(["A", "B", "C label"]);
+  });
+});
+
+describe("framework changes", () => {
+  const custom = (id: string, name: string, keys: string[]): Framework => ({
+    ...framework(id, keys),
+    name,
+    isCustom: true,
+  });
+  const deleted = (f: Framework): Framework => ({ ...f, deletedAt: 5 });
+  const names = (state: State) =>
+    state.frameworks.status === "ready"
+      ? state.frameworks.items.map((f) => f.id)
+      : [];
+
+  it("frameworkSaved_adds_a_new_framework_in_list_order", () => {
+    const state = run([
+      {
+        type: "frameworksLoaded",
+        frameworks: [ab, xy, custom("c1", "alpha", ["a"])],
+      },
+      { type: "frameworkSaved", framework: custom("c0", "Zeta", ["a"]) },
+      { type: "frameworkSaved", framework: custom("c2", "ALPHA", ["a"]) },
+    ]);
+
+    expect(names(state)).toEqual(["ab", "xy", "c1", "c2", "c0"]);
+  });
+
+  it("frameworkSaved_replaces_in_place_without_changing_the_selection", () => {
+    const start = run([
+      { type: "frameworksLoaded", frameworks: [ab, xy] },
+      { type: "selectFramework", id: "xy" },
+    ]);
+    const renamed = { ...ab, name: "Renamed" };
+
+    const state = run([{ type: "frameworkSaved", framework: renamed }], start);
+
+    expect(names(state)).toEqual(["ab", "xy"]);
+    expect(state.selectedId).toBe("xy");
+    expect(state.frameworks).toEqual({
+      status: "ready",
+      items: [renamed, xy],
+    });
+  });
+
+  it("frameworkSaved_keeps_draft_text_of_kept_sections_and_drops_removed_ones", () => {
+    const start = run([
+      { type: "frameworksLoaded", frameworks: [ab, xy] },
+      { type: "editSection", key: "a", value: "keep" },
+      { type: "editSection", key: "b", value: "drop" },
+      { type: "editTitle", value: "ab title" },
+      { type: "saveSucceeded", frameworkId: "ab", renderedPrompt: "keep" },
+      { type: "selectFramework", id: "xy" },
+      { type: "editSection", key: "x", value: "other" },
+      { type: "editTitle", value: "title" },
+    ]);
+    const edited = framework("ab", ["a", "c"]);
+
+    const state = run([{ type: "frameworkSaved", framework: edited }], start);
+
+    expect(state.drafts).toEqual({ ab: { a: "keep" }, xy: { x: "other" } });
+    expect(state.titles).toEqual({ ab: "ab title", xy: "title" });
+    expect(state.lastSaved).toEqual({ ab: "keep" });
+  });
+
+  it("frameworkSaved_keeps_the_selection_and_text_when_the_selected_framework_loses_sections", () => {
+    const start = run(
+      [
+        { type: "editSection", key: "a", value: "keep" },
+        { type: "editSection", key: "b", value: "drop" },
+      ],
+      loaded,
+    );
+    expect(start.selectedId).toBe("ab");
+    const edited = framework("ab", ["a"]);
+
+    const state = run([{ type: "frameworkSaved", framework: edited }], start);
+
+    expect(state.selectedId).toBe("ab");
+    expect(state.drafts).toEqual({ ab: { a: "keep" } });
+    expect(currentDraft(state)).toEqual({ a: "keep" });
+  });
+
+  it("frameworkDeleted_selects_the_first_live_framework_when_it_was_selected", () => {
+    const start = run([{ type: "frameworksLoaded", frameworks: [ab, xy] }]);
+
+    const state = run(
+      [{ type: "frameworkDeleted", framework: deleted(ab) }],
+      start,
+    );
+
+    expect(state.selectedId).toBe("xy");
+    expect(state.frameworks).toEqual({
+      status: "ready",
+      items: [deleted(ab), xy],
+    });
+  });
+
+  it("frameworkDeleted_leaves_the_selection_when_another_was_deleted", () => {
+    const state = run(
+      [{ type: "frameworkDeleted", framework: deleted(xy) }],
+      loaded,
+    );
+
+    expect(state.selectedId).toBe("ab");
+  });
+
+  it("frameworkDeleted_selects_nothing_when_no_live_framework_remains", () => {
+    const state = run(
+      [{ type: "frameworkDeleted", framework: deleted(ab) }],
+      run([{ type: "frameworksLoaded", frameworks: [ab] }]),
+    );
+
+    expect(state.selectedId).toBeNull();
+  });
+
+  it("frameworkDeleted_drops_its_drafts_so_they_no_longer_count_as_draft_text", () => {
+    const start = run(
+      [
+        { type: "editSection", key: "a", value: "text" },
+        { type: "editTitle", value: "title" },
+        { type: "saveSucceeded", frameworkId: "ab", renderedPrompt: "text" },
+      ],
+      loaded,
+    );
+    expect(hasAnyDraftText(start)).toBe(true);
+
+    const state = run(
+      [{ type: "frameworkDeleted", framework: deleted(ab) }],
+      start,
+    );
+
+    expect(hasAnyDraftText(state)).toBe(false);
+    expect(state.drafts).toEqual({});
+    expect(state.titles).toEqual({});
+    expect(state.lastSaved).toEqual({});
+  });
+
+  it("frameworkRestored_makes_it_selectable_again", () => {
+    const start = run([
+      { type: "frameworksLoaded", frameworks: [ab, xy] },
+      { type: "frameworkDeleted", framework: deleted(xy) },
+      { type: "selectFramework", id: "xy" },
+    ]);
+    expect(start.selectedId).toBe("ab");
+
+    const state = run(
+      [
+        { type: "frameworkRestored", framework: xy },
+        { type: "selectFramework", id: "xy" },
+      ],
+      start,
+    );
+
+    expect(state.selectedId).toBe("xy");
+    expect(liveFrameworks(state)).toEqual([ab, xy]);
+  });
+
+  it("selectFramework_ignores_a_deleted_framework", () => {
+    const start = run(
+      [{ type: "frameworkDeleted", framework: deleted(xy) }],
+      loaded,
+    );
+
+    const state = run([{ type: "selectFramework", id: "xy" }], start);
+
+    expect(state.selectedId).toBe("ab");
+  });
+
+  it("frameworksLoaded_falls_back_to_a_live_framework", () => {
+    const state = run([
+      { type: "frameworksLoaded", frameworks: [deleted(ab), xy] },
+    ]);
+
+    expect(state.selectedId).toBe("xy");
+  });
+
+  it("liveFrameworks_leaves_out_deleted_ones", () => {
+    const state = run([
+      { type: "frameworksLoaded", frameworks: [ab, deleted(xy)] },
+    ]);
+
+    expect(liveFrameworks(state)).toEqual([ab]);
+    expect(liveFrameworks(initialState)).toEqual([]);
+  });
+
+  it("draftTextIn_lists_only_keys_with_text", () => {
+    const state = run(
+      [
+        { type: "editSection", key: "a", value: "text" },
+        { type: "editSection", key: "b", value: "   " },
+      ],
+      loaded,
+    );
+
+    expect(draftTextIn(state, "ab", ["a", "b", "c"])).toEqual(["a"]);
+    expect(draftTextIn(state, "xy", ["x"])).toEqual([]);
+    expect(draftTextIn(state, "ab", ["constructor"])).toEqual([]);
+  });
+
+  it("editingChanged_stores_the_value", () => {
+    const editing = { dirty: true, name: "Mine" };
+
+    const state = run([{ type: "editingChanged", editing }]);
+
+    expect(state.editingFramework).toEqual(editing);
+    expect(initialState.editingFramework).toBeNull();
   });
 });

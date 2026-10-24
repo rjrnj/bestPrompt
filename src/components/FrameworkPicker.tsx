@@ -1,7 +1,7 @@
 import * as Select from "@radix-ui/react-select";
 import { useId } from "react";
 import { useAppDispatch, useAppState } from "../state/AppState";
-import { selectedFramework } from "../state/reducer";
+import { liveFrameworks, selectedFramework } from "../state/reducer";
 import { Check, Chevron } from "./icons";
 import {
   selectContent,
@@ -57,7 +57,7 @@ export function FrameworkPicker() {
               className={selectContent}
             >
               <Select.Viewport>
-                {state.frameworks.items.map((framework) => (
+                {liveFrameworks(state).map((framework) => (
                   <Select.Item
                     key={framework.id}
                     value={framework.id}

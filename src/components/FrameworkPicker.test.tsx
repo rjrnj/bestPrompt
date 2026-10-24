@@ -102,6 +102,30 @@ describe("FrameworkPicker", () => {
     expect(trigger).not.toHaveAttribute("aria-describedby");
   });
 
+  it("picker_leaves_out_deleted_frameworks", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([
+      costar,
+      { ...rtf, deletedAt: 5 },
+    ]);
+    render(
+      <AppStateProvider>
+        <FrameworkPicker />
+      </AppStateProvider>,
+    );
+    const user = userEvent.setup();
+
+    await user.click(
+      await screen.findByRole("combobox", { name: "Framework" }),
+    );
+
+    expect(
+      await screen.findByRole("option", { name: "CO-STAR" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "RTF" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders nothing until the frameworks are loaded", () => {
     vi.mocked(listFrameworks).mockReturnValue(new Promise(() => {}));
     render(

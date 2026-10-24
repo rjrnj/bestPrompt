@@ -24,7 +24,12 @@ export type State = {
   /** The title typed for each framework, by framework id. */
   titles: Record<string, string>;
   /** Which tab is showing. */
-  view: "builder" | "history";
+  view: "builder" | "history" | "frameworks";
+  /**
+   * The custom framework being edited in the Frameworks tab, for the guard
+   * that asks before leaving it; null when none is open.
+   */
+  editingFramework: { dirty: boolean; name: string } | null;
   projects:
     | { status: "loading" }
     | { status: "ready"; items: Project[] }
@@ -57,6 +62,10 @@ export type Action =
   | { type: "frameworksLoading" }
   | { type: "frameworksLoaded"; frameworks: Framework[] }
   | { type: "frameworksFailed"; message: string }
+  | { type: "frameworkSaved"; framework: Framework }
+  | { type: "frameworkDeleted"; framework: Framework }
+  | { type: "frameworkRestored"; framework: Framework }
+  | { type: "editingChanged"; editing: State["editingFramework"] }
   | { type: "selectFramework"; id: string }
   | { type: "editSection"; key: string; value: string }
   | { type: "clearDraft" }
@@ -88,6 +97,7 @@ export const initialState: State = {
   lastSaved: {},
   titles: {},
   view: "builder",
+  editingFramework: null,
   projects: { status: "loading" },
   selectedProjectId: null,
   projectChosen: false,
@@ -104,20 +114,51 @@ export function reducer(state: State, action: Action): State {
       return { ...state, frameworks: { status: "loading" } };
     case "frameworksLoaded": {
       const items = action.frameworks;
-      const keep = items.some((f) => f.id === state.selectedId);
+      const live = items.filter((f) => f.deletedAt === null);
+      const keep = live.some((f) => f.id === state.selectedId);
       return {
         ...state,
         frameworks: { status: "ready", items },
-        selectedId: keep ? state.selectedId : (items[0]?.id ?? null),
+        selectedId: keep ? state.selectedId : (live[0]?.id ?? null),
       };
     }
+    case "frameworkSaved": {
+      const { framework } = action;
+      const next = withFramework(state, framework);
+      if (next === state) return state;
+      // Text in sections the framework still has stays; the rest is dropped.
+      const stored = state.drafts[framework.id];
+      if (stored === undefined) return next;
+      const kept = Object.fromEntries(
+        Object.entries(stored).filter(([key]) =>
+          framework.sections.some((s) => s.key === key),
+        ),
+      );
+      return { ...next, drafts: { ...next.drafts, [framework.id]: kept } };
+    }
+    case "frameworkDeleted": {
+      const { framework } = action;
+      const next = withFramework(state, framework);
+      if (next === state) return state;
+      // A deleted framework's work is gone, so it no longer counts as text
+      // that opening an entry or leaving would lose.
+      const drafts = { ...state.drafts };
+      const titles = { ...state.titles };
+      const lastSaved = { ...state.lastSaved };
+      delete drafts[framework.id];
+      delete titles[framework.id];
+      delete lastSaved[framework.id];
+      return { ...next, drafts, titles, lastSaved };
+    }
+    case "frameworkRestored":
+      return withFramework(state, action.framework);
     case "frameworksFailed":
       return {
         ...state,
         frameworks: { status: "error", message: action.message },
       };
     case "selectFramework":
-      return loadedFrameworks(state).some((f) => f.id === action.id)
+      return liveFrameworks(state).some((f) => f.id === action.id)
         ? { ...state, selectedId: action.id }
         : state;
     case "editSection": {
@@ -139,6 +180,8 @@ export function reducer(state: State, action: Action): State {
     }
     case "viewChanged":
       return { ...state, view: action.view };
+    case "editingChanged":
+      return { ...state, editingFramework: action.editing };
     case "projectsLoaded": {
       // A list read after a create already has the project, and one read
       // before a delete still has that one.
@@ -293,12 +336,20 @@ function loadedProjects(state: State): Project[] {
   return state.projects.status === "ready" ? state.projects.items : [];
 }
 
+/** Orders by name ignoring case, then by id. */
+function byNameThenId(
+  a: { name: string; id: string },
+  b: { name: string; id: string },
+): number {
+  const x = a.name.toLowerCase();
+  const y = b.name.toLowerCase();
+  if (x !== y) return x < y ? -1 : 1;
+  return a.id < b.id ? -1 : 1;
+}
+
 /** Projects in name order, ignoring case, as the database lists them. */
 function sortProjects(projects: Project[]): Project[] {
-  const key = (p: Project) => p.name.toLowerCase();
-  return [...projects].sort((a, b) =>
-    key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : a.id < b.id ? -1 : 1,
-  );
+  return [...projects].sort(byNameThenId);
 }
 
 /**
@@ -332,8 +383,53 @@ function projectIfPresent(
   return id !== null && projects.some((p) => p.id === id) ? id : null;
 }
 
+/** Frameworks in list order: built-ins first, then name ignoring case, then id. */
+function sortFrameworks(frameworks: Framework[]): Framework[] {
+  return [...frameworks].sort((a, b) => {
+    if (a.isCustom !== b.isCustom) return a.isCustom ? 1 : -1;
+    return byNameThenId(a, b);
+  });
+}
+
+/**
+ * `state` with `framework` inserted or replacing the one with its id, in list
+ * order. The selection moves to the first live framework when the selected
+ * one is no longer live (or nothing was selected). Unchanged while the list
+ * isn't loaded: a load that starts later reads the change from the database.
+ */
+function withFramework(state: State, framework: Framework): State {
+  if (state.frameworks.status !== "ready") return state;
+  const items = sortFrameworks([
+    ...state.frameworks.items.filter((f) => f.id !== framework.id),
+    framework,
+  ]);
+  const live = items.filter((f) => f.deletedAt === null);
+  const keep = live.some((f) => f.id === state.selectedId);
+  return {
+    ...state,
+    frameworks: { status: "ready", items },
+    selectedId: keep ? state.selectedId : (live[0]?.id ?? null),
+  };
+}
+
 function loadedFrameworks(state: State): Framework[] {
   return state.frameworks.status === "ready" ? state.frameworks.items : [];
+}
+
+/** The loaded frameworks that haven't been deleted, in list order. */
+export function liveFrameworks(state: State): Framework[] {
+  return loadedFrameworks(state).filter((f) => f.deletedAt === null);
+}
+
+/** The keys among `keys` that have non-blank draft text for the framework. */
+export function draftTextIn(
+  state: State,
+  frameworkId: string,
+  keys: string[],
+): string[] {
+  if (!hasOwn(state.drafts, frameworkId)) return [];
+  const draft = state.drafts[frameworkId];
+  return keys.filter((key) => hasOwn(draft, key) && draft[key].trim() !== "");
 }
 
 export function selectedFramework(state: State): Framework | null {
