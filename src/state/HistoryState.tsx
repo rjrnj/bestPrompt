@@ -22,7 +22,7 @@ import {
 import type { EntryCursor } from "../bindings/EntryCursor";
 import type { EntryQuery } from "../bindings/EntryQuery";
 import type { PromptEntry } from "../bindings/PromptEntry";
-import { useAppDispatch, useAppState } from "./AppState";
+import { useAppActions, useAppDispatch, useAppState } from "./AppState";
 import {
   historyReducer,
   initialHistoryState,
@@ -71,8 +71,9 @@ function searchQuery(text: string): string | null {
 
 export function HistoryProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(historyReducer, initialHistoryState);
-  const { view, projects } = useAppState();
+  const { view, projects, frameworks } = useAppState();
   const appDispatch = useAppDispatch();
+  const { pruneDeletedFrameworks } = useAppActions();
   const { project, frameworkId, search } = state.filters;
 
   // The search the list uses catches up with the typed text once typing
@@ -160,6 +161,15 @@ export function HistoryProvider({ children }: { children: ReactNode }) {
     }
   }, [projects, project]);
 
+  // Likewise a deleted framework that has been pruned from the list can't
+  // stay the filter.
+  useEffect(() => {
+    if (frameworks.status !== "ready" || frameworkId === null) return;
+    if (!frameworks.items.some((f) => f.id === frameworkId)) {
+      dispatch({ type: "frameworkRemoved", id: frameworkId });
+    }
+  }, [frameworks, frameworkId]);
+
   /** Runs an entry command; on failure toasts its message and returns false. */
   const edit = useCallback(
     async (
@@ -215,10 +225,18 @@ export function HistoryProvider({ children }: { children: ReactNode }) {
           frameworkId: removed.frameworkId,
           renderedPrompt: removed.renderedPrompt,
         });
+        // A deleted framework stays listed only while it has saved prompts.
+        const owner =
+          frameworks.status === "ready"
+            ? frameworks.items.find((f) => f.id === removed.frameworkId)
+            : undefined;
+        if (owner !== undefined && owner.deletedAt !== null) {
+          pruneDeletedFrameworks();
+        }
       }
       return ok;
     },
-    [edit, entries, appDispatch],
+    [edit, entries, appDispatch, frameworks, pruneDeletedFrameworks],
   );
 
   const setFilters = useCallback(

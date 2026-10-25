@@ -24,7 +24,23 @@ export type State = {
   /** The title typed for each framework, by framework id. */
   titles: Record<string, string>;
   /** Which tab is showing. */
-  view: "builder" | "history";
+  view: "builder" | "history" | "frameworks";
+  /**
+   * The custom framework being edited in the Frameworks tab, for the guard
+   * that asks before leaving it; null when none is open.
+   */
+  editingFramework: {
+    dirty: boolean;
+    name: string;
+    /** A save or delete is running, so the tab can't be left. */
+    busy: boolean;
+  } | null;
+  /**
+   * Ids of frameworks deleted here and not restored since, so a save that
+   * finishes late can't bring one back, even once a fresh listing or a
+   * prune has dropped it from the list.
+   */
+  deletedFrameworks: string[];
   projects:
     | { status: "loading" }
     | { status: "ready"; items: Project[] }
@@ -57,6 +73,11 @@ export type Action =
   | { type: "frameworksLoading" }
   | { type: "frameworksLoaded"; frameworks: Framework[] }
   | { type: "frameworksFailed"; message: string }
+  | { type: "deletedFrameworksPruned"; listedIds: string[] }
+  | { type: "frameworkSaved"; framework: Framework }
+  | { type: "frameworkDeleted"; framework: Framework }
+  | { type: "frameworkRestored"; framework: Framework }
+  | { type: "editingChanged"; editing: State["editingFramework"] }
   | { type: "selectFramework"; id: string }
   | { type: "editSection"; key: string; value: string }
   | { type: "clearDraft" }
@@ -88,6 +109,8 @@ export const initialState: State = {
   lastSaved: {},
   titles: {},
   view: "builder",
+  editingFramework: null,
+  deletedFrameworks: [],
   projects: { status: "loading" },
   selectedProjectId: null,
   projectChosen: false,
@@ -103,21 +126,86 @@ export function reducer(state: State, action: Action): State {
     case "frameworksLoading":
       return { ...state, frameworks: { status: "loading" } };
     case "frameworksLoaded": {
-      const items = action.frameworks;
-      const keep = items.some((f) => f.id === state.selectedId);
-      return {
-        ...state,
-        frameworks: { status: "ready", items },
-        selectedId: keep ? state.selectedId : (items[0]?.id ?? null),
-      };
+      // A list read before a delete still shows that framework live: the
+      // deleted copy held here stands in for it, or it is left out if there
+      // is none. One the read shows deleted is kept.
+      const held = loadedFrameworks(state);
+      return withItems(
+        state,
+        action.frameworks.flatMap((f) => {
+          if (f.deletedAt !== null || !state.deletedFrameworks.includes(f.id))
+            return [f];
+          const copy = held.find((h) => h.id === f.id && h.deletedAt !== null);
+          return copy === undefined ? [] : [copy];
+        }),
+      );
     }
+    case "deletedFrameworksPruned": {
+      // Drops deleted frameworks a fresh listing left out; everything else
+      // stays as it is here, so a save that landed during the read is kept.
+      if (state.frameworks.status !== "ready") return state;
+      const listed = new Set(action.listedIds);
+      const items = state.frameworks.items.filter(
+        (f) => f.deletedAt === null || listed.has(f.id),
+      );
+      if (items.length === state.frameworks.items.length) return state;
+      return withItems(state, items);
+    }
+    case "frameworkSaved": {
+      const { framework } = action;
+      // A save that finishes after a delete must not undo it; only a restore
+      // makes a deleted framework live again.
+      if (
+        state.deletedFrameworks.includes(framework.id) ||
+        (state.frameworks.status === "ready" &&
+          state.frameworks.items.some(
+            (f) => f.id === framework.id && f.deletedAt !== null,
+          ))
+      ) {
+        return state;
+      }
+      const next = withFramework(state, framework);
+      if (next === state) return state;
+      // Text in sections the framework still has stays; the rest is dropped.
+      const stored = state.drafts[framework.id];
+      if (stored === undefined) return next;
+      const kept = Object.fromEntries(
+        Object.entries(stored).filter(([key]) =>
+          framework.sections.some((s) => s.key === key),
+        ),
+      );
+      return { ...next, drafts: { ...next.drafts, [framework.id]: kept } };
+    }
+    case "frameworkDeleted": {
+      const { framework } = action;
+      const deletedFrameworks = state.deletedFrameworks.includes(framework.id)
+        ? state.deletedFrameworks
+        : [...state.deletedFrameworks, framework.id];
+      const next = { ...withFramework(state, framework), deletedFrameworks };
+      // A deleted framework's work is gone, so it no longer counts as text
+      // that opening an entry or leaving would lose.
+      const drafts = { ...state.drafts };
+      const titles = { ...state.titles };
+      const lastSaved = { ...state.lastSaved };
+      delete drafts[framework.id];
+      delete titles[framework.id];
+      delete lastSaved[framework.id];
+      return { ...next, drafts, titles, lastSaved };
+    }
+    case "frameworkRestored":
+      return {
+        ...withFramework(state, action.framework),
+        deletedFrameworks: state.deletedFrameworks.filter(
+          (id) => id !== action.framework.id,
+        ),
+      };
     case "frameworksFailed":
       return {
         ...state,
         frameworks: { status: "error", message: action.message },
       };
     case "selectFramework":
-      return loadedFrameworks(state).some((f) => f.id === action.id)
+      return liveFrameworks(state).some((f) => f.id === action.id)
         ? { ...state, selectedId: action.id }
         : state;
     case "editSection": {
@@ -139,6 +227,8 @@ export function reducer(state: State, action: Action): State {
     }
     case "viewChanged":
       return { ...state, view: action.view };
+    case "editingChanged":
+      return { ...state, editingFramework: action.editing };
     case "projectsLoaded": {
       // A list read after a create already has the project, and one read
       // before a delete still has that one.
@@ -214,7 +304,7 @@ export function reducer(state: State, action: Action): State {
       return { ...state, titles: { ...state.titles, [id]: action.value } };
     }
     case "entryOpened": {
-      const target = loadedFrameworks(state).find(
+      const target = liveFrameworks(state).find(
         (f) => f.id === action.entry.frameworkId,
       );
       if (target === undefined) return state;
@@ -293,12 +383,42 @@ function loadedProjects(state: State): Project[] {
   return state.projects.status === "ready" ? state.projects.items : [];
 }
 
+/** Lowercases A-Z only, as SQLite's NOCASE does. */
+function foldAscii(name: string): string {
+  return name.replace(/[A-Z]/g, (c) => c.toLowerCase());
+}
+
+/**
+ * Orders by code point, which is how SQLite's byte-wise comparison of UTF-8
+ * orders text; `<` would compare UTF-16 units and put a surrogate pair
+ * before U+E000 to U+FFFF.
+ */
+function compareCodePoints(a: string, b: string): number {
+  const x = a[Symbol.iterator]();
+  const y = b[Symbol.iterator]();
+  for (;;) {
+    const p = x.next();
+    const q = y.next();
+    if (p.done || q.done) return p.done === q.done ? 0 : p.done ? -1 : 1;
+    const d = p.value.codePointAt(0)! - q.value.codePointAt(0)!;
+    if (d !== 0) return d < 0 ? -1 : 1;
+  }
+}
+
+/** Orders by name ignoring ASCII case (as `COLLATE NOCASE` does), then by id. */
+function byNameThenId(
+  a: { name: string; id: string },
+  b: { name: string; id: string },
+): number {
+  return (
+    compareCodePoints(foldAscii(a.name), foldAscii(b.name)) ||
+    compareCodePoints(a.id, b.id)
+  );
+}
+
 /** Projects in name order, ignoring case, as the database lists them. */
 function sortProjects(projects: Project[]): Project[] {
-  const key = (p: Project) => p.name.toLowerCase();
-  return [...projects].sort((a, b) =>
-    key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : a.id < b.id ? -1 : 1,
-  );
+  return [...projects].sort(byNameThenId);
 }
 
 /**
@@ -332,8 +452,76 @@ function projectIfPresent(
   return id !== null && projects.some((p) => p.id === id) ? id : null;
 }
 
+/** Frameworks in list order: built-ins first, then name ignoring case, then id. */
+function sortFrameworks(frameworks: Framework[]): Framework[] {
+  return [...frameworks].sort((a, b) => {
+    if (a.isCustom !== b.isCustom) return a.isCustom ? 1 : -1;
+    return byNameThenId(a, b);
+  });
+}
+
+/**
+ * `state` with `framework` inserted or replacing the one with its id, in list
+ * order. The selection moves to the first live framework when the selected
+ * one is no longer live (or nothing was selected). Unchanged while the list
+ * isn't loaded: a load that starts later reads the change from the database.
+ */
+function withFramework(state: State, framework: Framework): State {
+  if (state.frameworks.status !== "ready") return state;
+  return withItems(
+    state,
+    sortFrameworks([
+      ...state.frameworks.items.filter((f) => f.id !== framework.id),
+      framework,
+    ]),
+  );
+}
+
+/**
+ * `state` with `items` as the loaded list. The selection stays if that
+ * framework is still live, else moves to the first live one.
+ */
+function withItems(state: State, items: Framework[]): State {
+  const live = items.filter((f) => f.deletedAt === null);
+  const keep = live.some((f) => f.id === state.selectedId);
+  return {
+    ...state,
+    frameworks: { status: "ready", items },
+    selectedId: keep ? state.selectedId : (live[0]?.id ?? null),
+  };
+}
+
 function loadedFrameworks(state: State): Framework[] {
   return state.frameworks.status === "ready" ? state.frameworks.items : [];
+}
+
+/** The loaded frameworks that haven't been deleted, in list order. */
+export function liveFrameworks(state: State): Framework[] {
+  return loadedFrameworks(state).filter((f) => f.deletedAt === null);
+}
+
+const filled = (text: string) => text.trim() !== "";
+
+/** True when the title or any section of the draft has non-blank text. */
+function hasText(
+  title: string | undefined,
+  draft: Record<string, string> | undefined,
+) {
+  return (
+    (title !== undefined && filled(title)) ||
+    (draft !== undefined && Object.values(draft).some(filled))
+  );
+}
+
+/** The keys among `keys` that have non-blank draft text for the framework. */
+export function draftTextIn(
+  state: State,
+  frameworkId: string,
+  keys: string[],
+): string[] {
+  if (!hasOwn(state.drafts, frameworkId)) return [];
+  const draft = state.drafts[frameworkId];
+  return keys.filter((key) => hasOwn(draft, key) && filled(draft[key]));
 }
 
 export function selectedFramework(state: State): Framework | null {
@@ -412,12 +600,17 @@ export function currentTitle(state: State): string {
 
 /** True when any framework has a non-blank section or title. */
 export function hasAnyDraftText(state: State): boolean {
-  const filled = (text: string) => text.trim() !== "";
   return (
     Object.values(state.titles).some(filled) ||
-    Object.values(state.drafts).some((draft) =>
-      Object.values(draft).some(filled),
-    )
+    Object.values(state.drafts).some((draft) => hasText(undefined, draft))
+  );
+}
+
+/** True when `frameworkId` has a section with text or a title in the Builder. */
+export function hasDraftFor(state: State, frameworkId: string): boolean {
+  return hasText(
+    hasOwn(state.titles, frameworkId) ? state.titles[frameworkId] : undefined,
+    hasOwn(state.drafts, frameworkId) ? state.drafts[frameworkId] : undefined,
   );
 }
 
@@ -431,14 +624,8 @@ export function openConflicts(
   entry: PromptEntry,
 ): { replacesDraft: boolean; changesProject: boolean } {
   const id = entry.frameworkId;
-  const filled = (text: string) => text.trim() !== "";
-  const replacesDraft =
-    id !== null &&
-    ((hasOwn(state.titles, id) && filled(state.titles[id])) ||
-      (hasOwn(state.drafts, id) &&
-        Object.values(state.drafts[id]).some(filled)));
   return {
-    replacesDraft,
+    replacesDraft: id !== null && hasDraftFor(state, id),
     changesProject:
       hasAnyDraftText(state) &&
       openedProject(state, entry) !== state.selectedProjectId,

@@ -1,5 +1,6 @@
 import { AppTabs } from "./components/AppTabs";
 import { FrameworkPicker } from "./components/FrameworkPicker";
+import { FrameworksView } from "./components/frameworks/FrameworksView";
 import { HistoryView } from "./components/history/HistoryView";
 import { LoadErrorPanel } from "./components/LoadErrorPanel";
 import { ProjectPicker } from "./components/ProjectPicker";
@@ -42,6 +43,7 @@ function Shell() {
       }
       builder={<Builder />}
       history={<HistoryView />}
+      frameworks={<FrameworksView />}
     />
   );
 }

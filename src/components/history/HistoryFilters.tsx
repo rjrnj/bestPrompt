@@ -105,9 +105,11 @@ export function HistoryFilters() {
   ];
   const frameworkOptions: Option[] = [
     { value: ALL, text: "All frameworks" },
+    // A deleted framework stays while it has prompts, and a new one may
+    // reuse its name, so it is marked.
     ...(frameworks.status === "ready" ? frameworks.items : []).map((f) => ({
       value: f.id,
-      text: f.name,
+      text: f.deletedAt === null ? f.name : `${f.name} (deleted)`,
     })),
   ];
 

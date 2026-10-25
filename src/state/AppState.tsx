@@ -16,15 +16,21 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import {
+  ApiError,
+  createFramework,
   createProject as createProjectCommand,
+  deleteFramework as deleteFrameworkCommand,
   deleteProject as deleteProjectCommand,
   latestEntryProject,
   listFrameworks,
   listProjects,
   renameProject as renameProjectCommand,
+  restoreFramework as restoreFrameworkCommand,
   savePromptEntry,
+  updateFramework,
 } from "../api";
 import type { Framework } from "../bindings/Framework";
+import type { FrameworkInput } from "../bindings/FrameworkInput";
 import type { NewPromptEntry } from "../bindings/NewPromptEntry";
 import type { Project } from "../bindings/Project";
 import { writeText } from "../clipboard";
@@ -49,6 +55,23 @@ export type AppActions = {
   renameProject: (id: string, name: string) => Promise<boolean>;
   /** Deletes a project. False, after a toast, when it fails. */
   deleteProject: (id: string) => Promise<boolean>;
+  /**
+   * Creates the framework (`id` null) or edits it, and keeps the list in step
+   * without reloading. Null, after a toast, when it fails.
+   */
+  saveFramework: (
+    id: string | null,
+    input: FrameworkInput,
+  ) => Promise<Framework | null>;
+  /** Deletes a framework. False, after a toast, when it fails. */
+  deleteFramework: (id: string) => Promise<boolean>;
+  /**
+   * Drops the deleted frameworks the backend no longer lists, which are the
+   * ones with no saved prompts left. Returns at once; stays quiet on failure.
+   */
+  pruneDeletedFrameworks: () => void;
+  /** Restores a deleted framework. Null, after a toast, when it fails. */
+  restoreFramework: (id: string) => Promise<Framework | null>;
 };
 
 const StateContext = createContext<State | null>(null);
@@ -175,6 +198,80 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [projectAction],
   );
 
+  /**
+   * Runs a framework command and dispatches the action for the framework it
+   * returns. On failure toasts and returns null; a framework that no longer
+   * exists gets its own words rather than the backend's.
+   */
+  const frameworkAction = useCallback(
+    async (
+      run: () => Promise<Framework>,
+      type: "frameworkSaved" | "frameworkDeleted" | "frameworkRestored",
+    ): Promise<Framework | null> => {
+      let framework: Framework;
+      try {
+        framework = await run();
+      } catch (error) {
+        const missing = error instanceof ApiError && error.kind === "notFound";
+        dispatch(
+          toast(
+            "error",
+            missing ? "That framework no longer exists." : messageOf(error),
+          ),
+        );
+        return null;
+      }
+      dispatch({ type, framework });
+      return framework;
+    },
+    [],
+  );
+
+  const saveFramework = useCallback(
+    (id: string | null, input: FrameworkInput) =>
+      frameworkAction(
+        () =>
+          id === null ? createFramework(input) : updateFramework(id, input),
+        "frameworkSaved",
+      ),
+    [frameworkAction],
+  );
+
+  const pruneDeletedFrameworks = useCallback(() => {
+    // The list leaves out a deleted framework that has no saved prompts, which
+    // the marked copy here doesn't show. Read the list again without waiting
+    // for it, and drop only the deleted frameworks it no longer has, so a save
+    // that lands meanwhile isn't undone. If the read fails, the list stays as
+    // it was.
+    listFrameworks().then(
+      (frameworks) =>
+        dispatch({
+          type: "deletedFrameworksPruned",
+          listedIds: frameworks.map((f) => f.id),
+        }),
+      () => {},
+    );
+  }, []);
+
+  const deleteFramework = useCallback(
+    async (id: string) => {
+      const deleted = await frameworkAction(
+        () => deleteFrameworkCommand(id),
+        "frameworkDeleted",
+      );
+      if (deleted === null) return false;
+      pruneDeletedFrameworks();
+      return true;
+    },
+    [frameworkAction, pruneDeletedFrameworks],
+  );
+
+  const restoreFramework = useCallback(
+    (id: string) =>
+      frameworkAction(() => restoreFrameworkCommand(id), "frameworkRestored"),
+    [frameworkAction],
+  );
+
   // True from the click that starts a copy or save until it has finished, so
   // the second click of a double click is ignored rather than saving twice.
   // The buttons only disable once `saving` renders, which is too late.
@@ -268,8 +365,23 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       createProject,
       renameProject,
       deleteProject,
+      saveFramework,
+      deleteFramework,
+      pruneDeletedFrameworks,
+      restoreFramework,
     }),
-    [loadFrameworks, copy, save, createProject, renameProject, deleteProject],
+    [
+      loadFrameworks,
+      copy,
+      save,
+      createProject,
+      renameProject,
+      deleteProject,
+      saveFramework,
+      deleteFramework,
+      pruneDeletedFrameworks,
+      restoreFramework,
+    ],
   );
 
   return (
