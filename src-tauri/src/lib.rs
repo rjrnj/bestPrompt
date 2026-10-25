@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod db;
+mod window;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -47,18 +48,21 @@ enum StartupError {
     Database(#[from] DbError),
 }
 
-/// Opens the database and puts it in managed state, then shows the main
-/// window, which `tauri.conf.json` creates hidden. If opening fails the
-/// window stays hidden, the user sees the error in a dialog, and the app
-/// exits when they dismiss it, so nothing ever runs against a missing
-/// database. Not a panic: the release build aborts on panic with no message
-/// at all.
+/// Opens the database and puts it in managed state, then fits the main
+/// window to the screen and shows it; `tauri.conf.json` creates it hidden.
+/// If opening fails the window stays hidden, the user sees the error in a
+/// dialog, and the app exits when they dismiss it, so nothing ever runs
+/// against a missing database. Not a panic: the release build aborts on
+/// panic with no message at all.
 fn open_database_or_exit(app: &mut App) {
     match open_database(app.handle()) {
         Ok(conn) => {
             app.manage(Db(Mutex::new(conn)));
             match app.get_webview_window("main") {
                 Some(window) => {
+                    if let Err(error) = window::fit_to_screen(&window) {
+                        log::warn!("could not fit the main window to the screen: {error}");
+                    }
                     if let Err(error) = window.show() {
                         log::error!("could not show the main window: {error}");
                     }

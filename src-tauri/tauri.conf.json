@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "bestPrompt",
-        "width": 960,
-        "height": 640,
+        "width": 1100,
+        "height": 1120,
         "minWidth": 760,
         "minHeight": 500,
         "visible": false
