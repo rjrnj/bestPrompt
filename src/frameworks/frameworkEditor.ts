@@ -5,7 +5,7 @@ import {
   parseTemplate,
   referencedKeys,
   removeSectionFromTemplate,
-  usedKeys,
+  unusedKeys,
   validateTemplate,
   type TemplateError,
 } from "../template";
@@ -412,11 +412,13 @@ export function hasErrors(errors: EditorErrors): boolean {
 
 /** Committed rows the hand-written template never uses; none while automatic or unparsable. */
 export function unusedRows(state: EditorState): number[] {
-  if (state.automatic || !parseTemplate(state.template).ok) return [];
-  const used = usedKeys(state.template);
-  return state.sections
-    .filter((s) => s.committed && !used.has(s.key))
-    .map((s) => s.id);
+  if (state.automatic) return [];
+  const committed = state.sections.filter((s) => s.committed);
+  const unused = unusedKeys(
+    state.template,
+    committed.map((s) => s.key),
+  );
+  return committed.filter((s) => unused.includes(s.key)).map((s) => s.id);
 }
 
 export function toInput(state: EditorState): FrameworkInput {

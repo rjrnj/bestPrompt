@@ -293,6 +293,19 @@ export function referencedKeys(template: string): Set<string> {
   return keysIn(template, true);
 }
 
+/**
+ * The keys among `keys` with no `{{key}}` placeholder in the template: their
+ * sections' text never reaches the prompt. None when the template does not
+ * parse, since which ones it leaves out can't be told then.
+ */
+export function unusedKeys(template: string, keys: string[]): string[] {
+  const parsed = parseTemplate(template);
+  if (!parsed.ok) return [];
+  const used = new Set<string>();
+  collectKeys(parsed.nodes, used, false);
+  return keys.filter((key) => !used.has(key));
+}
+
 /** A section's `{{key}}` placeholder or `{{#key}}…{{/key}}` block, from `start` to `end`. */
 type Piece = {
   start: number;

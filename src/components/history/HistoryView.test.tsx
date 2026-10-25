@@ -202,6 +202,29 @@ describe("HistoryView list pane", () => {
     expect(screen.getAllByRole("option", { name: "Review" })).toHaveLength(1);
   });
 
+  it("filtering_by_a_deleted_framework_lists_its_entries", async () => {
+    const custom = { ...rtf, isCustom: true, name: "Review" };
+    vi.mocked(listFrameworks).mockResolvedValue([
+      rtf,
+      { ...custom, id: "old", deletedAt: 5 },
+    ]);
+    vi.mocked(listPromptEntries).mockImplementation(async (query) =>
+      query.frameworkId === "old" ? [entry("o1", { frameworkId: "old" })] : [],
+    );
+    renderView();
+    const user = userEvent.setup();
+
+    await user.click(
+      await screen.findByRole("combobox", { name: "Framework" }),
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "Review (deleted)" }),
+    );
+
+    await waitFor(() => expect(lastQuery()?.frameworkId).toBe("old"));
+    expect(await screen.findByText("task o1")).toBeInTheDocument();
+  });
+
   it("show_more_loads_the_next_page", async () => {
     vi.mocked(listPromptEntries)
       .mockResolvedValueOnce(page(PAGE_SIZE))

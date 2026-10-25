@@ -1,11 +1,16 @@
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
-import { useId } from "react";
+import { useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import type { Framework } from "../../bindings/Framework";
 import type { PromptEntry } from "../../bindings/PromptEntry";
-import { useAppDispatch, useAppState } from "../../state/AppState";
+import {
+  useAppActions,
+  useAppDispatch,
+  useAppState,
+} from "../../state/AppState";
 import {
   listedProjects,
-  liveFrameworks,
+  loadedFrameworks,
   openConflicts,
   openedProject,
   unplacedSections,
@@ -23,16 +28,23 @@ import { TITLE_INPUT_ID } from "../TitleField";
 
 /**
  * Loads a saved prompt into the Builder as a new draft. Asks first when that
- * would replace the framework's draft or move the drafts to another project;
- * unavailable when the entry's framework is no longer loaded or was deleted.
+ * would replace the framework's draft or move the drafts to another project.
+ * When the entry's framework was deleted, the same dialog offers to bring it
+ * back first. Unavailable when the framework is no longer loaded.
  */
 export function OpenInBuilder({ entry }: { entry: PromptEntry }) {
   const state = useAppState();
   const dispatch = useAppDispatch();
+  const { restoreFramework } = useAppActions();
   const noteId = useId();
+  const [bringingBack, setBringingBack] = useState(false);
+  // True from the click that starts a bring-back until it has finished; the
+  // button only disables once `bringingBack` renders, which is too late for
+  // the second click of a double click.
+  const running = useRef(false);
 
   const framework =
-    liveFrameworks(state).find((f) => f.id === entry.frameworkId) ?? null;
+    loadedFrameworks(state).find((f) => f.id === entry.frameworkId) ?? null;
 
   if (framework === null) {
     return (
@@ -65,12 +77,18 @@ export function OpenInBuilder({ entry }: { entry: PromptEntry }) {
       : (listedProjects(state).find((p) => p.id === target)?.name ??
         "this prompt's project");
 
-  function open() {
+  const deleted = framework.deletedAt !== null;
+  // Taken here, where the framework is known to be loaded; the async
+  // function below can't rely on that check.
+  const { id: frameworkId, name: shownName } = framework;
+
+  /** Opens the entry into `live`: the framework itself, or as brought back. */
+  function open(live: Framework) {
     // Rendered at once, so the Builder's title is showing to take focus;
     // this button goes away with the History tab.
     flushSync(() => dispatch({ type: "entryOpened", entry }));
     document.getElementById(TITLE_INPUT_ID)?.focus();
-    const unplaced = unplacedSections(entry, framework);
+    const unplaced = unplacedSections(entry, live);
     if (unplaced.length > 0) {
       dispatch({
         type: "toastAdded",
@@ -80,9 +98,34 @@ export function OpenInBuilder({ entry }: { entry: PromptEntry }) {
     }
   }
 
-  if (!replacesDraft && !changesProject) {
+  async function bringBackAndOpen() {
+    if (running.current) return;
+    running.current = true;
+    setBringingBack(true);
+    try {
+      const restored = await restoreFramework(frameworkId);
+      if (restored === null) return;
+      open(restored);
+      if (restored.name !== shownName) {
+        dispatch({
+          type: "toastAdded",
+          kind: "info",
+          message: `Brought back as ${restored.name}.`,
+        });
+      }
+    } finally {
+      running.current = false;
+      setBringingBack(false);
+    }
+  }
+
+  if (!deleted && !replacesDraft && !changesProject) {
     return (
-      <button type="button" className={primaryButton} onClick={open}>
+      <button
+        type="button"
+        className={primaryButton}
+        onClick={() => open(framework)}
+      >
         Open in Builder
       </button>
     );
@@ -91,7 +134,14 @@ export function OpenInBuilder({ entry }: { entry: PromptEntry }) {
   return (
     <AlertDialog.Root>
       <AlertDialog.Trigger asChild>
-        <button type="button" className={primaryButton}>
+        <button
+          type="button"
+          aria-disabled={bringingBack || undefined}
+          className={primaryButton}
+          onClick={(event) => {
+            if (bringingBack) event.preventDefault();
+          }}
+        >
           Open in Builder
         </button>
       </AlertDialog.Trigger>
@@ -99,10 +149,16 @@ export function OpenInBuilder({ entry }: { entry: PromptEntry }) {
         <AlertDialog.Overlay className={dialogOverlay} />
         <AlertDialog.Content className={dialogPanel}>
           <AlertDialog.Title className={dialogTitle}>
-            Open in Builder?
+            {deleted ? `Bring back ${framework.name}?` : "Open in Builder?"}
           </AlertDialog.Title>
           <AlertDialog.Description asChild>
             <div className={`${dialogDescription} flex flex-col gap-1`}>
+              {deleted && (
+                <p>
+                  {framework.name} was deleted. Bring it back and open this
+                  prompt?
+                </p>
+              )}
               {replacesDraft && (
                 <p>Your current {framework.name} draft will be replaced.</p>
               )}
@@ -118,8 +174,12 @@ export function OpenInBuilder({ entry }: { entry: PromptEntry }) {
               </button>
             </AlertDialog.Cancel>
             <AlertDialog.Action asChild>
-              <button type="button" className={primaryButton} onClick={open}>
-                Open
+              <button
+                type="button"
+                className={primaryButton}
+                onClick={deleted ? bringBackAndOpen : () => open(framework)}
+              >
+                {deleted ? "Bring back and open" : "Open"}
               </button>
             </AlertDialog.Action>
           </div>

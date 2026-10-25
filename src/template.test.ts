@@ -7,6 +7,7 @@ import {
   renderTemplate,
   TemplateSyntaxError,
   referencedKeys,
+  unusedKeys,
   usedKeys,
   validateTemplate,
 } from "./template";
@@ -389,6 +390,23 @@ describe("referencedKeys", () => {
 
   it("is empty when the template does not parse", () => {
     expect(referencedKeys("{{a}} {{#b}}")).toEqual(new Set());
+  });
+});
+
+describe("unusedKeys", () => {
+  it("lists the keys with no placeholder, in the order given", () => {
+    expect(unusedKeys("{{#b}}x {{c}}{{/b}}", ["c", "a", "b"])).toEqual([
+      "a",
+      "b",
+    ]);
+  });
+
+  it("is empty when every key has a placeholder", () => {
+    expect(unusedKeys("{{a}} {{#x}}{{b}}{{/x}}", ["a", "b"])).toEqual([]);
+  });
+
+  it("is empty when the template does not parse", () => {
+    expect(unusedKeys("{{a}} {{#b}}", ["a", "c"])).toEqual([]);
   });
 });
 

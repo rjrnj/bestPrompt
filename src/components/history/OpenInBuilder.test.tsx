@@ -3,10 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  ApiError,
   latestEntryProject,
   listFrameworks,
   listProjects,
   listPromptEntries,
+  restoreFramework,
 } from "../../api";
 import type { Framework } from "../../bindings/Framework";
 import type { Project } from "../../bindings/Project";
@@ -19,6 +21,7 @@ import {
 import { HistoryProvider } from "../../state/HistoryState";
 import type { Action } from "../../state/reducer";
 import { Toaster } from "../Toaster";
+import { TitleField } from "../TitleField";
 import { HistoryView } from "./HistoryView";
 
 // Only the commands are mocked; ApiError stays the real class.
@@ -28,6 +31,7 @@ vi.mock("../../api", async (importOriginal) => ({
   listProjects: vi.fn(),
   latestEntryProject: vi.fn(),
   listPromptEntries: vi.fn(),
+  restoreFramework: vi.fn(),
 }));
 vi.mock("../../clipboard", () => ({ writeText: vi.fn() }));
 
@@ -107,6 +111,11 @@ function Probe() {
   );
 }
 
+/** History is only mounted on its own tab, as in the app. */
+function HistoryTab() {
+  return useAppState().view === "history" ? <HistoryView /> : null;
+}
+
 const probe = () =>
   JSON.parse(screen.getByTestId("probe").textContent ?? "{}") as {
     view: string;
@@ -128,8 +137,9 @@ async function renderOpen(
           actions={[...seed, { type: "viewChanged", view: "history" }]}
           projectsLoading={projectsLoading}
         />
-        <HistoryView />
+        <HistoryTab />
         <Probe />
+        <TitleField />
         <Toaster />
       </HistoryProvider>
     </AppStateProvider>,
@@ -277,9 +287,148 @@ describe("OpenInBuilder", () => {
     expect(probe().drafts.rtf).not.toHaveProperty("format");
   });
 
-  it("is_unavailable_when_the_framework_was_deleted", async () => {
-    vi.mocked(listFrameworks).mockResolvedValue([{ ...rtf, deletedAt: 5 }]);
-    const user = await renderOpen(saved);
+  describe("a deleted framework", () => {
+    const gone: Framework = { ...rtf, deletedAt: 5 };
+
+    beforeEach(() => {
+      vi.mocked(listFrameworks).mockResolvedValue([gone]);
+    });
+
+    async function openDialog(entry: PromptEntry, seed: Action[] = []) {
+      const user = await renderOpen(entry, seed);
+      await user.click(openButton());
+      const dialog = await screen.findByRole("alertdialog");
+      return { user, dialog };
+    }
+
+    it("open_in_builder_offers_to_bring_back_a_deleted_framework", async () => {
+      const { dialog } = await openDialog(saved);
+
+      expect(within(dialog).getByText("Bring back RTF?")).toBeInTheDocument();
+      expect(
+        within(dialog).getByText(
+          "RTF was deleted. Bring it back and open this prompt?",
+        ),
+      ).toBeInTheDocument();
+      expect(
+        within(dialog).getByRole("button", { name: "Bring back and open" }),
+      ).toBeInTheDocument();
+      expect(
+        within(dialog).getByRole("button", { name: "Cancel" }),
+      ).toBeInTheDocument();
+      expect(within(dialog).queryByText(/will be replaced/)).toBeNull();
+      expect(within(dialog).queryByText(/filed under/)).toBeNull();
+      expect(probe().view).toBe("history");
+    });
+
+    it("bringing_back_restores_then_opens_the_entry", async () => {
+      vi.mocked(restoreFramework).mockResolvedValue(rtf);
+      const { user, dialog } = await openDialog(saved);
+      await user.click(
+        within(dialog).getByRole("button", { name: "Bring back and open" }),
+      );
+
+      await waitFor(() => expect(probe().view).toBe("builder"));
+      expect(restoreFramework).toHaveBeenCalledExactlyOnceWith("rtf");
+      expect(probe().drafts.rtf).toEqual({
+        role: "Reviewer",
+        task: "Fix the login bug",
+      });
+      expect(probe().titles.rtf).toBe("Login fix");
+      const title = screen.getByRole("textbox", { name: "Title" });
+      expect(title).toHaveValue("Login fix");
+      expect(title).toHaveFocus();
+    });
+
+    it("bringing_back_a_renamed_framework_says_its_new_name", async () => {
+      vi.mocked(restoreFramework).mockResolvedValue({
+        ...rtf,
+        name: "RTF (2)",
+      });
+      const { user, dialog } = await openDialog(saved);
+      await user.click(
+        within(dialog).getByRole("button", { name: "Bring back and open" }),
+      );
+
+      expect(
+        await screen.findByText("Brought back as RTF (2)."),
+      ).toBeInTheDocument();
+      await waitFor(() => expect(probe().view).toBe("builder"));
+    });
+
+    it("a_failed_restore_opens_nothing", async () => {
+      vi.mocked(restoreFramework).mockRejectedValue(
+        new ApiError("database", "disk is full"),
+      );
+      const { user, dialog } = await openDialog(saved);
+      await user.click(
+        within(dialog).getByRole("button", { name: "Bring back and open" }),
+      );
+
+      expect(await screen.findByText(/disk is full/)).toBeInTheDocument();
+      expect(probe().view).toBe("history");
+      expect(probe().drafts).toEqual({});
+      await waitFor(() =>
+        expect(openButton()).not.toHaveAttribute("aria-disabled"),
+      );
+    });
+
+    it("the_button_is_unavailable_while_bringing_back", async () => {
+      vi.mocked(restoreFramework).mockReturnValue(new Promise(() => {}));
+      const { user, dialog } = await openDialog(saved);
+      await user.click(
+        within(dialog).getByRole("button", { name: "Bring back and open" }),
+      );
+
+      await waitFor(() =>
+        expect(openButton()).toHaveAttribute("aria-disabled", "true"),
+      );
+      await user.click(openButton());
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      expect(restoreFramework).toHaveBeenCalledTimes(1);
+    });
+
+    it("cancelling_brings_nothing_back", async () => {
+      const { user, dialog } = await openDialog(saved);
+      await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      expect(restoreFramework).not.toHaveBeenCalled();
+      expect(probe().view).toBe("history");
+    });
+
+    it("the_dialog_also_names_a_project_change", async () => {
+      const other: Framework = {
+        ...rtf,
+        id: "other",
+        name: "Other",
+        sections: [{ key: "a", label: "A", helpText: "" }],
+      };
+      vi.mocked(listFrameworks).mockResolvedValue([gone, other]);
+      vi.mocked(restoreFramework).mockResolvedValue(rtf);
+      const { user, dialog } = await openDialog(saved, [
+        { type: "selectFramework", id: "other" },
+        { type: "editSection", key: "a", value: "work in progress" },
+        { type: "projectSelected", id: api.id },
+      ]);
+
+      expect(within(dialog).getByText("Bring back RTF?")).toBeInTheDocument();
+      expect(
+        within(dialog).getByText(
+          "Your unsaved drafts will be filed under No project.",
+        ),
+      ).toBeInTheDocument();
+
+      await user.click(
+        within(dialog).getByRole("button", { name: "Bring back and open" }),
+      );
+      await waitFor(() => expect(probe().view).toBe("builder"));
+      expect(probe().project).toBeNull();
+    });
+  });
+
+  it("an_entry_without_a_framework_stays_unavailable", async () => {
+    const user = await renderOpen({ ...saved, frameworkId: null });
     const button = openButton();
 
     expect(button).toHaveAttribute("aria-disabled", "true");
@@ -290,6 +439,7 @@ describe("OpenInBuilder", () => {
     ).toBeInTheDocument();
     await user.click(button);
     expect(probe().view).toBe("history");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
   it("is_unavailable_when_the_framework_is_gone", async () => {
