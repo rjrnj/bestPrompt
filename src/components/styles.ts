@@ -4,13 +4,19 @@
 // click handlers ignore clicks: a disabled button drops keyboard focus to the
 // page, and some disable themselves on use (Clear always, Copy and Save
 // while saving, Create while the project is being created).
-const button =
-  "rounded-md px-3 py-1 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 aria-disabled:cursor-not-allowed aria-disabled:opacity-50";
+// Padding stays out of the shared part: a later px-0 wouldn't override it.
+const buttonBase =
+  "rounded-md text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 aria-disabled:cursor-not-allowed aria-disabled:opacity-50";
+const button = `${buttonBase} px-3 py-1`;
+const secondary =
+  "border border-slate-400 bg-white text-slate-900 not-aria-disabled:hover:bg-slate-100 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:not-aria-disabled:hover:bg-slate-700";
 // sky-700, red-700 and darker keep white text above 4.5:1 at rest and on
 // hover (about 5.9 and 6.4 to 1); sky-600 would fall below it. The dark
 // theme keeps the same fills, stated so that they are a choice for it too.
 export const primaryButton = `${button} bg-sky-700 text-white not-aria-disabled:hover:bg-sky-800 dark:bg-sky-700 dark:text-white dark:not-aria-disabled:hover:bg-sky-800`;
-export const secondaryButton = `${button} border border-slate-400 bg-white text-slate-900 not-aria-disabled:hover:bg-slate-100 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:not-aria-disabled:hover:bg-slate-700`;
+export const secondaryButton = `${button} ${secondary}`;
+/** A square secondary button holding only an icon. */
+export const iconButton = `${buttonBase} ${secondary} flex size-7 items-center justify-center`;
 export const dangerButton = `${button} bg-red-700 text-white not-aria-disabled:hover:bg-red-800 dark:bg-red-700 dark:text-white dark:not-aria-disabled:hover:bg-red-800`;
 
 export const fieldLabel =

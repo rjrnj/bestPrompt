@@ -18,6 +18,7 @@ import { Arrow, Grip } from "../icons";
 import {
   errorText,
   fieldLabel,
+  iconButton,
   linkButton,
   secondaryButton,
   textInput,
@@ -29,8 +30,6 @@ type Props = {
   /** Shown once Save has been tried; null before. */
   errors: EditorErrors | null;
 };
-
-const iconButton = `${secondaryButton} flex size-7 items-center justify-center px-0 py-0`;
 
 /**
  * The framework's sections, one row each, then Add section. Rows move with
