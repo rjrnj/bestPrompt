@@ -491,7 +491,7 @@ function withItems(state: State, items: Framework[]): State {
   };
 }
 
-function loadedFrameworks(state: State): Framework[] {
+export function loadedFrameworks(state: State): Framework[] {
   return state.frameworks.status === "ready" ? state.frameworks.items : [];
 }
 
