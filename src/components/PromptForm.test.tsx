@@ -18,12 +18,17 @@ vi.mock("../api", async (importOriginal) => ({
   listFrameworks: vi.fn(),
 }));
 
-function framework(id: string, sections: Section[]): Framework {
+/** A framework whose template, unless given, uses every section. */
+function framework(
+  id: string,
+  sections: Section[],
+  template = sections.map((section) => `{{${section.key}}}`).join("\n"),
+): Framework {
   return {
     id,
     name: id.toUpperCase(),
     description: "",
-    template: "",
+    template,
     summaryKey: null,
     isCustom: false,
     deletedAt: null,
@@ -32,6 +37,9 @@ function framework(id: string, sections: Section[]): Framework {
     updatedAt: 1,
   };
 }
+
+const NOTE =
+  "Not in this framework's template, so this text won't appear in the prompt.";
 
 const costar = framework("costar", [
   { key: "context", label: "Context", helpText: "Background the model needs." },
@@ -176,6 +184,74 @@ describe("PromptForm", () => {
     expect(
       screen.getByRole("textbox", { name: "Task" }),
     ).toHaveAccessibleDescription("What to do.");
+  });
+
+  it("an_unused_section_shows_the_note", async () => {
+    const custom = framework(
+      "custom",
+      [
+        { key: "role", label: "Role", helpText: "Who answers." },
+        { key: "task", label: "Task", helpText: "" },
+      ],
+      "Act as {{role}}.",
+    );
+    await renderForm([custom]);
+
+    const task = screen.getByRole("textbox", { name: "Task" });
+    expect(task).toHaveAccessibleDescription(NOTE);
+    expect(screen.getAllByText(NOTE)).toHaveLength(1);
+    expect(
+      screen.getByRole("textbox", { name: "Role" }),
+    ).toHaveAccessibleDescription("Who answers.");
+  });
+
+  it("lists the note after the help text in the description", async () => {
+    const custom = framework(
+      "custom",
+      [{ key: "task", label: "Task", helpText: "What to do." }],
+      "",
+    );
+    await renderForm([custom]);
+
+    expect(
+      screen.getByRole("textbox", { name: "Task" }),
+    ).toHaveAccessibleDescription(`What to do. ${NOTE}`);
+  });
+
+  it("used_sections_have_no_note", async () => {
+    await renderForm();
+
+    expect(screen.queryByText(NOTE)).toBeNull();
+  });
+
+  it("shows the note for a section only a block refers to", async () => {
+    const custom = framework(
+      "custom",
+      [
+        { key: "role", label: "Role", helpText: "" },
+        { key: "task", label: "Task", helpText: "" },
+      ],
+      "{{#role}}Act as someone.{{/role}} {{task}}",
+    );
+    await renderForm([custom]);
+
+    expect(
+      screen.getByRole("textbox", { name: "Role" }),
+    ).toHaveAccessibleDescription(NOTE);
+    expect(screen.getByRole("textbox", { name: "Task" })).not.toHaveAttribute(
+      "aria-describedby",
+    );
+  });
+
+  it("shows no note when the template does not parse", async () => {
+    const custom = framework(
+      "custom",
+      [{ key: "role", label: "Role", helpText: "" }],
+      "{{role",
+    );
+    await renderForm([custom]);
+
+    expect(screen.queryByText(NOTE)).toBeNull();
   });
 
   it("renders nothing until a framework is selected", () => {

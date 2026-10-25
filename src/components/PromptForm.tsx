@@ -1,5 +1,6 @@
 import { useAppDispatch, useAppState } from "../state/AppState";
 import { currentDraft, selectedFramework } from "../state/reducer";
+import { unusedKeys } from "../template";
 import { SectionField } from "./SectionField";
 import { TitleField } from "./TitleField";
 
@@ -13,6 +14,10 @@ export function PromptForm() {
   const framework = selectedFramework(state);
   if (framework === null) return null;
   const draft = currentDraft(state);
+  const unused = unusedKeys(
+    framework.template,
+    framework.sections.map((s) => s.key),
+  );
 
   // Keyed by framework so a switch mounts fresh fields: section keys repeat
   // across frameworks (`role` in three built-ins), and a reused textarea
@@ -25,6 +30,7 @@ export function PromptForm() {
           key={section.key}
           section={section}
           value={draft[section.key]}
+          unused={unused.includes(section.key)}
           onChange={(value) =>
             dispatch({ type: "editSection", key: section.key, value })
           }
