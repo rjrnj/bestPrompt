@@ -15,7 +15,13 @@ import {
   type EditorState,
 } from "../../frameworks/frameworkEditor";
 import { Arrow, Grip } from "../icons";
-import { fieldLabel, linkButton, secondaryButton, textInput } from "../styles";
+import {
+  errorText,
+  fieldLabel,
+  linkButton,
+  secondaryButton,
+  textInput,
+} from "../styles";
 
 type Props = {
   editor: EditorState;
@@ -24,7 +30,6 @@ type Props = {
   errors: EditorErrors | null;
 };
 
-const errorText = "text-xs text-red-700 dark:text-red-400";
 const iconButton = `${secondaryButton} flex size-7 items-center justify-center px-0 py-0`;
 
 /**
@@ -114,7 +119,11 @@ export function SectionRows({ editor, dispatch, errors }: Props) {
           />
         ))}
       </ol>
-      {errors?.sections && <p className={errorText}>{errors.sections}</p>}
+      {errors?.sections && (
+        <p tabIndex={-1} data-error="sections" className={errorText}>
+          {errors.sections}
+        </p>
+      )}
       {!readOnly && (
         <button
           type="button"
@@ -262,6 +271,7 @@ function SectionRow({
             </p>
             <button
               type="button"
+              aria-label={`Add to end of template: ${name}`}
               className={linkButton}
               onClick={() =>
                 dispatch({ type: "sectionAppendedToTemplate", row })
@@ -303,6 +313,9 @@ function SectionRow({
             data-focus={`remove-${row}`}
             aria-label={`Remove ${name}`}
             className={secondaryButton}
+            // A typed label is confirmed when the field is left by keyboard,
+            // not by a click on this button: it would be added and cut again.
+            onMouseDown={(event) => event.preventDefault()}
             onClick={onRemove}
           >
             Remove

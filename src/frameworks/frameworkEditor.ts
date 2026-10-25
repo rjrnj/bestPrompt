@@ -3,6 +3,7 @@ import type { FrameworkInput } from "../bindings/FrameworkInput";
 import type { Section } from "../bindings/Section";
 import {
   parseTemplate,
+  referencedKeys,
   removeSectionFromTemplate,
   usedKeys,
   validateTemplate,
@@ -10,7 +11,7 @@ import {
 } from "../template";
 import { autoTemplate, isAutomatic, sectionBlock } from "./autoTemplate";
 import { keyFromLabel } from "./keys";
-import { uniqueName } from "./names";
+import { nameKey, uniqueName } from "./names";
 
 // The working copy of one framework in the editor. `row` in every action is an
 // `EditorSection.id`, which stays the same while rows move and others go.
@@ -30,9 +31,12 @@ export type EditorState = {
   /** What is saved; regenerated from the sections while automatic. */
   template: string;
   automatic: boolean;
-  notes: string[];
+  /** Messages about hand-edited templates, each tied to the row it names. */
+  notes: { row: number; text: string }[];
   /** Offsets in the template to check after a removal. */
   spots: number[];
+  /** Keys of the sections removed since the last save, not to be given out again. */
+  removedKeys: string[];
   nextRowId: number;
   /** The last saved copy, for `isDirty`. */
   saved: EditorState | null;
@@ -60,6 +64,14 @@ export type EditorErrors = {
   template?: TemplateError[];
 };
 
+/** Whether a label holds a template delimiter. */
+export function hasBraces(label: string): boolean {
+  return label.includes("{{") || label.includes("}}");
+}
+
+export const BRACE_LABEL_ERROR =
+  "A label can't contain {{ or }}, so the template can't be built while it does.";
+
 /** The sections as they are saved: committed rows only, labels trimmed. */
 function savedSections(sections: EditorSection[]): Section[] {
   return sections
@@ -69,6 +81,11 @@ function savedSections(sections: EditorSection[]): Section[] {
       label: label.trim(),
       helpText,
     }));
+}
+
+/** The sections as they are saved, from `state`. */
+export function committedSections(state: EditorState): Section[] {
+  return savedSections(state.sections);
 }
 
 function rowOf(
@@ -91,6 +108,7 @@ function fromFramework(framework: Framework, readOnly: boolean): EditorState {
     automatic: isAutomatic(framework.template, framework.sections),
     notes: [],
     spots: [],
+    removedKeys: [],
     nextRowId: framework.sections.length,
     saved: null,
   };
@@ -114,6 +132,7 @@ export function blankEditor(): EditorState {
     automatic: true,
     notes: [],
     spots: [],
+    removedKeys: [],
     nextRowId: 1,
     saved: null,
   };
@@ -128,10 +147,22 @@ export function copyOf(framework: Framework, taken: string[]): EditorState {
   };
 }
 
+/**
+ * The template generated from the sections, or null while a section's label
+ * holds braces: the text would not parse, so the previous template stays
+ * until the label is fixed.
+ */
+function generated(state: EditorState): string | null {
+  const sections = savedSections(state.sections);
+  if (sections.some((s) => hasBraces(s.label))) return null;
+  return autoTemplate(sections);
+}
+
 /** Regenerates the template from the sections while it is automatic. */
 function followSections(state: EditorState): EditorState {
   if (!state.automatic) return state;
-  return { ...state, template: autoTemplate(savedSections(state.sections)) };
+  const template = generated(state);
+  return template === null ? state : { ...state, template };
 }
 
 function appendBlock(template: string, section: Section): string {
@@ -143,29 +174,57 @@ function removeRow(state: EditorState, row: number): EditorState {
   const target = state.sections.find((s) => s.id === row);
   if (!target) return state;
   const sections = state.sections.filter((s) => s.id !== row);
-  const next: EditorState = { ...state, sections };
+  const next: EditorState = {
+    ...state,
+    sections,
+    notes: state.notes.filter((n) => n.row !== row),
+  };
   if (!target.committed) return next;
 
   if (state.summaryKey === target.key) {
     next.summaryKey = sections.find((s) => s.committed)?.key ?? null;
   }
-  if (state.automatic) return followSections(next);
-  const removal = removeSectionFromTemplate(state.template, {
-    key: target.key,
-    label: target.label.trim(),
-    helpText: target.helpText,
-  });
-  return { ...next, template: removal.template, spots: removal.spots };
+  let result: EditorState | null = null;
+  if (state.automatic) {
+    const template = generated(next);
+    if (template !== null) result = { ...next, template };
+    // Not regenerated while a label holds braces, so cut the block out below.
+  }
+  if (!result) {
+    const removal = removeSectionFromTemplate(
+      state.template,
+      target.key,
+      state.spots,
+    );
+    result = { ...next, template: removal.template, spots: removal.spots };
+  }
+  // Only a key the template may still hold stays reserved, and that is only
+  // in text that doesn't parse. A template that parses has had every
+  // placeholder and block of the key taken out, leaving nothing to collide
+  // with.
+  if (!parseTemplate(result.template).ok) {
+    result.removedKeys = [...state.removedKeys, target.key];
+  }
+  return result;
 }
 
 function commitLabel(state: EditorState, row: number): EditorState {
   const target = state.sections.find((s) => s.id === row);
   const label = target?.label.trim() ?? "";
   if (!target || target.committed || label === "") return state;
+  // Left as it is: the row stays uncommitted and the label is flagged.
+  if (hasBraces(label)) return state;
 
-  const taken = new Set(
-    state.sections.filter((s) => s.id !== row).map((s) => s.key),
-  );
+  // Within one editing session a new section never takes a key that was in
+  // use: not one the stored framework still has, nor one of a section
+  // removed since, which a template that doesn't parse may still hold. Once
+  // a removal is saved, its key may be given out again, so a re-added
+  // section with the same label picks up old History text by design.
+  const taken = new Set([
+    ...state.sections.filter((s) => s.id !== row).map((s) => s.key),
+    ...(state.saved?.sections ?? []).map((s) => s.key),
+    ...state.removedKeys,
+  ]);
   const committed = {
     ...target,
     key: keyFromLabel(label, taken),
@@ -177,12 +236,32 @@ function commitLabel(state: EditorState, row: number): EditorState {
     summaryKey: state.summaryKey ?? committed.key,
   };
   if (state.automatic) return followSections(next);
+  // A template that doesn't parse can't be searched for the key, so adding
+  // a block could repeat one the user already typed.
+  if (!parseTemplate(state.template).ok) {
+    return {
+      ...next,
+      notes: [
+        ...state.notes,
+        {
+          row,
+          text: `${label} wasn't added to the template because the template has an error. Fix it, then use "Add to end of template" if you need it.`,
+        },
+      ],
+    };
+  }
+  // The template already has a placeholder or block for this key, typed by
+  // hand: it now belongs to the section, and a second block would repeat it.
+  if (referencedKeys(state.template).has(committed.key)) return next;
   return {
     ...next,
     template: appendBlock(state.template, { ...committed, label }),
     notes: [
       ...state.notes,
-      `${label} was added to the end of the template. Move or reword it as you like.`,
+      {
+        row,
+        text: `${label} was added to the end of the template. Move or reword it as you like.`,
+      },
     ],
   };
 }
@@ -244,15 +323,19 @@ export function editorReducer(
       const target = state.sections.find((s) => s.id === action.row);
       return target?.committed ? { ...state, summaryKey: target.key } : state;
     }
-    case "modeChanged":
+    case "modeChanged": {
       if (!action.automatic) return { ...state, automatic: false };
+      // The template can't be rebuilt while a label holds braces.
+      const template = generated(state);
+      if (template === null) return state;
       return {
         ...state,
         automatic: true,
-        template: autoTemplate(savedSections(state.sections)),
+        template,
         notes: [],
         spots: [],
       };
+    }
     case "templateEdited":
       // The mode stays the user's choice while editing: landing on the
       // generated text must not switch the editor away under the cursor.
@@ -260,6 +343,7 @@ export function editorReducer(
     case "sectionAppendedToTemplate": {
       const target = state.sections.find((s) => s.id === action.row);
       if (!target?.committed || state.automatic) return state;
+      if (hasBraces(target.label)) return state;
       return {
         ...state,
         template: appendBlock(state.template, {
@@ -283,10 +367,10 @@ export function validate(
 ): EditorErrors {
   const errors: EditorErrors = { labels: {} };
 
-  const name = state.name.trim().toLowerCase();
+  const name = nameKey(state.name);
   if (name === "") {
     errors.name = "Give the framework a name.";
-  } else if (liveNames.some((n) => n.trim().toLowerCase() === name)) {
+  } else if (liveNames.some((n) => nameKey(n) === name)) {
     errors.name = "Another framework already has this name.";
   }
 
@@ -296,11 +380,13 @@ export function validate(
 
   const seen = new Set<string>();
   for (const section of state.sections) {
+    // Save drops a blank row nobody confirmed, so it has nothing to flag.
+    if (isUnusedRow(section)) continue;
     const label = section.label.trim();
     if (label === "") {
       errors.labels[section.id] = "Give the section a label.";
-    } else if (label.includes("{{") || label.includes("}}")) {
-      errors.labels[section.id] = "A label can't contain {{ or }}.";
+    } else if (hasBraces(label)) {
+      errors.labels[section.id] = BRACE_LABEL_ERROR;
     } else if (seen.has(label.toLowerCase())) {
       errors.labels[section.id] = "Another section already has this label.";
     } else {
@@ -344,40 +430,64 @@ export function toInput(state: EditorState): FrameworkInput {
   };
 }
 
+/** Blank rows nobody has committed: adding one changes nothing worth saving. */
+function isUnusedRow(s: EditorSection): boolean {
+  return !s.committed && s.label.trim() === "" && s.helpText.trim() === "";
+}
+
 function content(state: EditorState): string {
   return JSON.stringify([
     state.name,
     state.description,
-    state.sections.map((s) => [s.key, s.label, s.helpText, s.committed]),
+    state.sections
+      .filter((s) => !isUnusedRow(s))
+      .map((s) => [s.key, s.label, s.helpText, s.committed]),
     state.summaryKey,
     state.template,
   ]);
 }
 
-/** Whether the content differs from the last saved copy (or from a blank editor if never saved). */
+/**
+ * Whether the content differs from the last saved copy. Never saved, it is
+ * dirty once it holds anything worth keeping: a name or description, a
+ * committed row or one with a label or help text, or a template. Adding or
+ * removing empty rows doesn't count.
+ */
 export function isDirty(state: EditorState): boolean {
-  return content(state) !== content(state.saved ?? blankEditor());
+  if (state.saved !== null) return content(state) !== content(state.saved);
+  return (
+    state.name.trim() !== "" ||
+    state.description.trim() !== "" ||
+    state.sections.some((s) => !isUnusedRow(s)) ||
+    state.template !== ""
+  );
 }
 
 /**
  * Rebuilds the editor from the framework the backend returned after a save.
- * With `sent`, the input that was saved: if the editor has changed since it
- * was sent, the changes are kept, now as unsaved changes to the stored
- * framework, so the next Save updates it rather than creating another.
+ * With `sent`, the editor as it was when Save was pressed: if it has changed
+ * since, even by a space the save would have trimmed or a blank row, the
+ * changes are kept, now as unsaved changes to the stored framework, so the
+ * next Save updates it rather than creating another.
  */
 export function markSaved(
   state: EditorState,
   framework: Framework,
-  sent?: FrameworkInput,
+  sent?: EditorState,
 ): EditorState {
-  // A saved editor has no uncommitted rows (blank labels block Save), so
-  // one now was added while the save was under way.
+  const rows = (s: EditorState) => s.sections.map((r) => r.id).join();
   const changed =
     sent !== undefined &&
-    (JSON.stringify(toInput(state)) !== JSON.stringify(sent) ||
-      state.sections.some((s) => !s.committed));
+    (content(state) !== content(sent) || rows(state) !== rows(sent));
   const saved = rebuilt(state, framework);
-  if (changed) return { ...state, sourceId: framework.id, saved };
+  if (changed) {
+    // A section removed after Save was pressed keeps its key reserved; one
+    // the stored framework now has is taken anyway.
+    const removedKeys = state.removedKeys.filter(
+      (key) => !framework.sections.some((s) => s.key === key),
+    );
+    return { ...state, sourceId: framework.id, saved, removedKeys };
+  }
   return { ...saved, saved };
 }
 
@@ -393,9 +503,11 @@ function rebuilt(state: EditorState, framework: Framework): EditorState {
   return {
     ...fromFramework(framework, false),
     sections,
-    notes: isAutomatic(framework.template, framework.sections)
-      ? []
-      : state.notes,
+    // The mode is the user's choice; only opening a framework works it out.
+    automatic: state.automatic,
+    notes: state.automatic ? [] : state.notes,
+    // The saved template is the one the spots point into.
+    spots: state.automatic ? [] : state.spots,
     nextRowId,
   };
 }

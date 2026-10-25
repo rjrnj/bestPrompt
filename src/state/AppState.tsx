@@ -65,6 +65,11 @@ export type AppActions = {
   ) => Promise<Framework | null>;
   /** Deletes a framework. False, after a toast, when it fails. */
   deleteFramework: (id: string) => Promise<boolean>;
+  /**
+   * Drops the deleted frameworks the backend no longer lists, which are the
+   * ones with no saved prompts left. Returns at once; stays quiet on failure.
+   */
+  pruneDeletedFrameworks: () => void;
   /** Restores a deleted framework. Null, after a toast, when it fails. */
   restoreFramework: (id: string) => Promise<Framework | null>;
 };
@@ -232,13 +237,33 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [frameworkAction],
   );
 
+  const pruneDeletedFrameworks = useCallback(() => {
+    // The list leaves out a deleted framework that has no saved prompts, which
+    // the marked copy here doesn't show. Read the list again without waiting
+    // for it, and drop only the deleted frameworks it no longer has, so a save
+    // that lands meanwhile isn't undone. If the read fails, the list stays as
+    // it was.
+    listFrameworks().then(
+      (frameworks) =>
+        dispatch({
+          type: "deletedFrameworksPruned",
+          listedIds: frameworks.map((f) => f.id),
+        }),
+      () => {},
+    );
+  }, []);
+
   const deleteFramework = useCallback(
-    async (id: string) =>
-      (await frameworkAction(
+    async (id: string) => {
+      const deleted = await frameworkAction(
         () => deleteFrameworkCommand(id),
         "frameworkDeleted",
-      )) !== null,
-    [frameworkAction],
+      );
+      if (deleted === null) return false;
+      pruneDeletedFrameworks();
+      return true;
+    },
+    [frameworkAction, pruneDeletedFrameworks],
   );
 
   const restoreFramework = useCallback(
@@ -342,6 +367,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       deleteProject,
       saveFramework,
       deleteFramework,
+      pruneDeletedFrameworks,
       restoreFramework,
     }),
     [
@@ -353,6 +379,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       deleteProject,
       saveFramework,
       deleteFramework,
+      pruneDeletedFrameworks,
       restoreFramework,
     ],
   );

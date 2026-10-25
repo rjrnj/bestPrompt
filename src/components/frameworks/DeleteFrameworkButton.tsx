@@ -1,7 +1,7 @@
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import type { Framework } from "../../bindings/Framework";
-import { useAppActions, useAppState } from "../../state/AppState";
-import { draftTextIn } from "../../state/reducer";
+import { useAppState } from "../../state/AppState";
+import { hasDraftFor } from "../../state/reducer";
 import {
   dangerButton,
   dialogButtons,
@@ -15,8 +15,10 @@ import {
 type Props = {
   /** A saved custom framework. */
   framework: Framework;
-  /** Called once the framework is deleted. */
-  onDeleted(): void;
+  /** True while a save or delete is under way: Delete does nothing then. */
+  disabled: boolean;
+  /** Deletes the framework; the question has been answered. */
+  onDelete(): void;
 };
 
 /**
@@ -24,15 +26,13 @@ type Props = {
  * and the Builder's draft for it is discarded, which the question says when
  * there is one.
  */
-export function DeleteFrameworkButton({ framework, onDeleted }: Props) {
+export function DeleteFrameworkButton({
+  framework,
+  disabled,
+  onDelete,
+}: Props) {
   const state = useAppState();
-  const { deleteFramework } = useAppActions();
-  const hasDraft =
-    draftTextIn(
-      state,
-      framework.id,
-      framework.sections.map((s) => s.key),
-    ).length > 0;
+  const hasDraft = hasDraftFor(state, framework.id);
 
   return (
     <AlertDialog.Root>
@@ -40,7 +40,11 @@ export function DeleteFrameworkButton({ framework, onDeleted }: Props) {
         <button
           type="button"
           aria-label={`Delete ${framework.name}`}
+          aria-disabled={disabled || undefined}
           className={secondaryButton}
+          onClick={(event) => {
+            if (disabled) event.preventDefault();
+          }}
         >
           Delete
         </button>
@@ -66,15 +70,7 @@ export function DeleteFrameworkButton({ framework, onDeleted }: Props) {
               </button>
             </AlertDialog.Cancel>
             <AlertDialog.Action asChild>
-              <button
-                type="button"
-                className={dangerButton}
-                onClick={() => {
-                  void deleteFramework(framework.id).then((deleted) => {
-                    if (deleted) onDeleted();
-                  });
-                }}
-              >
+              <button type="button" className={dangerButton} onClick={onDelete}>
                 Delete
               </button>
             </AlertDialog.Action>

@@ -26,7 +26,10 @@ function View() {
 function DirtyEditor({ name }: { name: string }) {
   const dispatch = useAppDispatch();
   useEffect(() => {
-    dispatch({ type: "editingChanged", editing: { dirty: true, name } });
+    dispatch({
+      type: "editingChanged",
+      editing: { dirty: true, name, busy: false },
+    });
     return () => dispatch({ type: "editingChanged", editing: null });
   }, [dispatch, name]);
   return <p>frameworks pane</p>;

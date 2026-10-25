@@ -30,6 +30,9 @@ export function AppTabs({ builderTools, builder, history, frameworks }: Props) {
   const { view, editingFramework } = useAppState();
   const dispatch = useAppDispatch();
   const [leavingTo, setLeavingTo] = useState<State["view"] | null>(null);
+  // The name asked about, kept from when the question opened: the editor's
+  // own name is gone while the dialog closes.
+  const [askedAbout, setAskedAbout] = useState("");
   const tabList = useRef<HTMLDivElement>(null);
 
   return (
@@ -37,7 +40,10 @@ export function AppTabs({ builderTools, builder, history, frameworks }: Props) {
       value={view}
       onValueChange={(value) => {
         if (!isView(value)) return;
+        // A save or delete is running: Frameworks stays until it settles.
+        if (view === "frameworks" && editingFramework?.busy) return;
         if (view === "frameworks" && editingFramework?.dirty) {
+          setAskedAbout(editingFramework.name);
           setLeavingTo(value);
         } else {
           dispatch({ type: "viewChanged", view: value });
@@ -97,7 +103,7 @@ export function AppTabs({ builderTools, builder, history, frameworks }: Props) {
       </main>
       <DiscardChangesDialog
         open={leavingTo !== null}
-        name={editingFramework?.name ?? ""}
+        name={askedAbout}
         onKeep={() => setLeavingTo(null)}
         onDiscard={() => {
           if (leavingTo !== null) {

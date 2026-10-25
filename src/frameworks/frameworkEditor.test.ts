@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import builtins from "../../src-tauri/builtins/frameworks.json";
 import type { Framework } from "../bindings/Framework";
+import { usedKeys } from "../template";
 import { autoTemplate } from "./autoTemplate";
 import {
+  BRACE_LABEL_ERROR,
   blankEditor,
+  committedSections,
   copyOf,
   editorFor,
   editorReducer,
@@ -114,7 +117,7 @@ describe("labels and keys", () => {
     expect(s.sections.map((r) => r.key)).toEqual(["goal", "goal_2"]);
   });
 
-  it("allows_a_removed_key_to_be_reused", () => {
+  it("reuses_a_key_removed_before_saving_when_the_template_no_longer_has_it", () => {
     let s = addSection(withLabel("Goal"), "Other");
     s = run(s, { type: "sectionRemoved", row: s.sections[0].id });
     s = addSection(s, "Goal");
@@ -179,8 +182,8 @@ describe("automatic template", () => {
       value: autoTemplate(toInput(s).sections),
     });
     expect(s.automatic).toBe(false);
-    // Saving works the mode out afresh.
-    expect(markSaved(s, custom({ ...toInput(s) })).automatic).toBe(true);
+    // Saving keeps the mode the user chose.
+    expect(markSaved(s, custom({ ...toInput(s) })).automatic).toBe(false);
   });
 });
 
@@ -199,9 +202,54 @@ describe("by hand", () => {
       `${before.template}\n\n{{#examples}}# Examples\n{{examples}}{{/examples}}`,
     );
     expect(s.notes).toEqual([
-      "Examples was added to the end of the template. Move or reword it as you like.",
+      {
+        row: s.sections[2].id,
+        text: "Examples was added to the end of the template. Move or reword it as you like.",
+      },
     ]);
     expect(s.automatic).toBe(false);
+  });
+
+  it("a_new_section_whose_key_the_template_already_uses_adds_no_block", () => {
+    const typed = run(byHand(), {
+      type: "templateEdited",
+      value: "Goal: {{goal}}",
+    });
+    expect(validate(typed, []).template).toHaveLength(1);
+
+    const s = addSection(typed, "Goal");
+
+    expect(s.sections[2].key).toBe("goal");
+    expect(s.template).toBe("Goal: {{goal}}");
+    expect(s.notes).toEqual([]);
+    expect(unusedRows(s)).toEqual([s.sections[0].id, s.sections[1].id]);
+    expect(validate(s, []).template).toBeUndefined();
+  });
+
+  it("a_new_section_whose_key_only_a_hand_written_block_uses_adds_no_block", () => {
+    const typed = run(byHand(), {
+      type: "templateEdited",
+      value: "{{#goal}}Stay focused on the goal.{{/goal}}",
+    });
+
+    const s = addSection(typed, "Goal");
+
+    expect(s.sections[2].key).toBe("goal");
+    expect(s.template).toBe("{{#goal}}Stay focused on the goal.{{/goal}}");
+    expect(s.notes).toEqual([]);
+    expect(unusedRows(s)).toEqual(s.sections.map((r) => r.id));
+  });
+
+  it("removing_a_section_drops_its_note", () => {
+    const added = addSection(byHand(), "Examples");
+    expect(added.notes).toHaveLength(1);
+
+    const s = run(added, {
+      type: "sectionRemoved",
+      row: added.sections[2].id,
+    });
+
+    expect(s.notes).toEqual([]);
   });
 
   it("renaming_a_section_by_hand_leaves_the_template_alone", () => {
@@ -337,19 +385,29 @@ describe("validate", () => {
     expect(validate(withLabel("One", s), []).sections).toBeUndefined();
   });
 
-  it("a_blank_row_has_a_label_error", () => {
+  it("a_blank_never_confirmed_row_has_no_label_error", () => {
     const s = run(withLabel("One"), { type: "sectionAdded" });
-    expect(Object.keys(validate(s, []).labels)).toEqual([
-      String(s.sections[1].id),
-    ]);
+    expect(validate(s, []).labels).toEqual({});
+  });
+
+  it("a_row_with_help_text_but_no_label_has_a_label_error", () => {
+    const s = run(withLabel("One"), { type: "sectionAdded" });
+    const row = s.sections[1].id;
+    const helped = run(s, { type: "helpChanged", row, value: "hint" });
+    expect(Object.keys(validate(helped, []).labels)).toEqual([String(row)]);
+  });
+
+  it("a_committed_row_with_its_label_cleared_has_a_label_error", () => {
+    const s = withLabel("One");
+    const row = s.sections[0].id;
+    const cleared = run(s, { type: "labelChanged", row, value: " " });
+    expect(Object.keys(validate(cleared, []).labels)).toEqual([String(row)]);
   });
 
   it("a_label_with_braces_is_invalid", () => {
     for (const label of ["a {{ b", "a }} b"]) {
       const s = withLabel(label);
-      expect(validate(s, []).labels[s.sections[0].id]).toBe(
-        "A label can't contain {{ or }}.",
-      );
+      expect(validate(s, []).labels[s.sections[0].id]).toBe(BRACE_LABEL_ERROR);
     }
   });
 
@@ -393,12 +451,74 @@ describe("toInput", () => {
   });
 });
 
+describe("a blank row added to a saved framework", () => {
+  it("does_not_block_save_or_reach_the_saved_input", () => {
+    const base = editorFor(custom());
+    const s = run(
+      base,
+      { type: "sectionAdded" },
+      { type: "descriptionChanged", value: "new words" },
+    );
+
+    expect(hasErrors(validate(s, []))).toBe(false);
+    expect(toInput(s).sections).toEqual(toInput(base).sections);
+    expect(toInput(s).description).toBe("new words");
+  });
+});
+
 describe("isDirty", () => {
   it("is_false_for_an_untouched_new_framework_and_true_once_edited", () => {
     expect(isDirty(blankEditor())).toBe(false);
     expect(
       isDirty(run(blankEditor(), { type: "nameChanged", value: "x" })),
     ).toBe(true);
+  });
+
+  it("is_false_for_a_new_framework_whose_empty_row_was_removed", () => {
+    const s = blankEditor();
+
+    expect(
+      isDirty(run(s, { type: "sectionRemoved", row: s.sections[0].id })),
+    ).toBe(false);
+    expect(isDirty(run(s, { type: "sectionAdded" }))).toBe(false);
+    expect(isDirty(run(s, { type: "nameChanged", value: "  " }))).toBe(false);
+  });
+
+  it("is_true_for_a_new_framework_with_any_text", () => {
+    const s = blankEditor();
+    const row = s.sections[0].id;
+
+    expect(isDirty(run(s, { type: "labelChanged", row, value: "L" }))).toBe(
+      true,
+    );
+    expect(isDirty(run(s, { type: "helpChanged", row, value: "H" }))).toBe(
+      true,
+    );
+    expect(isDirty(run(s, { type: "descriptionChanged", value: "d" }))).toBe(
+      true,
+    );
+    expect(
+      isDirty(
+        run(
+          s,
+          { type: "modeChanged", automatic: false },
+          { type: "templateEdited", value: "x" },
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("adding_an_empty_section_to_a_saved_framework_is_not_a_change", () => {
+    const s = run(editorFor(custom()), { type: "sectionAdded" });
+    const row = s.sections[s.sections.length - 1].id;
+
+    expect(isDirty(s)).toBe(false);
+    expect(isDirty(run(s, { type: "labelChanged", row, value: "C" }))).toBe(
+      true,
+    );
+    expect(isDirty(run(s, { type: "helpChanged", row, value: "H" }))).toBe(
+      true,
+    );
   });
 
   it("is_true_for_an_unsaved_copy", () => {
@@ -437,10 +557,10 @@ describe("isDirty", () => {
 
   it("markSaved_keeps_edits_made_while_saving_as_unsaved_changes", () => {
     const s = run(withLabel("One"), { type: "nameChanged", value: "Name" });
-    const sent = toInput(s);
+    const sent = s;
     const later = run(s, { type: "descriptionChanged", value: "More" });
 
-    const landed = markSaved(later, custom({ ...sent }), sent);
+    const landed = markSaved(later, custom({ ...toInput(sent) }), sent);
 
     expect(landed.sourceId).toBe(custom().id);
     expect(landed.description).toBe("More");
@@ -452,26 +572,57 @@ describe("isDirty", () => {
 
   it("markSaved_counts_a_row_added_while_saving_as_a_change", () => {
     const s = run(withLabel("One"), { type: "nameChanged", value: "Name" });
-    const sent = toInput(s);
-    const later = run(s, { type: "sectionAdded" });
+    const sent = s;
+    const added = run(s, { type: "sectionAdded" });
+    const later = run(added, {
+      type: "labelChanged",
+      row: added.sections[1].id,
+      value: "Two",
+    });
 
-    const landed = markSaved(later, custom({ ...sent }), sent);
+    const landed = markSaved(later, custom({ ...toInput(sent) }), sent);
 
     expect(landed.sections).toHaveLength(2);
     expect(isDirty(landed)).toBe(true);
   });
 
-  it("markSaved_with_an_unchanged_editor_is_saved", () => {
+  it("markSaved_keeps_a_blank_row_added_while_saving", () => {
     const s = run(withLabel("One"), { type: "nameChanged", value: "Name" });
-    const sent = toInput(s);
+    const sent = s;
+    const later = run(s, { type: "sectionAdded" });
 
-    const landed = markSaved(s, custom({ ...sent }), sent);
+    const landed = markSaved(later, custom({ ...toInput(sent) }), sent);
 
+    expect(landed.sections.map((r) => r.id)).toEqual(
+      later.sections.map((r) => r.id),
+    );
+    expect(landed.sourceId).toBe(custom().id);
+  });
+
+  it("markSaved_keeps_whitespace_typed_while_saving", () => {
+    const s = run(withLabel("One"), { type: "nameChanged", value: "Foo" });
+    const sent = s;
+    const later = run(s, { type: "nameChanged", value: "Foo " });
+
+    const landed = markSaved(later, custom({ ...toInput(sent) }), sent);
+
+    expect(landed.name).toBe("Foo ");
+    expect(isDirty(landed)).toBe(true);
+  });
+
+  it("markSaved_with_an_unchanged_editor_is_saved", () => {
+    const s = run(withLabel("One"), { type: "nameChanged", value: "Name " });
+    const sent = s;
+
+    const landed = markSaved(s, custom({ ...toInput(sent) }), sent);
+
+    // As stored: the name comes back trimmed.
+    expect(landed.name).toBe("Name");
     expect(isDirty(landed)).toBe(false);
     expect(landed.sourceId).toBe(custom().id);
   });
 
-  it("markSaved_keeps_notes_and_clears_spots", () => {
+  it("markSaved_keeps_notes_and_spots_by_hand", () => {
     let s = run(addSection(withLabel("One"), "Two"), {
       type: "modeChanged",
       automatic: false,
@@ -483,10 +634,64 @@ describe("isDirty", () => {
       { type: "sectionRemoved", row: s.sections[0].id },
     );
     expect(s.spots).toHaveLength(1);
-    const saved = markSaved(s, custom({ ...toInput(s) }));
+    const sent = s;
+    const saved = markSaved(s, custom({ ...toInput(s) }), sent);
     expect(saved.notes).toEqual(s.notes);
-    expect(saved.spots).toEqual([]);
+    expect(saved.spots).toEqual(s.spots);
     expect(saved.automatic).toBe(false);
+    const edited = run(s, { type: "descriptionChanged", value: "more" });
+    expect(markSaved(edited, custom({ ...toInput(s) }), sent).spots).toEqual(
+      s.spots,
+    );
+  });
+
+  it("markSaved_keeps_a_key_reserved_by_a_removal_made_while_saving", () => {
+    let s = run(withLabel("A"), {
+      type: "modeChanged",
+      automatic: false,
+    });
+    s = run(s, { type: "nameChanged", value: "Mine" });
+    const sent = s;
+    s = addSection(s, "B");
+    expect(s.sections[1].key).toBe("b");
+    expect(s.template).toContain("{{#b}}");
+    s = run(
+      s,
+      { type: "templateEdited", value: `${s.template} {{` },
+      { type: "sectionRemoved", row: s.sections[1].id },
+    );
+    expect(s.removedKeys).toEqual(["b"]);
+
+    const landed = markSaved(s, custom({ ...toInput(sent) }), sent);
+
+    expect(landed.removedKeys).toEqual(["b"]);
+    expect(addSection(landed, "B").sections[1].key).toBe("b_2");
+  });
+
+  it("markSaved_drops_a_reserved_key_the_saved_framework_holds", () => {
+    let s = run(addSection(withLabel("A"), "B"), {
+      type: "modeChanged",
+      automatic: false,
+    });
+    s = run(s, { type: "nameChanged", value: "Mine" });
+    const sent = s;
+    s = run(
+      s,
+      { type: "templateEdited", value: `${s.template} {{` },
+      { type: "sectionRemoved", row: s.sections[1].id },
+    );
+    expect(s.removedKeys).toEqual(["b"]);
+
+    const landed = markSaved(s, custom({ ...toInput(sent) }), sent);
+
+    expect(landed.removedKeys).toEqual([]);
+    expect(addSection(landed, "B").sections[1].key).toBe("b_2");
+  });
+
+  it("markSaved_clears_spots_in_automatic_mode", () => {
+    const s = { ...withLabel("One"), spots: [3] };
+    expect(s.automatic).toBe(true);
+    expect(markSaved(s, custom({ ...toInput(s) })).spots).toEqual([]);
   });
 });
 
@@ -505,7 +710,13 @@ describe("hasErrors", () => {
     expect(hasErrors(validate(withLabel("One"), []))).toBe(true);
     expect(hasErrors(validate(blankEditor(), []))).toBe(true);
     const blankRow = run(named, { type: "sectionAdded" });
-    expect(hasErrors(validate(blankRow, []))).toBe(true);
+    expect(hasErrors(validate(blankRow, []))).toBe(false);
+    const unlabelled = run(blankRow, {
+      type: "helpChanged",
+      row: blankRow.sections[1].id,
+      value: "hint",
+    });
+    expect(hasErrors(validate(unlabelled, []))).toBe(true);
     const bad = run(
       named,
       { type: "modeChanged", automatic: false },
@@ -535,8 +746,12 @@ describe("stale notes and unparsable templates", () => {
       type: "templateEdited",
       value: autoTemplate(toInput(s).sections),
     });
-    const noted = { ...s, notes: ["x"] };
-    expect(markSaved(noted, custom({ ...toInput(s) })).notes).toEqual([]);
+    const noted = { ...s, notes: [{ row: 0, text: "x" }] };
+    expect(markSaved(noted, custom({ ...toInput(s) })).notes).toEqual(
+      noted.notes,
+    );
+    const auto = { ...noted, automatic: true };
+    expect(markSaved(auto, custom({ ...toInput(s) })).notes).toEqual([]);
   });
 
   it("unusedRows_is_empty_while_the_template_does_not_parse", () => {
@@ -546,5 +761,213 @@ describe("stale notes and unparsable templates", () => {
       { type: "templateEdited", value: "{{#one" },
     );
     expect(unusedRows(s)).toEqual([]);
+  });
+});
+
+describe("labels with braces", () => {
+  const brace = "Use {{x}}";
+
+  it("committing_a_brace_label_by_hand_changes_nothing", () => {
+    const base = run(withLabel("One"), {
+      type: "modeChanged",
+      automatic: false,
+    });
+    const row = run(base, { type: "sectionAdded" });
+    const id = row.sections[1].id;
+    const s = run(
+      row,
+      { type: "labelChanged", row: id, value: brace },
+      { type: "labelCommitted", row: id },
+    );
+    expect(s.sections[1].committed).toBe(false);
+    expect(s.sections[1].key).toBe("");
+    expect(s.template).toBe(base.template);
+    expect(s.notes).toEqual(base.notes);
+    expect(committedSections(s)).toEqual(committedSections(base));
+  });
+
+  it("appending_a_row_with_a_brace_label_is_a_no_op", () => {
+    const base = run(withLabel("One"), {
+      type: "modeChanged",
+      automatic: false,
+    });
+    const id = base.sections[0].id;
+    const renamed = run(base, { type: "labelChanged", row: id, value: brace });
+    const s = run(renamed, { type: "sectionAppendedToTemplate", row: id });
+    expect(s).toBe(renamed);
+  });
+
+  it("renaming_to_a_brace_label_while_automatic_keeps_a_parsable_template", () => {
+    const base = withLabel("One");
+    const s = run(base, {
+      type: "labelChanged",
+      row: base.sections[0].id,
+      value: brace,
+    });
+    expect(s.template).toBe(base.template);
+    expect(validate(s, []).template).toBeUndefined();
+    expect(hasErrors(validate(s, []))).toBe(true);
+  });
+
+  it("removing_a_section_while_automatic_drops_its_block_despite_a_brace_label", () => {
+    const base = addSection(withLabel("A"), "B");
+    const [a, b] = base.sections;
+    const s = run(
+      base,
+      { type: "labelChanged", row: a.id, value: "A {{x" },
+      { type: "sectionRemoved", row: b.id },
+    );
+    expect(s.automatic).toBe(true);
+    expect(usedKeys(s.template).has(b.key)).toBe(false);
+    const byHand = run(s, { type: "modeChanged", automatic: false });
+    expect(validate(byHand, []).template).toBeUndefined();
+  });
+
+  it("switching_to_automatic_with_a_brace_label_keeps_the_template", () => {
+    const base = run(withLabel("One"), {
+      type: "modeChanged",
+      automatic: false,
+    });
+    const renamed = run(base, {
+      type: "labelChanged",
+      row: base.sections[0].id,
+      value: brace,
+    });
+    const s = run(renamed, { type: "modeChanged", automatic: true });
+    expect(s.template).toBe(base.template);
+  });
+});
+
+describe("the chosen mode survives a save", () => {
+  it("by_hand_with_the_generated_template_stays_by_hand", () => {
+    const s = run(withLabel("One"), { type: "modeChanged", automatic: false });
+    expect(s.template).toBe(autoTemplate(toInput(s).sections));
+    const saved = markSaved(s, custom({ ...toInput(s) }));
+    expect(saved.automatic).toBe(false);
+    const sent = s;
+    const later = run(s, { type: "nameChanged", value: "later" });
+    expect(markSaved(later, custom({ ...toInput(sent) }), sent).automatic).toBe(
+      false,
+    );
+  });
+});
+
+describe("keys within one editing session", () => {
+  const goal = { key: "goal", label: "Goal", helpText: "" };
+  const stored = () =>
+    custom({
+      sections: [goal],
+      template: autoTemplate([goal]),
+      summaryKey: "goal",
+    });
+
+  it("a_new_section_never_takes_a_key_the_stored_framework_has", () => {
+    const opened = editorFor(stored());
+    const removed = run(opened, {
+      type: "sectionRemoved",
+      row: opened.sections[0].id,
+    });
+    const s = addSection(removed, "Goal?");
+    expect(s.sections.map((x) => x.key)).toEqual(["goal_2"]);
+  });
+
+  it("a_removed_key_left_in_an_unparsable_template_is_not_given_out_again", () => {
+    let s = run(withLabel("Goal"), { type: "modeChanged", automatic: false });
+    s = run(s, { type: "templateEdited", value: "{{goal}} {{#oops" });
+    s = run(s, { type: "sectionRemoved", row: s.sections[0].id });
+    expect(s.template).toBe("{{goal}} {{#oops");
+    s = addSection(s, "Goal");
+    expect(s.sections.map((x) => x.key)).toEqual(["goal_2"]);
+  });
+
+  it("a_key_removed_in_an_earlier_save_can_be_used_again", () => {
+    const opened = editorFor(stored());
+    const removed = run(opened, {
+      type: "sectionRemoved",
+      row: opened.sections[0].id,
+    });
+    const other = addSection(removed, "Other");
+    const afterSave = markSaved(
+      other,
+      custom({
+        sections: [{ key: "other", label: "Other", helpText: "" }],
+        summaryKey: "other",
+      }),
+    );
+    expect(addSection(afterSave, "Goal").sections[1].key).toBe("goal");
+  });
+});
+
+describe("adding a section to a template that does not parse", () => {
+  it("leaves_the_template_alone_and_says_so_then_sees_the_placeholder_once_fixed", () => {
+    let s = run(withLabel("Role"), { type: "modeChanged", automatic: false });
+    s = run(s, { type: "templateEdited", value: "Goal: {{goal}} {{oops" });
+    s = addSection(s, "Goal");
+
+    expect(s.template).toBe("Goal: {{goal}} {{oops");
+    expect(s.notes.map((n) => n.text)).toEqual([
+      `Goal wasn't added to the template because the template has an error. Fix it, then use "Add to end of template" if you need it.`,
+    ]);
+
+    s = run(s, { type: "templateEdited", value: "Goal: {{goal}} {{role}}" });
+    expect(unusedRows(s)).toEqual([]);
+  });
+});
+
+describe("removing a section that was just confirmed by hand", () => {
+  it("does_not_reserve_its_key_when_the_template_no_longer_uses_it", () => {
+    let s = run(withLabel("Role"), { type: "modeChanged", automatic: false });
+    s = run(s, { type: "templateEdited", value: "T\n" });
+    s = addSection(s, "Goal");
+    s = run(s, { type: "sectionRemoved", row: s.sections[1].id });
+
+    expect(s.removedKeys).toEqual([]);
+    s = addSection(s, "Goal");
+    expect(s.sections[1].key).toBe("goal");
+  });
+});
+
+describe("hints across removals by hand", () => {
+  it("a_second_removal_keeps_the_first_ones_hints", () => {
+    const a = { key: "a", label: "A", helpText: "" };
+    const b = { key: "b", label: "B", helpText: "" };
+    const c = { key: "c", label: "C", helpText: "" };
+    const opened = run(
+      editorFor(
+        custom({
+          sections: [a, b, c],
+          template: "Use {{a}} here.\n\nThen {{b}} there.\n\nAnd {{c}}.",
+        }),
+      ),
+      { type: "modeChanged", automatic: false },
+    );
+    const rowOf = (key: string) =>
+      opened.sections.find((x) => x.key === key)!.id;
+    const s = run(
+      opened,
+      { type: "sectionRemoved", row: rowOf("a") },
+      { type: "sectionRemoved", row: rowOf("b") },
+    );
+    expect(s.template).toBe("Use  here.\n\nThen  there.\n\nAnd {{c}}.");
+    expect(s.spots).toEqual([4, 17]);
+  });
+});
+
+describe("resetting to automatic with a brace label", () => {
+  it("does_nothing_while_a_label_holds_braces", () => {
+    const base = run(withLabel("One"), {
+      type: "modeChanged",
+      automatic: false,
+    });
+    const renamed = run(base, {
+      type: "labelChanged",
+      row: base.sections[0].id,
+      value: "Use {{x}}",
+    });
+    // Committed, so the saved label is the one with braces.
+    const committed = { ...renamed };
+    expect(run(committed, { type: "modeChanged", automatic: true })).toBe(
+      committed,
+    );
   });
 });

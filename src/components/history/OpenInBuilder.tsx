@@ -5,6 +5,7 @@ import type { PromptEntry } from "../../bindings/PromptEntry";
 import { useAppDispatch, useAppState } from "../../state/AppState";
 import {
   listedProjects,
+  liveFrameworks,
   openConflicts,
   openedProject,
   unplacedSections,
@@ -23,7 +24,7 @@ import { TITLE_INPUT_ID } from "../TitleField";
 /**
  * Loads a saved prompt into the Builder as a new draft. Asks first when that
  * would replace the framework's draft or move the drafts to another project;
- * unavailable when the entry's framework is no longer loaded.
+ * unavailable when the entry's framework is no longer loaded or was deleted.
  */
 export function OpenInBuilder({ entry }: { entry: PromptEntry }) {
   const state = useAppState();
@@ -31,9 +32,7 @@ export function OpenInBuilder({ entry }: { entry: PromptEntry }) {
   const noteId = useId();
 
   const framework =
-    state.frameworks.status === "ready"
-      ? (state.frameworks.items.find((f) => f.id === entry.frameworkId) ?? null)
-      : null;
+    liveFrameworks(state).find((f) => f.id === entry.frameworkId) ?? null;
 
   if (framework === null) {
     return (

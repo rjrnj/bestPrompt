@@ -8,6 +8,7 @@ import {
   currentTitle,
   draftTextIn,
   hasAnyDraftText,
+  hasDraftFor,
   initialState,
   isBlank,
   listedProjects,
@@ -513,6 +514,49 @@ describe("projects", () => {
     expect(state.selectedProjectId).toBe("p-m");
   });
 
+  it("sorts names like the database: only ASCII letters fold", () => {
+    const upper = project("p-1", "Ébauche");
+    const lower = project("p-2", "éa");
+    const mixedA = project("p-3", "alpha");
+    const mixedB = project("p-4", "Beta");
+    const state = run(
+      [
+        { type: "projectCreated", project: upper },
+        { type: "projectCreated", project: lower },
+        { type: "projectCreated", project: mixedB },
+        { type: "projectCreated", project: mixedA },
+      ],
+      reducer(initialState, { type: "projectsLoaded", projects: [] }),
+    );
+
+    // "É" (U+00C9) sorts before "é" (U+00E9) as it is not folded.
+    expect(
+      state.projects.status === "ready" &&
+        state.projects.items.map((p) => p.name),
+    ).toEqual(["alpha", "Beta", "Ébauche", "éa"]);
+  });
+
+  it("sorts names by code point, as the database compares bytes", () => {
+    // U+1F600 is a surrogate pair in UTF-16, so it sorts before U+FF21 there,
+    // but after it by code point and in UTF-8.
+    const emoji = project("p-1", "\u{1F600} Notes");
+    const wide = project("p-2", "\uFF21lpha");
+    const twinB = project("p-4", "same");
+    const twinA = project("p-3", "same");
+    const state = run(
+      [emoji, wide, twinB, twinA].map((p) => ({
+        type: "projectCreated" as const,
+        project: p,
+      })),
+      reducer(initialState, { type: "projectsLoaded", projects: [] }),
+    );
+
+    expect(
+      state.projects.status === "ready" &&
+        state.projects.items.map((p) => p.id),
+    ).toEqual(["p-3", "p-4", "p-2", "p-1"]);
+  });
+
   it("replaces a renamed project and keeps the list sorted", () => {
     const renamed = { ...api, name: "zzz" };
     const state = reducer(withProjects, {
@@ -960,6 +1004,42 @@ describe("hasAnyDraftText", () => {
   });
 });
 
+describe("hasDraftFor", () => {
+  it("is false for an empty builder and for blank text", () => {
+    expect(hasDraftFor(loaded, "ab")).toBe(false);
+    const blank = run(
+      [
+        { type: "editSection", key: "a", value: "  " },
+        { type: "editTitle", value: " " },
+      ],
+      loaded,
+    );
+    expect(hasDraftFor(blank, "ab")).toBe(false);
+  });
+
+  it("sees section text and a title on its own", () => {
+    const text = reducer(loaded, { type: "editSection", key: "a", value: "x" });
+    const title = reducer(loaded, { type: "editTitle", value: "T" });
+
+    expect(hasDraftFor(text, "ab")).toBe(true);
+    expect(hasDraftFor(title, "ab")).toBe(true);
+  });
+
+  it("looks only at the framework asked about", () => {
+    const state = reducer(loaded, {
+      type: "editSection",
+      key: "a",
+      value: "x",
+    });
+
+    expect(hasDraftFor(state, "xy")).toBe(false);
+  });
+
+  it("is false for a name that is a property of every object", () => {
+    expect(hasDraftFor(loaded, "constructor")).toBe(false);
+  });
+});
+
 describe("openConflicts", () => {
   const none = { replacesDraft: false, changesProject: false };
 
@@ -1114,6 +1194,97 @@ describe("framework changes", () => {
     expect(names(state)).toEqual(["ab", "xy", "c1", "c2", "c0"]);
   });
 
+  it("frameworkSaved_does_not_bring_back_a_deleted_framework", () => {
+    const start = run([
+      { type: "frameworksLoaded", frameworks: [ab, xy] },
+      { type: "frameworkDeleted", framework: deleted(xy) },
+    ]);
+
+    const state = run([{ type: "frameworkSaved", framework: xy }], start);
+
+    expect(state).toBe(start);
+    expect(liveFrameworks(state)).toEqual([ab]);
+  });
+
+  it("frameworkSaved_does_not_bring_back_a_deleted_framework_once_pruned", () => {
+    const start = run([
+      { type: "frameworksLoaded", frameworks: [ab, xy] },
+      { type: "frameworkDeleted", framework: deleted(xy) },
+      { type: "deletedFrameworksPruned", listedIds: [] },
+    ]);
+    expect(names(start)).toEqual(["ab"]);
+
+    const state = run([{ type: "frameworkSaved", framework: xy }], start);
+
+    expect(state).toBe(start);
+    expect(names(state)).toEqual(["ab"]);
+  });
+
+  it("frameworkSaved_does_not_bring_back_a_deleted_framework_after_a_reload", () => {
+    const state = run([
+      { type: "frameworksLoaded", frameworks: [ab, xy] },
+      { type: "frameworkDeleted", framework: deleted(xy) },
+      { type: "frameworksLoading" },
+      { type: "frameworksLoaded", frameworks: [ab] },
+      { type: "frameworkSaved", framework: xy },
+    ]);
+
+    expect(names(state)).toEqual(["ab"]);
+  });
+
+  it("frameworksLoaded_leaves_out_a_framework_deleted_here_that_a_late_read_shows_live", () => {
+    const state = run([
+      { type: "frameworksLoaded", frameworks: [ab, xy] },
+      { type: "selectFramework", id: "xy" },
+      { type: "frameworkDeleted", framework: deleted(xy) },
+      { type: "frameworksLoading" },
+      { type: "frameworksLoaded", frameworks: [ab, xy] },
+    ]);
+
+    expect(names(state)).toEqual(["ab"]);
+    expect(state.selectedId).toBe("ab");
+  });
+
+  it("frameworksLoaded_keeps_the_deleted_copy_held_here_over_a_late_read_that_shows_it_live", () => {
+    const state = run([
+      { type: "frameworksLoaded", frameworks: [ab, xy] },
+      { type: "frameworkDeleted", framework: deleted(xy) },
+      { type: "frameworksLoaded", frameworks: [ab, xy] },
+    ]);
+
+    expect(state.frameworks).toEqual({
+      status: "ready",
+      items: [ab, deleted(xy)],
+    });
+    expect(liveFrameworks(state)).toEqual([ab]);
+  });
+
+  it("frameworksLoaded_keeps_a_framework_deleted_here_that_the_read_shows_deleted", () => {
+    const state = run([
+      { type: "frameworksLoaded", frameworks: [ab, xy] },
+      { type: "frameworkDeleted", framework: deleted(xy) },
+      { type: "frameworksLoaded", frameworks: [ab, deleted(xy)] },
+    ]);
+
+    expect(state.frameworks).toEqual({
+      status: "ready",
+      items: [ab, deleted(xy)],
+    });
+  });
+
+  it("frameworkSaved_applies_again_once_a_deleted_framework_is_restored", () => {
+    const renamed = { ...xy, name: "Renamed" };
+    const state = run([
+      { type: "frameworksLoaded", frameworks: [ab, xy] },
+      { type: "frameworkDeleted", framework: deleted(xy) },
+      { type: "deletedFrameworksPruned", listedIds: [] },
+      { type: "frameworkRestored", framework: xy },
+      { type: "frameworkSaved", framework: renamed },
+    ]);
+
+    expect(liveFrameworks(state)).toEqual([ab, renamed]);
+  });
+
   it("frameworkSaved_replaces_in_place_without_changing_the_selection", () => {
     const start = run([
       { type: "frameworksLoaded", frameworks: [ab, xy] },
@@ -1184,6 +1355,60 @@ describe("framework changes", () => {
     });
   });
 
+  it("deletedFrameworksPruned_drops_only_deleted_frameworks_the_listing_left_out", () => {
+    const cd = framework("cd", ["c"]);
+    const start = run([
+      { type: "frameworksLoaded", frameworks: [ab, cd, xy] },
+      { type: "frameworkDeleted", framework: deleted(cd) },
+      { type: "frameworkDeleted", framework: deleted(xy) },
+      { type: "editSection", key: "a", value: "text" },
+      { type: "editTitle", value: "title" },
+    ]);
+
+    // `ab` is live, so it stays though the listing leaves it out.
+    const state = reducer(start, {
+      type: "deletedFrameworksPruned",
+      listedIds: ["xy"],
+    });
+
+    expect(state.frameworks).toEqual({
+      status: "ready",
+      items: [ab, deleted(xy)],
+    });
+    expect(state.selectedId).toBe("ab");
+    expect(state.drafts).toBe(start.drafts);
+    expect(state.titles).toBe(start.titles);
+    expect(state.lastSaved).toBe(start.lastSaved);
+  });
+
+  it("deletedFrameworksPruned_changes_nothing_when_nothing_goes", () => {
+    const start = run(
+      [{ type: "frameworkDeleted", framework: deleted(xy) }],
+      loaded,
+    );
+
+    expect(
+      reducer(start, { type: "deletedFrameworksPruned", listedIds: ["xy"] }),
+    ).toBe(start);
+    expect(
+      reducer(initialState, { type: "deletedFrameworksPruned", listedIds: [] }),
+    ).toBe(initialState);
+  });
+
+  it("entryOpened_ignores_an_entry_of_a_deleted_framework", () => {
+    const start = run(
+      [{ type: "frameworkDeleted", framework: deleted(xy) }],
+      loaded,
+    );
+
+    const state = reducer(start, {
+      type: "entryOpened",
+      entry: entry("xy", { a: "one" }),
+    });
+
+    expect(state).toBe(start);
+  });
+
   it("frameworkDeleted_leaves_the_selection_when_another_was_deleted", () => {
     const state = run(
       [{ type: "frameworkDeleted", framework: deleted(xy) }],
@@ -1222,6 +1447,30 @@ describe("framework changes", () => {
     expect(state.drafts).toEqual({});
     expect(state.titles).toEqual({});
     expect(state.lastSaved).toEqual({});
+  });
+
+  it("frameworkDeleted_drops_its_drafts_while_the_list_is_reloading", () => {
+    const start = run(
+      [
+        { type: "editSection", key: "a", value: "text" },
+        { type: "editTitle", value: "title" },
+        { type: "saveSucceeded", frameworkId: "ab", renderedPrompt: "text" },
+        { type: "frameworksLoading" },
+      ],
+      loaded,
+    );
+    expect(hasAnyDraftText(start)).toBe(true);
+
+    const state = run(
+      [{ type: "frameworkDeleted", framework: deleted(ab) }],
+      start,
+    );
+
+    expect(state.drafts).toEqual({});
+    expect(state.titles).toEqual({});
+    expect(state.lastSaved).toEqual({});
+    expect(state.deletedFrameworks).toContain("ab");
+    expect(hasAnyDraftText(state)).toBe(false);
   });
 
   it("frameworkRestored_makes_it_selectable_again", () => {
@@ -1287,7 +1536,7 @@ describe("framework changes", () => {
   });
 
   it("editingChanged_stores_the_value", () => {
-    const editing = { dirty: true, name: "Mine" };
+    const editing = { dirty: true, name: "Mine", busy: false };
 
     const state = run([{ type: "editingChanged", editing }]);
 

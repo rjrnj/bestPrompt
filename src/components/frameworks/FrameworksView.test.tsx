@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -19,11 +20,13 @@ import {
 import type { Framework } from "../../bindings/Framework";
 import type { FrameworkInput } from "../../bindings/FrameworkInput";
 import { autoTemplate } from "../../frameworks/autoTemplate";
+import { editorFor } from "../../frameworks/frameworkEditor";
 import { AppStateProvider, useAppDispatch } from "../../state/AppState";
 import { AppTabs } from "../AppTabs";
 import { FrameworkPicker } from "../FrameworkPicker";
 import { PromptForm } from "../PromptForm";
 import { FrameworksView } from "./FrameworksView";
+import { TemplateEditor } from "./TemplateEditor";
 
 // Only the commands are mocked; ApiError stays the real class.
 vi.mock("../../api", async (importOriginal) => ({
@@ -159,10 +162,14 @@ beforeEach(() => {
   vi.mocked(updateFramework).mockImplementation(async (id, input) =>
     stored(id, input),
   );
-  vi.mocked(deleteFramework).mockImplementation(async () => ({
-    ...mine,
-    deletedAt: 3,
-  }));
+  vi.mocked(deleteFramework).mockImplementation(async () => {
+    // The list read after a delete shows the framework as deleted.
+    vi.mocked(listFrameworks).mockResolvedValue([
+      ...builtIns,
+      { ...mine, deletedAt: 3 },
+    ]);
+    return { ...mine, deletedAt: 3 };
+  });
 });
 
 afterEach(() => {
@@ -353,9 +360,8 @@ describe("FrameworksView", () => {
     expect(nameField()).toHaveAccessibleDescription(
       "Give the framework a name.",
     );
-    expect(
-      screen.getByRole("textbox", { name: "Label" }),
-    ).toHaveAccessibleDescription("Give the section a label.");
+    // The blank row is dropped on Save, so it is not flagged.
+    expect(screen.queryByText("Give the section a label.")).toBeNull();
     expect(screen.getByText("Add at least one section.")).toBeInTheDocument();
 
     // Errors follow the edits once shown.
@@ -370,6 +376,21 @@ describe("FrameworksView", () => {
 
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(createFramework).not.toHaveBeenCalled();
+  });
+
+  it("a_brace_label_is_flagged_as_it_is_typed", async () => {
+    renderTabs();
+    const user = userEvent.setup();
+    await openFrameworksTab(user);
+    await user.click(screen.getByRole("button", { name: "New framework" }));
+
+    const label = screen.getByRole("textbox", { name: "Label" });
+    await user.type(label, "Use {{{{x");
+
+    expect(screen.getByText(/A label can't contain/)).toBeInTheDocument();
+    expect(label).toHaveAttribute("aria-invalid", "true");
+    // Other errors still wait for Save.
+    expect(screen.queryByText("Give the framework a name.")).toBeNull();
   });
 
   it("copying_a_builtin_opens_an_unsaved_copy_named_copy", async () => {
@@ -405,16 +426,19 @@ describe("FrameworksView", () => {
     });
   });
 
-  it("copy_of_a_custom_framework_is_labelled_copy", async () => {
+  it("copy_of_a_custom_framework_is_a_secondary_make_a_copy_button", async () => {
     renderTabs();
     const user = userEvent.setup();
     await openFrameworksTab(user);
     await user.click(screen.getByRole("button", { name: "Mine" }));
 
-    expect(screen.queryByRole("button", { name: "Make a copy" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Copy" }));
+    expect(screen.queryByRole("button", { name: "Copy" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Make a copy" }));
 
     expect(nameField()).toHaveValue("Mine (copy)");
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Copy of Mine" }),
+    ).toBeVisible();
   });
 
   it("moving_a_section_down_by_keyboard_reorders_it", async () => {
@@ -546,6 +570,170 @@ describe("FrameworksView", () => {
     ).toBeInTheDocument();
   });
 
+  it("a_finishing_delete_leaves_another_editor_and_its_text_alone", async () => {
+    let finish: () => void = () => {};
+    vi.mocked(deleteFramework).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = () => {
+            vi.mocked(listFrameworks).mockResolvedValue([
+              ...builtIns,
+              { ...mine, deletedAt: 3 },
+            ]);
+            resolve({ ...mine, deletedAt: 3 });
+          };
+        }),
+    );
+    renderTabs();
+    const user = userEvent.setup();
+    await openFrameworksTab(user);
+    await user.click(screen.getByRole("button", { name: "Mine" }));
+    await user.click(screen.getByRole("button", { name: "Delete Mine" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+
+    // Nothing else can be opened while the delete runs.
+    await user.click(screen.getByRole("button", { name: "New framework" }));
+    expect(nameField()).toHaveValue("Mine");
+    await act(async () => finish());
+
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Mine" })).toBeNull(),
+    );
+    expect(screen.queryByRole("textbox", { name: "Name" })).toBeNull();
+    expect(screen.getByRole("button", { name: "New framework" })).toHaveFocus();
+  });
+
+  it("the_tab_cannot_be_left_or_switched_while_a_save_is_in_flight", async () => {
+    let finish: () => void = () => {};
+    vi.mocked(updateFramework).mockImplementation(
+      (id, input) =>
+        new Promise((resolve) => {
+          finish = () => resolve(stored(id, input));
+        }),
+    );
+    renderTabs();
+    const user = userEvent.setup();
+    await openFrameworksTab(user);
+    await user.click(screen.getByRole("button", { name: "Mine" }));
+    await user.type(nameField(), " 2");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    const others = [
+      screen.getByRole("button", { name: "RISEN" }),
+      screen.getByRole("button", { name: "New framework" }),
+      screen.getByRole("button", { name: "Make a copy" }),
+    ];
+    for (const other of others) {
+      expect(other).toHaveAttribute("aria-disabled", "true");
+      await user.click(other);
+    }
+    await user.click(screen.getByRole("tab", { name: "Builder" }));
+
+    expect(nameField()).toHaveValue("Mine 2");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.getByRole("tab", { name: "Frameworks" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    await act(async () => finish());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "RISEN" })).not.toHaveAttribute(
+        "aria-disabled",
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "Make a copy" }));
+    expect(nameField()).toHaveValue("Mine 2 (copy)");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getByRole("tab", { name: "Builder" }));
+    expect(screen.getByRole("tab", { name: "Builder" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("the_tab_is_free_again_when_a_save_fails", async () => {
+    vi.mocked(updateFramework).mockRejectedValue(new Error("boom"));
+    renderTabs();
+    const user = userEvent.setup();
+    await openFrameworksTab(user);
+    await user.click(screen.getByRole("button", { name: "Mine" }));
+    await user.type(nameField(), " 2");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "RISEN" })).not.toHaveAttribute(
+        "aria-disabled",
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "RISEN" }));
+    expect(screen.getByRole("alertdialog")).toBeVisible();
+  });
+
+  it("delete_is_unavailable_while_a_save_is_in_flight", async () => {
+    let finish: () => void = () => {};
+    vi.mocked(updateFramework).mockImplementation(
+      (id, input) =>
+        new Promise((resolve) => {
+          finish = () => resolve(stored(id, input));
+        }),
+    );
+    renderTabs();
+    const user = userEvent.setup();
+    await openFrameworksTab(user);
+    await user.click(screen.getByRole("button", { name: "Mine" }));
+    await user.type(nameField(), " 2");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    const remove = screen.getByRole("button", { name: "Delete Mine" });
+    expect(remove).toHaveAttribute("aria-disabled", "true");
+    await user.click(remove);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
+    await act(async () => finish());
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Delete Mine 2" }),
+      ).not.toHaveAttribute("aria-disabled"),
+    );
+    expect(deleteFramework).not.toHaveBeenCalled();
+  });
+
+  it("save_is_unavailable_while_a_delete_is_in_flight", async () => {
+    let finish: () => void = () => {};
+    vi.mocked(deleteFramework).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ ...mine, deletedAt: 3 });
+        }),
+    );
+    renderTabs();
+    const user = userEvent.setup();
+    await openFrameworksTab(user);
+    await user.click(screen.getByRole("button", { name: "Mine" }));
+    await user.type(nameField(), " 2");
+    await user.click(screen.getByRole("button", { name: "Delete Mine" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save).toHaveAttribute("aria-disabled", "true");
+    await user.click(save);
+    expect(updateFramework).not.toHaveBeenCalled();
+
+    await act(async () => finish());
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Mine" })).toBeNull(),
+    );
+  });
+
   it("delete_without_a_draft_does_not_mention_one", async () => {
     renderTabs();
     const user = userEvent.setup();
@@ -648,7 +836,7 @@ describe("FrameworksView", () => {
     );
   });
 
-  it("a_create_that_lands_after_new_leaves_the_new_editor_alone", async () => {
+  it("a_create_in_flight_keeps_new_from_opening_another_editor", async () => {
     let finish: () => void = () => {};
     vi.mocked(createFramework).mockImplementation(
       (input) =>
@@ -664,23 +852,18 @@ describe("FrameworksView", () => {
     await user.type(screen.getByRole("textbox", { name: "Label" }), "Goal");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
-    // Still unsaved while the create is under way, so New asks.
+    // Still unsaved while the create is under way, but New does nothing.
     await user.click(screen.getByRole("button", { name: "New framework" }));
-    await user.click(
-      within(screen.getByRole("alertdialog")).getByRole("button", {
-        name: "Discard",
-      }),
-    );
-    expect(nameField()).toHaveValue("");
-    finish();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(nameField()).toHaveValue("Review");
+    await act(async () => finish());
 
     const yours = within(screen.getByRole("list", { name: "Yours" }));
     expect(
       await yours.findByRole("button", { name: "Review" }),
-    ).toHaveAttribute("aria-pressed", "false");
-    expect(nameField()).toHaveValue("");
-    expect(labelValues()).toEqual([""]);
-    expect(screen.queryByRole("button", { name: /^Delete/ })).toBeNull();
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(nameField()).toHaveValue("Review");
+    expect(labelValues()).toEqual(["Goal"]);
   });
 
   it("edits_made_while_saving_stay_unsaved_and_the_next_save_updates", async () => {
@@ -725,6 +908,59 @@ describe("FrameworksView", () => {
       NEW_ID,
       expect.objectContaining({ description: "Later" }),
     );
+  });
+
+  it("a_space_typed_while_saving_stays_unsaved", async () => {
+    let finish: () => void = () => {};
+    vi.mocked(createFramework).mockImplementation(
+      (input) =>
+        new Promise((resolve) => {
+          finish = () => resolve(stored(NEW_ID, input));
+        }),
+    );
+    renderTabs();
+    const user = userEvent.setup();
+    await openFrameworksTab(user);
+    await user.click(screen.getByRole("button", { name: "New framework" }));
+    await user.type(nameField(), "Foo");
+    await user.type(screen.getByRole("textbox", { name: "Label" }), "Goal");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await user.type(nameField(), " ");
+    finish();
+
+    expect(
+      await screen.findByRole("button", { name: "Delete Foo" }),
+    ).toBeInTheDocument();
+    expect(nameField()).toHaveValue("Foo ");
+    await user.click(screen.getByRole("tab", { name: "Builder" }));
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+  });
+
+  it("a_row_added_while_saving_stays_with_focus", async () => {
+    let finish: () => void = () => {};
+    vi.mocked(createFramework).mockImplementation(
+      (input) =>
+        new Promise((resolve) => {
+          finish = () => resolve(stored(NEW_ID, input));
+        }),
+    );
+    renderTabs();
+    const user = userEvent.setup();
+    await openFrameworksTab(user);
+    await user.click(screen.getByRole("button", { name: "New framework" }));
+    await user.type(nameField(), "Review");
+    await user.type(screen.getByRole("textbox", { name: "Label" }), "Goal");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await user.click(screen.getByRole("button", { name: "Add section" }));
+    await act(async () => finish());
+
+    expect(
+      await screen.findByRole("button", { name: "Delete Review" }),
+    ).toBeInTheDocument();
+    expect(labelValues()).toEqual(["Goal", ""]);
+    expect(screen.getAllByRole("textbox", { name: "Label" })[1]).toHaveFocus();
   });
 
   it("a_double_click_on_save_saves_once", async () => {
@@ -832,11 +1068,47 @@ describe("FrameworksView", () => {
 
     await user.click(
       within(rowOf("Beta")).getByRole("button", {
-        name: "Add to end of template",
+        name: "Add to end of template: Beta",
       }),
     );
 
     expect(within(rowOf("Beta")).queryByText(/Not in the template/)).toBeNull();
+  });
+
+  it("unused_sections_are_named_once_under_the_template_without_buttons", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([
+      ...builtIns,
+      { ...mine, template: "{{a}}" },
+    ]);
+    renderTabs();
+    const user = userEvent.setup();
+    await openFrameworksTab(user);
+    await user.click(screen.getByRole("button", { name: "Mine" }));
+
+    expect(
+      screen.getByText(
+        'Not in the template: Beta, Gamma. Use "Add to end of template" on the section to add it.',
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getAllByRole("button", { name: /^Add to end of template/ }),
+    ).toEqual([
+      within(rowOf("Beta")).getByRole("button", {
+        name: "Add to end of template: Beta",
+      }),
+      within(rowOf("Gamma")).getByRole("button", {
+        name: "Add to end of template: Gamma",
+      }),
+    ]);
+
+    await user.click(
+      screen.getByRole("button", { name: "Add to end of template: Beta" }),
+    );
+    expect(
+      screen.getByText(
+        'Not in the template: Gamma. Use "Add to end of template" on the section to add it.',
+      ),
+    ).toBeVisible();
   });
 });
 
@@ -857,6 +1129,28 @@ async function byHand(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("the template editor", () => {
+  it("read_only_by_hand_template_cannot_be_edited", async () => {
+    const editor = editorFor({ ...risen, template: "{{role}} by hand" });
+    expect(editor.readOnly).toBe(true);
+    expect(editor.automatic).toBe(false);
+    const dispatch = vi.fn();
+    render(
+      <AppStateProvider>
+        <TemplateEditor editor={editor} dispatch={dispatch} />
+      </AppStateProvider>,
+    );
+    const user = userEvent.setup();
+
+    expect(templateField()).toHaveAttribute("readonly");
+    const chip = screen.getByRole("button", { name: "Insert Role" });
+    expect(chip).toHaveAttribute("aria-disabled", "true");
+    await user.type(templateField(), "x");
+    await user.click(chip);
+
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(templateField()).toHaveValue("{{role}} by hand");
+  });
+
   it("chip_inserts_the_placeholder_at_the_cursor", async () => {
     renderTabs();
     const user = userEvent.setup();
@@ -898,6 +1192,30 @@ describe("the template editor", () => {
 
     await user.click(screen.getByRole("button", { name: "Dismiss note" }));
     expect(screen.queryByText(/was added to the end/)).toBeNull();
+  });
+
+  it("removing_a_row_with_an_unconfirmed_label_leaves_the_template_alone", async () => {
+    const before = "{{a}} {{b}} {{c}}\n";
+    vi.mocked(listFrameworks).mockResolvedValue([
+      ...builtIns,
+      { ...mine, template: before },
+    ]);
+    renderTabs();
+    const user = userEvent.setup();
+    await openMine(user);
+    await byHand(user);
+
+    await user.click(screen.getByRole("button", { name: "Add section" }));
+    await user.type(
+      screen.getAllByRole("textbox", { name: "Label" })[3],
+      "Delta",
+    );
+    await user.click(screen.getByRole("button", { name: "Remove Delta" }));
+
+    expect(templateField()).toHaveValue(before);
+    expect(screen.getAllByRole("textbox", { name: "Label" })).toHaveLength(3);
+    await user.click(screen.getByRole("tab", { name: "Builder" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
   it("sample_prompt_uses_draft_text_then_bracketed_labels", async () => {
@@ -1044,6 +1362,221 @@ describe("the template editor", () => {
     expect(screen.getByRole("alertdialog")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
+    expect(templateField()).toHaveValue("{{a}} only");
+    expect(screen.getByRole("radio", { name: "By hand" })).toBeChecked();
+  });
+});
+
+describe("feedback and details", () => {
+  it("a_new_framework_is_headed_new_framework", async () => {
+    renderTabs();
+    const user = userEvent.setup();
+    await openFrameworksTab(user);
+
+    await user.click(screen.getByRole("button", { name: "New framework" }));
+
+    expect(
+      screen.getByRole("heading", { level: 2, name: "New framework" }),
+    ).toBeVisible();
+  });
+
+  it("a_blocked_save_focuses_the_first_invalid_field", async () => {
+    renderTabs();
+    const user = userEvent.setup();
+    await openFrameworksTab(user);
+    await user.click(screen.getByRole("button", { name: "New framework" }));
+    await user.type(nameField(), "Fresh");
+    await user.type(screen.getByRole("textbox", { name: "Label" }), "One");
+    await user.click(screen.getByRole("button", { name: "Add section" }));
+    const labels = screen.getAllByRole("textbox", { name: "Label" });
+    expect(labels).toHaveLength(2);
+    await user.type(
+      screen.getAllByRole("textbox", { name: "Help text" })[1],
+      "hint",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(createFramework).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("textbox", { name: "Label" })[1]).toHaveFocus();
+  });
+
+  it("a_blocked_save_focuses_the_message_when_no_field_carries_it", async () => {
+    renderTabs();
+    const user = userEvent.setup();
+    await openFrameworksTab(user);
+    await user.click(screen.getByRole("button", { name: "New framework" }));
+    await user.type(nameField(), "Fresh");
+    await user.clear(screen.getByRole("textbox", { name: "Label" }));
+    await user.click(screen.getByRole("button", { name: "Remove section 1" }));
+    expect(screen.queryByRole("textbox", { name: "Label" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(screen.getByText("Add at least one section.")).toHaveFocus();
+  });
+
+  it("removing_a_section_by_hand_drops_its_added_note", async () => {
+    renderTabs();
+    const user = userEvent.setup();
+    await openMine(user);
+    await byHand(user);
+    await user.click(screen.getByRole("button", { name: "Add section" }));
+    await user.type(
+      screen.getAllByRole("textbox", { name: "Label" })[3],
+      "Delta",
+    );
+    await user.tab();
+    expect(screen.getByText(/Delta was added to the end/)).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Remove Delta" }));
+
+    expect(screen.queryByText(/Delta was added to the end/)).toBeNull();
+  });
+
+  it("delete_mentions_the_draft_when_only_its_title_is_typed", async () => {
+    renderTabs({ id: mine.id, texts: {} });
+    const user = userEvent.setup();
+    await screen.findByRole("combobox", { name: "Framework" });
+    await user.click(screen.getByRole("button", { name: "Type a draft" }));
+    await user.type(screen.getByRole("textbox", { name: /title/i }), "Plan");
+    await openMine(user);
+
+    await user.click(screen.getByRole("button", { name: "Delete Mine" }));
+
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(
+      "Your Mine draft will be discarded.",
+    );
+  });
+
+  it("the_removal_confirm_is_a_danger_button", async () => {
+    renderTabs({ id: mine.id, texts: { b: "some text" } });
+    const user = userEvent.setup();
+    await screen.findByRole("combobox", { name: "Framework" });
+    await user.click(screen.getByRole("button", { name: "Type a draft" }));
+    await openMine(user);
+    await user.click(screen.getByRole("button", { name: "Remove Beta" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    const save = within(screen.getByRole("alertdialog")).getByRole("button", {
+      name: "Save",
+    });
+
+    expect(save.className).toContain("bg-red-700");
+  });
+
+  it("a_chip_inserts_at_the_end_before_the_template_was_focused", async () => {
+    renderTabs();
+    const user = userEvent.setup();
+    await openMine(user);
+    await byHand(user);
+    const before = templateField().value;
+
+    await user.click(screen.getByRole("button", { name: "Insert Beta" }));
+
+    expect(templateField()).toHaveValue(`${before}{{b}}`);
+  });
+
+  it("two_spots_on_one_line_show_one_note", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([
+      ...builtIns,
+      { ...mine, template: "Write {{a}} and {{b}} well. {{c}}" },
+    ]);
+    renderTabs();
+    const user = userEvent.setup();
+    await openMine(user);
+
+    await user.click(screen.getByRole("button", { name: "Remove Alpha" }));
+    await user.click(screen.getByRole("button", { name: "Remove Beta" }));
+
+    expect(screen.getAllByText(/Check the wording at line/)).toHaveLength(1);
+    expect(screen.getByText("Check the wording at line 1")).toBeVisible();
+  });
+
+  it("confirming_the_reset_from_the_link_focuses_the_automatic_item", async () => {
+    renderTabs();
+    const user = userEvent.setup();
+    await openMine(user);
+    await byHand(user);
+    fireEvent.change(templateField(), { target: { value: "{{a}} only" } });
+
+    await user.click(
+      screen.getByRole("button", { name: "Reset to automatic" }),
+    );
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Reset",
+      }),
+    );
+
+    expect(screen.getByRole("radio", { name: "Automatic" })).toHaveFocus();
+  });
+
+  it("cancelling_the_reset_from_the_link_returns_focus_to_the_link", async () => {
+    renderTabs();
+    const user = userEvent.setup();
+    await openMine(user);
+    await byHand(user);
+    fireEvent.change(templateField(), { target: { value: "{{a}} only" } });
+    const link = screen.getByRole("button", { name: "Reset to automatic" });
+
+    await user.click(link);
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Cancel",
+      }),
+    );
+
+    expect(link).toHaveFocus();
+  });
+});
+
+describe("sections replaced within one session", () => {
+  it("a_re_added_section_does_not_inherit_the_removed_ones_draft", async () => {
+    renderTabs({ id: mine.id, texts: { a: "alpha text" } });
+    const user = userEvent.setup();
+    await screen.findByRole("combobox", { name: "Framework" });
+    await user.click(screen.getByRole("button", { name: "Type a draft" }));
+    await openFrameworksTab(user);
+    await user.click(screen.getByRole("button", { name: "Mine" }));
+
+    await user.click(screen.getByRole("button", { name: "Remove Alpha" }));
+    await user.click(screen.getByRole("button", { name: "Add section" }));
+    const fresh = screen.getAllByRole("textbox", { name: "Label" })[2];
+    await user.type(fresh, "Alpha?");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog).toHaveAccessibleName("Remove sections with draft text?");
+    expect(dialog).toHaveTextContent("text in Alpha.");
+    expect(updateFramework).not.toHaveBeenCalled();
+  });
+});
+
+describe("reset to automatic with a brace label", () => {
+  async function braceLabel(user: ReturnType<typeof userEvent.setup>) {
+    await openMine(user);
+    await byHand(user);
+    fireEvent.change(templateField(), { target: { value: "{{a}} only" } });
+    fireEvent.change(screen.getByDisplayValue("Beta"), {
+      target: { value: "Be {{ta" },
+    });
+  }
+
+  it("is_unavailable_while_a_committed_label_holds_braces", async () => {
+    renderTabs();
+    const user = userEvent.setup();
+    await braceLabel(user);
+
+    const link = screen.getByRole("button", { name: "Reset to automatic" });
+    const automatic = screen.getByRole("radio", { name: "Automatic" });
+    expect(link).toHaveAttribute("aria-disabled", "true");
+    expect(automatic).toHaveAttribute("aria-disabled", "true");
+
+    await user.click(link);
+    await user.click(automatic);
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(templateField()).toHaveValue("{{a}} only");
     expect(screen.getByRole("radio", { name: "By hand" })).toBeChecked();
   });

@@ -277,6 +277,21 @@ describe("OpenInBuilder", () => {
     expect(probe().drafts.rtf).not.toHaveProperty("format");
   });
 
+  it("is_unavailable_when_the_framework_was_deleted", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([{ ...rtf, deletedAt: 5 }]);
+    const user = await renderOpen(saved);
+    const button = openButton();
+
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(
+      within(pane()).getByText(
+        "This prompt's framework is no longer available.",
+      ),
+    ).toBeInTheDocument();
+    await user.click(button);
+    expect(probe().view).toBe("history");
+  });
+
   it("is_unavailable_when_the_framework_is_gone", async () => {
     const user = await renderOpen({ ...saved, frameworkId: "gone" });
     const button = openButton();

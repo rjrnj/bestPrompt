@@ -5,6 +5,7 @@ import type {
   EditorState,
 } from "../../frameworks/frameworkEditor";
 import {
+  errorText,
   fieldHelp,
   fieldLabel,
   primaryButton,
@@ -21,6 +22,8 @@ type Props = {
   errors: EditorErrors | null;
   /** Put focus in Name on opening: for a new framework or a copy. */
   focusName: boolean;
+  /** The name of the framework this unsaved editor is a copy of, if any. */
+  copiedFrom: string | null;
   saving: boolean;
   /** `from` is the button pressed, for focus to return to. */
   onSave(from: HTMLElement): void;
@@ -30,13 +33,12 @@ type Props = {
   deleteButton: ReactNode;
 };
 
-const errorText = "text-xs text-red-700 dark:text-red-400";
 const sectionHeading =
   "text-sm font-semibold text-slate-900 dark:text-slate-100";
 
 /**
  * One framework's name, description, sections and template, with Save,
- * Copy and Delete above them. A built-in opens read-only, with Make a copy
+ * Make a copy and Delete above them. A built-in opens read-only, with Make a copy
  * as its only action.
  */
 export function FrameworkEditor({
@@ -44,6 +46,7 @@ export function FrameworkEditor({
   dispatch,
   errors,
   focusName,
+  copiedFrom,
   saving,
   onSave,
   onCopy,
@@ -65,14 +68,18 @@ export function FrameworkEditor({
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="min-w-0 flex-1 basis-40 truncate text-lg font-semibold">
-            {editor.saved?.name ?? "New framework"}
+            {editor.saved?.name ??
+              (copiedFrom === null ? "New framework" : `Copy of ${copiedFrom}`)}
           </h2>
           {readOnly ? (
             onCopy && (
               <button
                 type="button"
                 className={primaryButton}
-                onClick={(event) => onCopy(event.currentTarget)}
+                aria-disabled={saving || undefined}
+                onClick={(event) => {
+                  if (!saving) onCopy(event.currentTarget);
+                }}
               >
                 Make a copy
               </button>
@@ -91,9 +98,12 @@ export function FrameworkEditor({
                 <button
                   type="button"
                   className={secondaryButton}
-                  onClick={(event) => onCopy(event.currentTarget)}
+                  aria-disabled={saving || undefined}
+                  onClick={(event) => {
+                    if (!saving) onCopy(event.currentTarget);
+                  }}
                 >
-                  Copy
+                  Make a copy
                 </button>
               )}
               {deleteButton}

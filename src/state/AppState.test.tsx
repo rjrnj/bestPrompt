@@ -795,7 +795,9 @@ describe("AppStateProvider framework actions", () => {
   });
 
   it("deleteFramework_dispatches_frameworkDeleted_and_returns_true", async () => {
-    vi.mocked(listFrameworks).mockResolvedValue([rtf, mine]);
+    vi.mocked(listFrameworks)
+      .mockResolvedValueOnce([rtf, mine])
+      .mockResolvedValue([{ ...rtf, deletedAt: 9 }, mine]);
     vi.mocked(deleteFramework).mockResolvedValue({ ...rtf, deletedAt: 9 });
     renderProbe();
     await screen.findByText("ids: rtf,c-1");
@@ -806,6 +808,77 @@ describe("AppStateProvider framework actions", () => {
     expect(await screen.findByText("ids: rtf!,c-1")).toBeInTheDocument();
     expect(screen.getByText("selected: c-1")).toBeInTheDocument();
     expect(screen.getByText("result: true")).toBeInTheDocument();
+  });
+
+  it("deleteFramework_reads_the_list_again_and_drops_a_framework_the_backend_removed", async () => {
+    vi.mocked(listFrameworks)
+      .mockResolvedValueOnce([rtf, mine])
+      .mockResolvedValue([mine]);
+    vi.mocked(deleteFramework).mockResolvedValue({ ...rtf, deletedAt: 9 });
+    renderProbe();
+    await screen.findByText("ids: rtf,c-1");
+
+    await click("delete framework");
+
+    expect(await screen.findByText("ids: c-1")).toBeInTheDocument();
+    expect(listFrameworks).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("selected: c-1")).toBeInTheDocument();
+    expect(screen.getByText("result: true")).toBeInTheDocument();
+  });
+
+  it("deleteFramework_returns_before_the_list_is_read_again", async () => {
+    const reread = deferred<Framework[]>();
+    vi.mocked(listFrameworks)
+      .mockResolvedValueOnce([rtf, mine])
+      .mockReturnValue(reread.promise);
+    vi.mocked(deleteFramework).mockResolvedValue({ ...rtf, deletedAt: 9 });
+    renderProbe();
+    await screen.findByText("ids: rtf,c-1");
+
+    await click("delete framework");
+
+    expect(await screen.findByText("result: true")).toBeInTheDocument();
+    expect(screen.getByText("ids: rtf!,c-1")).toBeInTheDocument();
+    expect(listFrameworks).toHaveBeenCalledTimes(2);
+    await act(async () => reread.resolve([mine]));
+    expect(await screen.findByText("ids: c-1")).toBeInTheDocument();
+  });
+
+  it("deleteFramework_keeps_a_framework_saved_while_the_list_is_read_again", async () => {
+    const reread = deferred<Framework[]>();
+    const other: Framework = { ...mine, id: "c-2", name: "Other" };
+    vi.mocked(listFrameworks)
+      .mockResolvedValueOnce([rtf, mine])
+      .mockReturnValue(reread.promise);
+    vi.mocked(deleteFramework).mockResolvedValue({ ...rtf, deletedAt: 9 });
+    vi.mocked(createFramework).mockResolvedValue(other);
+    renderProbe();
+    await screen.findByText("ids: rtf,c-1");
+
+    await click("delete framework");
+    await screen.findByText("result: true");
+    await click("create framework");
+    await screen.findByText("framework result: c-2");
+    // The listing was taken before the save landed.
+    await act(async () => reread.resolve([{ ...rtf, deletedAt: 9 }, mine]));
+
+    expect(await screen.findByText("ids: rtf!,c-1,c-2")).toBeInTheDocument();
+  });
+
+  it("deleteFramework_keeps_the_list_and_stays_quiet_when_the_refresh_fails", async () => {
+    vi.mocked(listFrameworks)
+      .mockResolvedValueOnce([rtf, mine])
+      .mockRejectedValue(new ApiError("database", "locked"));
+    vi.mocked(deleteFramework).mockResolvedValue({ ...rtf, deletedAt: 9 });
+    renderProbe();
+    await screen.findByText("ids: rtf,c-1");
+
+    await click("delete framework");
+
+    expect(await screen.findByText("result: true")).toBeInTheDocument();
+    expect(listFrameworks).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("ids: rtf!,c-1")).toBeInTheDocument();
+    expect(toasts()).toEqual([]);
   });
 
   it("deleteFramework_toasts_the_error_message_and_returns_false", async () => {

@@ -1,15 +1,28 @@
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import * as ToggleGroup from "@radix-ui/react-toggle-group";
-import { useId, useLayoutEffect, useRef, useState, type Dispatch } from "react";
-import { autoTemplate } from "../../frameworks/autoTemplate";
 import {
+  useCallback,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type Dispatch,
+} from "react";
+import { isAutomatic } from "../../frameworks/autoTemplate";
+import {
+  committedSections,
+  hasBraces,
   unusedRows,
   type EditorAction,
   type EditorState,
 } from "../../frameworks/frameworkEditor";
 import { useAppState } from "../../state/AppState";
 import { draftTextIn } from "../../state/reducer";
-import { renderTemplate, validateTemplate } from "../../template";
+import {
+  insertPlaceholder,
+  renderTemplate,
+  validateTemplate,
+} from "../../template";
 import {
   dangerButton,
   dialogButtons,
@@ -17,9 +30,11 @@ import {
   dialogOverlay,
   dialogPanel,
   dialogTitle,
+  errorText,
   fieldHelp,
   linkButton,
   secondaryButton,
+  textInput,
 } from "../styles";
 
 type Props = {
@@ -27,11 +42,10 @@ type Props = {
   dispatch: Dispatch<EditorAction>;
 };
 
-const errorText = "text-xs text-red-700 dark:text-red-400";
 const toggleItem =
   "px-3 py-1 text-sm font-medium text-slate-700 first:rounded-l-md last:rounded-r-md not-aria-disabled:hover:bg-slate-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-500 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 data-[state=on]:bg-sky-100 data-[state=on]:text-sky-900 dark:text-slate-300 dark:not-aria-disabled:hover:bg-slate-800 dark:data-[state=on]:bg-sky-900 dark:data-[state=on]:text-sky-100";
 const chip =
-  "rounded-full border border-slate-400 bg-white px-2.5 py-0.5 text-xs font-medium text-slate-900 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700";
+  "rounded-full border border-slate-400 bg-white px-2.5 py-0.5 text-xs font-medium text-slate-900 not-aria-disabled:hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:not-aria-disabled:hover:bg-slate-700";
 const subheading = "text-sm font-medium text-slate-900 dark:text-slate-100";
 
 /** The 1-based line of `offset` in `text`. */
@@ -47,7 +61,7 @@ function columnOf(text: string, offset: number): number {
 /**
  * How the prompt is put together: Automatic, or By hand with the template
  * in a text area, a chip per section, and a sample prompt beside it. A
- * built-in shows Automatic and can't be switched.
+ * built-in can't be switched, and its template can't be edited.
  */
 export function TemplateEditor({ editor, dispatch }: Props) {
   const { readOnly, automatic, template } = editor;
@@ -58,17 +72,19 @@ export function TemplateEditor({ editor, dispatch }: Props) {
   const asker = useRef<"link" | "toggle">("toggle");
   // Where the cursor goes once the inserted text is on screen.
   const cursor = useRef<number | null>(null);
+  // Whether the template has been focused since it appeared.
+  const focused = useRef(false);
+  const textarea = useCallback((element: HTMLTextAreaElement | null) => {
+    field.current = element;
+    if (element !== null) focused.current = false;
+  }, []);
   const [asking, setAsking] = useState(false);
   const fieldId = useId();
   const errorsId = useId();
 
-  const committed = editor.sections
-    .filter((s) => s.committed)
-    .map(({ key, label, helpText }) => ({
-      key,
-      label: label.trim(),
-      helpText,
-    }));
+  const committed = committedSections(editor);
+  // The template can't be rebuilt from labels that hold braces.
+  const cannotReset = committed.some((s) => hasBraces(s.label));
   const errors = automatic
     ? []
     : validateTemplate(
@@ -77,7 +93,7 @@ export function TemplateEditor({ editor, dispatch }: Props) {
       );
   const unused = unusedRows(editor).flatMap((row) => {
     const section = editor.sections.find((s) => s.id === row);
-    return section ? [{ row, label: section.label.trim() }] : [];
+    return section ? [section.label.trim()] : [];
   });
 
   useLayoutEffect(() => {
@@ -88,20 +104,21 @@ export function TemplateEditor({ editor, dispatch }: Props) {
   });
 
   function insert(key: string) {
-    const input = field.current;
+    if (readOnly) return;
+    // A textarea's cursor starts at 0 before anyone has been in it, which
+    // is not a place the user chose: until then the tag goes at the end.
+    const input = focused.current ? field.current : null;
     const start = input?.selectionStart ?? template.length;
     const end = input?.selectionEnd ?? template.length;
-    const tag = `{{${key}}}`;
-    cursor.current = start + tag.length;
-    dispatch({
-      type: "templateEdited",
-      value: template.slice(0, start) + tag + template.slice(end),
-    });
+    const inserted = insertPlaceholder(template, start, end, key);
+    cursor.current = inserted.cursor;
+    dispatch({ type: "templateEdited", value: inserted.template });
   }
 
   /** Switches to Automatic, asking first if hand edits would be lost. */
   function toAutomatic(from: "link" | "toggle") {
-    if (template === autoTemplate(committed)) {
+    if (cannotReset) return;
+    if (isAutomatic(template, committed)) {
       dispatch({ type: "modeChanged", automatic: true });
     } else {
       asker.current = from;
@@ -128,7 +145,7 @@ export function TemplateEditor({ editor, dispatch }: Props) {
         >
           <ToggleGroup.Item
             value="automatic"
-            aria-disabled={readOnly || undefined}
+            aria-disabled={readOnly || cannotReset || undefined}
             className={toggleItem}
           >
             Automatic
@@ -145,7 +162,8 @@ export function TemplateEditor({ editor, dispatch }: Props) {
           <button
             ref={resetLink}
             type="button"
-            className={linkButton}
+            aria-disabled={cannotReset || undefined}
+            className={`${linkButton} aria-disabled:cursor-not-allowed aria-disabled:opacity-50`}
             onClick={() => toAutomatic("link")}
           >
             Reset to automatic
@@ -165,6 +183,7 @@ export function TemplateEditor({ editor, dispatch }: Props) {
                 key={section.key}
                 type="button"
                 aria-label={`Insert ${section.label}`}
+                aria-disabled={readOnly || undefined}
                 className={chip}
                 onClick={() => insert(section.key)}
               >
@@ -179,20 +198,24 @@ export function TemplateEditor({ editor, dispatch }: Props) {
                 Template
               </label>
               <textarea
-                ref={field}
+                ref={textarea}
                 id={fieldId}
                 rows={12}
                 spellCheck={false}
+                readOnly={readOnly}
                 value={template}
                 aria-invalid={errors.length > 0 ? true : undefined}
                 aria-describedby={errors.length > 0 ? errorsId : undefined}
+                onFocus={() => {
+                  focused.current = true;
+                }}
                 onChange={(event) =>
                   dispatch({
                     type: "templateEdited",
                     value: event.target.value,
                   })
                 }
-                className="w-full resize-y rounded-md border border-slate-400 bg-white px-3 py-2 font-mono text-sm text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-slate-500 dark:bg-slate-900 dark:text-slate-100"
+                className={`${textInput} resize-y font-mono`}
               />
               {errors.length > 0 && (
                 <ul id={errorsId} className="flex flex-col gap-0.5">
@@ -215,34 +238,20 @@ export function TemplateEditor({ editor, dispatch }: Props) {
             />
           </div>
 
-          {unused.map(({ row, label }) => (
-            <div
-              key={row}
-              className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-amber-50 px-2 py-1 dark:bg-amber-950"
-            >
-              <p className="text-xs text-amber-900 dark:text-amber-200">
-                {label} is not in the template, so its text won&apos;t appear in
-                the prompt.
-              </p>
-              <button
-                type="button"
-                aria-label={`Add to end of template: ${label}`}
-                className={linkButton}
-                onClick={() =>
-                  dispatch({ type: "sectionAppendedToTemplate", row })
-                }
-              >
-                Add to end of template
-              </button>
-            </div>
-          ))}
+          {unused.length > 0 && (
+            // Each row has the warning and the button; this only sums up.
+            <p className="rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+              Not in the template: {unused.join(", ")}. Use &quot;Add to end of
+              template&quot; on the section to add it.
+            </p>
+          )}
           {editor.notes.map((note, index) => (
             <div
-              key={`${index} ${note}`}
+              key={`${note.row} ${note.text}`}
               className="flex items-start gap-2 rounded-md bg-sky-50 px-2 py-1 dark:bg-sky-950"
             >
               <p className="min-w-0 flex-1 text-xs text-sky-900 dark:text-sky-200">
-                {note}
+                {note.text}
               </p>
               <button
                 type="button"
@@ -274,11 +283,11 @@ export function TemplateEditor({ editor, dispatch }: Props) {
             className={dialogPanel}
             onCloseAutoFocus={(event) => {
               event.preventDefault();
-              (asker.current === "link"
-                ? resetLink.current
-                : modeSwitch.current?.querySelector<HTMLElement>(
-                    "[data-state=on]",
-                  )
+              (
+                (asker.current === "link" ? resetLink.current : null) ??
+                modeSwitch.current?.querySelector<HTMLElement>(
+                  "[data-state=on]",
+                )
               )?.focus();
             }}
           >

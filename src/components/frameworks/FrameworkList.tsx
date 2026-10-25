@@ -12,6 +12,8 @@ type Props = {
   onSelect(framework: Framework, from: HTMLElement): void;
   onNew(from: HTMLElement): void;
   newButtonRef?: Ref<HTMLButtonElement>;
+  /** Nothing can be opened, as while a save runs. */
+  disabled?: boolean;
 };
 
 const heading =
@@ -26,6 +28,7 @@ export function FrameworkList({
   onSelect,
   onNew,
   newButtonRef,
+  disabled = false,
 }: Props) {
   const builtInId = useId();
   const yoursId = useId();
@@ -37,7 +40,10 @@ export function FrameworkList({
       <button
         type="button"
         aria-pressed={framework.id === selectedId}
-        onClick={(event) => onSelect(framework, event.currentTarget)}
+        aria-disabled={disabled || undefined}
+        onClick={(event) => {
+          if (!disabled) onSelect(framework, event.currentTarget);
+        }}
         className={row}
       >
         <span className="min-w-0 flex-1 truncate">{framework.name}</span>
@@ -59,7 +65,10 @@ export function FrameworkList({
         ref={newButtonRef}
         type="button"
         className={`${secondaryButton} self-start`}
-        onClick={(event) => onNew(event.currentTarget)}
+        aria-disabled={disabled || undefined}
+        onClick={(event) => {
+          if (!disabled) onNew(event.currentTarget);
+        }}
       >
         <span aria-hidden="true">+ </span>New framework
       </button>

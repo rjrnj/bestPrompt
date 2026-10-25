@@ -182,6 +182,26 @@ describe("HistoryView list pane", () => {
     await waitFor(() => expect(lastQuery()?.frameworkId).toBe("risen"));
   });
 
+  it("framework_filter_marks_a_deleted_framework", async () => {
+    const custom = { ...rtf, isCustom: true, name: "Review" };
+    vi.mocked(listFrameworks).mockResolvedValue([
+      rtf,
+      { ...custom, id: "old", deletedAt: 5 },
+      { ...custom, id: "new" },
+    ]);
+    renderView();
+    const user = userEvent.setup();
+
+    await user.click(
+      await screen.findByRole("combobox", { name: "Framework" }),
+    );
+
+    expect(
+      await screen.findByRole("option", { name: "Review (deleted)" }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByRole("option", { name: "Review" })).toHaveLength(1);
+  });
+
   it("show_more_loads_the_next_page", async () => {
     vi.mocked(listPromptEntries)
       .mockResolvedValueOnce(page(PAGE_SIZE))

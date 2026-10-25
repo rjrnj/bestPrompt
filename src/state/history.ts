@@ -60,7 +60,8 @@ export type HistoryAction =
   | { type: "entrySelected"; id: string | null }
   | { type: "entryUpdated"; entry: PromptEntry }
   | { type: "entryRemoved"; id: string }
-  | { type: "projectRemoved"; id: string };
+  | { type: "projectRemoved"; id: string }
+  | { type: "frameworkRemoved"; id: string };
 
 export const initialHistoryState: HistoryState = {
   filters: { project: { kind: "any" }, frameworkId: null, search: "" },
@@ -174,5 +175,8 @@ export function historyReducer(
         filters: { ...state.filters, project: { kind: "any" } },
       };
     }
+    case "frameworkRemoved":
+      if (state.filters.frameworkId !== action.id) return state;
+      return { ...state, filters: { ...state.filters, frameworkId: null } };
   }
 }

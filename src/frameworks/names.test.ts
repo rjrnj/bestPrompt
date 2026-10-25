@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { uniqueName } from "./names";
+import { nameKey, uniqueName } from "./names";
 
 describe("uniqueName", () => {
   it("returns the base when it is free", () => {
@@ -14,5 +14,11 @@ describe("uniqueName", () => {
 
   it("skips counters that are also taken", () => {
     expect(uniqueName("A", ["a", "A (2)", "a (3)"])).toBe("A (4)");
+  });
+});
+
+describe("nameKey", () => {
+  it("trims and lowercases beyond ASCII", () => {
+    expect(nameKey("  Ärger Δ ")).toBe("ärger δ");
   });
 });
