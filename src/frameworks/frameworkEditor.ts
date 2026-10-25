@@ -368,11 +368,30 @@ export function isDirty(state: EditorState): boolean {
   return content(state) !== content(state.saved ?? blankEditor());
 }
 
-/** Rebuilds the editor from the framework the backend returned after a save. */
+/**
+ * Rebuilds the editor from the framework the backend returned after a save.
+ * With `sent`, the input that was saved: if the editor has changed since it
+ * was sent, the changes are kept, now as unsaved changes to the stored
+ * framework, so the next Save updates it rather than creating another.
+ */
 export function markSaved(
   state: EditorState,
   framework: Framework,
+  sent?: FrameworkInput,
 ): EditorState {
+  // A saved editor has no uncommitted rows (blank labels block Save), so
+  // one now was added while the save was under way.
+  const changed =
+    sent !== undefined &&
+    (JSON.stringify(toInput(state)) !== JSON.stringify(sent) ||
+      state.sections.some((s) => !s.committed));
+  const saved = rebuilt(state, framework);
+  if (changed) return { ...state, sourceId: framework.id, saved };
+  return { ...saved, saved };
+}
+
+/** The editor as the backend stored `framework`, keeping the row ids. */
+function rebuilt(state: EditorState, framework: Framework): EditorState {
   const ids = new Map(
     state.sections.filter((s) => s.committed).map((s) => [s.key, s.id]),
   );
@@ -380,7 +399,7 @@ export function markSaved(
   const sections = framework.sections.map((s) =>
     rowOf(ids.get(s.key) ?? nextRowId++, s, true),
   );
-  const rebuilt: EditorState = {
+  return {
     ...fromFramework(framework, false),
     sections,
     notes: isAutomatic(framework.template, framework.sections)
@@ -388,5 +407,4 @@ export function markSaved(
       : state.notes,
     nextRowId,
   };
-  return { ...rebuilt, saved: rebuilt };
 }

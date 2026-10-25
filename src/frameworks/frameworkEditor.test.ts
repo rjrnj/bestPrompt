@@ -433,6 +433,42 @@ describe("isDirty", () => {
     expect(saved.sections[0].id).toBe(s.sections[0].id);
   });
 
+  it("markSaved_keeps_edits_made_while_saving_as_unsaved_changes", () => {
+    const s = run(withLabel("One"), { type: "nameChanged", value: "Name" });
+    const sent = toInput(s);
+    const later = run(s, { type: "descriptionChanged", value: "More" });
+
+    const landed = markSaved(later, custom({ ...sent }), sent);
+
+    expect(landed.sourceId).toBe(custom().id);
+    expect(landed.description).toBe("More");
+    expect(isDirty(landed)).toBe(true);
+    // Undoing the later edit leaves nothing unsaved.
+    const undone = run(landed, { type: "descriptionChanged", value: "" });
+    expect(isDirty(undone)).toBe(false);
+  });
+
+  it("markSaved_counts_a_row_added_while_saving_as_a_change", () => {
+    const s = run(withLabel("One"), { type: "nameChanged", value: "Name" });
+    const sent = toInput(s);
+    const later = run(s, { type: "sectionAdded" });
+
+    const landed = markSaved(later, custom({ ...sent }), sent);
+
+    expect(landed.sections).toHaveLength(2);
+    expect(isDirty(landed)).toBe(true);
+  });
+
+  it("markSaved_with_an_unchanged_editor_is_saved", () => {
+    const s = run(withLabel("One"), { type: "nameChanged", value: "Name" });
+    const sent = toInput(s);
+
+    const landed = markSaved(s, custom({ ...sent }), sent);
+
+    expect(isDirty(landed)).toBe(false);
+    expect(landed.sourceId).toBe(custom().id);
+  });
+
   it("markSaved_keeps_notes_and_clears_spots", () => {
     let s = run(addSection(withLabel("One"), "Two"), {
       type: "modeChanged",
