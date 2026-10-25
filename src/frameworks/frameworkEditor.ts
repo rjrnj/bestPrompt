@@ -253,19 +253,10 @@ export function editorReducer(
         notes: [],
         spots: [],
       };
-    case "templateEdited": {
-      const automatic = isAutomatic(
-        action.value,
-        savedSections(state.sections),
-      );
-      return {
-        ...state,
-        template: action.value,
-        automatic,
-        notes: automatic ? [] : state.notes,
-        spots: [],
-      };
-    }
+    case "templateEdited":
+      // The mode stays the user's choice while editing: landing on the
+      // generated text must not switch the editor away under the cursor.
+      return { ...state, template: action.value, spots: [] };
     case "sectionAppendedToTemplate": {
       const target = state.sections.find((s) => s.id === action.row);
       if (!target?.committed || state.automatic) return state;

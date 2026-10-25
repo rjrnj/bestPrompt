@@ -16,6 +16,8 @@ export const dangerButton = `${button} bg-red-700 text-white not-aria-disabled:h
 export const fieldLabel =
   "block text-sm font-medium text-slate-700 dark:text-slate-300";
 export const fieldHelp = "text-xs text-slate-600 dark:text-slate-400";
+export const linkButton =
+  "rounded text-xs font-medium text-sky-700 underline hover:text-sky-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:text-sky-400 dark:hover:text-sky-200";
 export const textInput =
   "block w-full rounded-md border border-slate-400 bg-white px-3 py-1.5 text-sm text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100";
 

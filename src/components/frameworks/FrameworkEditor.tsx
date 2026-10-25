@@ -12,6 +12,7 @@ import {
   textInput,
 } from "../styles";
 import { SectionRows } from "./SectionRows";
+import { TemplateEditor } from "./TemplateEditor";
 
 type Props = {
   editor: EditorState;
@@ -156,39 +157,8 @@ export function FrameworkEditor({
 
       <section className="flex flex-col gap-2">
         <h3 className={sectionHeading}>Template</h3>
-        <TemplateMode editor={editor} errors={errors} />
+        <TemplateEditor editor={editor} dispatch={dispatch} />
       </section>
     </div>
-  );
-}
-
-/**
- * How the prompt is put together. For now this names the mode; the switch
- * between Automatic and By hand, and the by-hand editor, belong here.
- */
-function TemplateMode({
-  editor,
-  errors,
-}: {
-  editor: EditorState;
-  errors: EditorErrors | null;
-}) {
-  return (
-    <>
-      <p className="text-sm text-slate-700 dark:text-slate-300">
-        {editor.automatic
-          ? "Automatic: each section as a heading, left out when empty."
-          : "By hand."}
-      </p>
-      {errors?.template && (
-        <ul className="flex flex-col gap-0.5">
-          {errors.template.map((error) => (
-            <li key={`${error.offset} ${error.message}`} className={errorText}>
-              The template has an error: {error.message}
-            </li>
-          ))}
-        </ul>
-      )}
-    </>
   );
 }

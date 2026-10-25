@@ -169,7 +169,7 @@ describe("automatic template", () => {
     expect(s.spots).toEqual([]);
   });
 
-  it("editing_the_template_back_to_the_generated_one_is_automatic", () => {
+  it("editing_the_template_back_to_the_generated_one_stays_by_hand", () => {
     let s = run(withLabel("One"), { type: "modeChanged", automatic: false });
     expect(s.automatic).toBe(false);
     s = run(s, { type: "templateEdited", value: "changed" });
@@ -178,7 +178,9 @@ describe("automatic template", () => {
       type: "templateEdited",
       value: autoTemplate(toInput(s).sections),
     });
-    expect(s.automatic).toBe(true);
+    expect(s.automatic).toBe(false);
+    // Saving works the mode out afresh.
+    expect(markSaved(s, custom({ ...toInput(s) })).automatic).toBe(true);
   });
 });
 
@@ -514,7 +516,7 @@ describe("hasErrors", () => {
 });
 
 describe("stale notes and unparsable templates", () => {
-  it("clears_notes_when_an_edit_lands_on_the_generated_template", () => {
+  it("keeps_notes_when_an_edit_lands_on_the_generated_template", () => {
     let s = run(withLabel("One"), { type: "modeChanged", automatic: false });
     s = addSection(s, "Two");
     expect(s.notes).toHaveLength(1);
@@ -522,8 +524,8 @@ describe("stale notes and unparsable templates", () => {
       type: "templateEdited",
       value: autoTemplate(toInput(s).sections),
     });
-    expect(s.automatic).toBe(true);
-    expect(s.notes).toEqual([]);
+    expect(s.automatic).toBe(false);
+    expect(s.notes).toHaveLength(1);
   });
 
   it("markSaved_drops_notes_when_the_saved_framework_is_automatic", () => {

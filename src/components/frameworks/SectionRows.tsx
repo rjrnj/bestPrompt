@@ -15,7 +15,7 @@ import {
   type EditorState,
 } from "../../frameworks/frameworkEditor";
 import { Arrow, Grip } from "../icons";
-import { fieldLabel, secondaryButton, textInput } from "../styles";
+import { fieldLabel, linkButton, secondaryButton, textInput } from "../styles";
 
 type Props = {
   editor: EditorState;
@@ -26,8 +26,6 @@ type Props = {
 
 const errorText = "text-xs text-red-700 dark:text-red-400";
 const iconButton = `${secondaryButton} flex size-7 items-center justify-center px-0 py-0`;
-const linkButton =
-  "rounded text-xs font-medium text-sky-700 underline hover:text-sky-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:text-sky-400 dark:hover:text-sky-200";
 
 /**
  * The framework's sections, one row each, then Add section. Rows move with

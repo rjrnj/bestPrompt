@@ -839,3 +839,212 @@ describe("FrameworksView", () => {
     expect(within(rowOf("Beta")).queryByText(/Not in the template/)).toBeNull();
   });
 });
+
+/** Opens Mine in the Frameworks tab. */
+async function openMine(user: ReturnType<typeof userEvent.setup>) {
+  await openFrameworksTab(user);
+  await user.click(screen.getByRole("button", { name: "Mine" }));
+}
+
+function templateField() {
+  return screen.getByRole<HTMLTextAreaElement>("textbox", {
+    name: "Template",
+  });
+}
+
+async function byHand(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("radio", { name: "By hand" }));
+}
+
+describe("the template editor", () => {
+  it("chip_inserts_the_placeholder_at_the_cursor", async () => {
+    renderTabs();
+    const user = userEvent.setup();
+    await openMine(user);
+    await byHand(user);
+    await user.clear(templateField());
+    await user.type(templateField(), "XYZ");
+    templateField().setSelectionRange(1, 2);
+
+    await user.click(screen.getByRole("button", { name: "Insert Beta" }));
+
+    expect(templateField()).toHaveValue("X{{b}}Z");
+    expect(templateField().selectionStart).toBe(6);
+    expect(templateField().selectionEnd).toBe(6);
+    expect(templateField()).toHaveFocus();
+  });
+
+  it("adding_a_section_by_hand_shows_the_added_note", async () => {
+    renderTabs();
+    const user = userEvent.setup();
+    await openMine(user);
+    await byHand(user);
+
+    await user.click(screen.getByRole("button", { name: "Add section" }));
+    await user.type(
+      screen.getAllByRole("textbox", { name: "Label" })[3],
+      "Delta",
+    );
+    await user.tab();
+
+    expect(
+      screen.getByText(
+        "Delta was added to the end of the template. Move or reword it as you like.",
+      ),
+    ).toBeVisible();
+    expect(
+      templateField().value.endsWith("{{#delta}}# Delta\n{{delta}}{{/delta}}"),
+    ).toBe(true);
+
+    await user.click(screen.getByRole("button", { name: "Dismiss note" }));
+    expect(screen.queryByText(/was added to the end/)).toBeNull();
+  });
+
+  it("sample_prompt_uses_draft_text_then_bracketed_labels", async () => {
+    renderTabs({ id: mine.id, texts: { a: "hello" } });
+    const user = userEvent.setup();
+    await screen.findByRole("combobox", { name: "Framework" });
+    await user.click(screen.getByRole("button", { name: "Type a draft" }));
+    await openMine(user);
+    await byHand(user);
+
+    const sample = screen.getByTestId("sample-prompt");
+    expect(sample.textContent).toBe(
+      "# Alpha\nhello\n\n# Beta\n[Beta]\n\n# Gamma\n[Gamma]",
+    );
+
+    fireEvent.change(templateField(), { target: { value: "{{a" } });
+    expect(screen.getByTestId("sample-prompt").textContent).toBe("");
+    expect(screen.getByText("Fix the template to see a sample.")).toBeVisible();
+  });
+
+  it("template_errors_show_line_and_column", async () => {
+    renderTabs();
+    const user = userEvent.setup();
+    await openMine(user);
+    await byHand(user);
+
+    fireEvent.change(templateField(), { target: { value: "ab\n{{a" } });
+
+    expect(
+      screen.getByText("Tag is missing its closing }} (line 2, column 1)"),
+    ).toBeVisible();
+    expect(templateField()).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("reset_to_automatic_asks_then_replaces_the_template", async () => {
+    renderTabs();
+    const user = userEvent.setup();
+    await openMine(user);
+    await byHand(user);
+    fireEvent.change(templateField(), { target: { value: "{{a}} only" } });
+
+    await user.click(
+      screen.getByRole("button", { name: "Reset to automatic" }),
+    );
+    const dialog = screen.getByRole("alertdialog");
+    expect(
+      within(dialog).getByText("Your changes to the template will be lost."),
+    ).toBeVisible();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(templateField()).toHaveValue("{{a}} only");
+
+    await user.click(
+      screen.getByRole("button", { name: "Reset to automatic" }),
+    );
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Reset",
+      }),
+    );
+
+    expect(screen.queryByRole("textbox", { name: "Template" })).toBeNull();
+    expect(screen.getByRole("radio", { name: "Automatic" })).toBeChecked();
+    await byHand(user);
+    expect(templateField()).toHaveValue(autoTemplate(mineSections));
+  });
+
+  it("switching_to_automatic_with_an_unchanged_template_does_not_ask", async () => {
+    renderTabs();
+    const user = userEvent.setup();
+    await openMine(user);
+    await byHand(user);
+
+    await user.click(screen.getByRole("radio", { name: "Automatic" }));
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Template" })).toBeNull();
+  });
+
+  it("a_built_in_shows_automatic_and_ignores_the_switch", async () => {
+    renderTabs();
+    const user = userEvent.setup();
+    await openFrameworksTab(user);
+    await user.click(screen.getByRole("button", { name: "RISEN" }));
+
+    const byHandItem = screen.getByRole("radio", { name: "By hand" });
+    expect(screen.getByRole("radio", { name: "Automatic" })).toBeChecked();
+    expect(byHandItem).toHaveAttribute("aria-disabled", "true");
+    await user.click(byHandItem);
+    expect(screen.queryByRole("textbox", { name: "Template" })).toBeNull();
+  });
+
+  it("a_spot_is_shown_after_removing_a_section_used_in_a_sentence", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([
+      ...builtIns,
+      { ...mine, template: "Intro\nWrite about {{a}} well. {{b}} {{c}}" },
+    ]);
+    renderTabs();
+    const user = userEvent.setup();
+    await openMine(user);
+
+    await user.click(screen.getByRole("button", { name: "Remove Alpha" }));
+
+    expect(screen.getByText("Check the wording at line 2")).toBeVisible();
+  });
+
+  it("editing_back_to_the_generated_template_keeps_the_textarea_and_focus", async () => {
+    renderTabs();
+    const user = userEvent.setup();
+    await openMine(user);
+    await byHand(user);
+
+    await user.click(templateField());
+    await user.keyboard("x");
+    await user.keyboard("{Backspace}");
+
+    expect(templateField()).toHaveValue(autoTemplate(mineSections));
+    expect(templateField()).toHaveFocus();
+  });
+
+  it("a_chip_fills_an_empty_template_and_inserts_at_the_end", async () => {
+    renderTabs();
+    const user = userEvent.setup();
+    await openMine(user);
+    await byHand(user);
+    await user.clear(templateField());
+
+    await user.click(screen.getByRole("button", { name: "Insert Alpha" }));
+    expect(templateField()).toHaveValue("{{a}}");
+    expect(templateField().selectionStart).toBe(5);
+
+    await user.click(screen.getByRole("button", { name: "Insert Gamma" }));
+    expect(templateField()).toHaveValue("{{a}}{{c}}");
+    expect(templateField().selectionStart).toBe(10);
+  });
+
+  it("the_toggle_asks_when_the_template_was_changed", async () => {
+    renderTabs();
+    const user = userEvent.setup();
+    await openMine(user);
+    await byHand(user);
+    fireEvent.change(templateField(), { target: { value: "{{a}} only" } });
+
+    await user.click(screen.getByRole("radio", { name: "Automatic" }));
+    expect(screen.getByRole("alertdialog")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(templateField()).toHaveValue("{{a}} only");
+    expect(screen.getByRole("radio", { name: "By hand" })).toBeChecked();
+  });
+});
