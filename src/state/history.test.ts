@@ -369,6 +369,32 @@ describe("the history state", () => {
     ).toBe(filtered);
   });
 
+  it("a removed framework filter falls back to all frameworks", () => {
+    const state = run([
+      {
+        type: "filtersChanged",
+        filters: { frameworkId: "rtf", search: "x" },
+      },
+      { type: "frameworkRemoved", id: "rtf" },
+    ]);
+
+    expect(state.filters).toEqual({
+      project: { kind: "any" },
+      frameworkId: null,
+      search: "x",
+    });
+  });
+
+  it("keeps a filter on another framework when a framework is removed", () => {
+    const filtered = run([
+      { type: "filtersChanged", filters: { frameworkId: "costar" } },
+    ]);
+
+    expect(
+      historyReducer(filtered, { type: "frameworkRemoved", id: "rtf" }),
+    ).toBe(filtered);
+  });
+
   it("keeps the project filter's object when the new one is equal", () => {
     const filtered = run([
       {

@@ -1,8 +1,13 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { latestEntryProject, listFrameworks, listProjects } from "../api";
-import { AppStateProvider, useAppState } from "../state/AppState";
+import { useEffect } from "react";
+import {
+  AppStateProvider,
+  useAppDispatch,
+  useAppState,
+} from "../state/AppState";
 import { AppTabs } from "./AppTabs";
 
 // Only the commands are mocked; ApiError stays the real class.
@@ -17,13 +22,27 @@ function View() {
   return <p>view: {useAppState().view}</p>;
 }
 
-function renderTabs() {
+/** A stand-in for the Frameworks view with unsaved changes to `name`. */
+function DirtyEditor({ name }: { name: string }) {
+  const dispatch = useAppDispatch();
+  useEffect(() => {
+    dispatch({
+      type: "editingChanged",
+      editing: { dirty: true, name, busy: false },
+    });
+    return () => dispatch({ type: "editingChanged", editing: null });
+  }, [dispatch, name]);
+  return <p>frameworks pane</p>;
+}
+
+function renderTabs(frameworks = <p>frameworks pane</p>) {
   render(
     <AppStateProvider>
       <AppTabs
         builderTools={<p>builder tools</p>}
         builder={<p>builder pane</p>}
         history={<p>history pane</p>}
+        frameworks={frameworks}
       />
       <View />
     </AppStateProvider>,
@@ -106,5 +125,42 @@ describe("AppTabs", () => {
     await user.click(screen.getByRole("tab", { name: "Builder" }));
 
     expect(screen.getByText("builder pane")).toBe(pane);
+  });
+
+  it("shows the Frameworks tab without the builder tools", async () => {
+    renderTabs();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("tab", { name: "Frameworks" }));
+
+    expect(screen.getByText("view: frameworks")).toBeInTheDocument();
+    expect(
+      screen.getByRole("tabpanel", { name: "Frameworks" }),
+    ).toHaveTextContent("frameworks pane");
+    expect(screen.queryByText("builder tools")).toBeNull();
+  });
+
+  it("asks before leaving the Frameworks tab with unsaved changes", async () => {
+    renderTabs(<DirtyEditor name="Review" />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Frameworks" }));
+
+    await user.click(screen.getByRole("tab", { name: "History" }));
+
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog).toHaveAccessibleName("Discard changes to Review?");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Keep editing" }),
+    );
+    expect(screen.getByText("view: frameworks")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "History" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Discard",
+      }),
+    );
+    expect(screen.getByText("view: history")).toBeInTheDocument();
+    expect(screen.queryByText("frameworks pane")).toBeNull();
   });
 });

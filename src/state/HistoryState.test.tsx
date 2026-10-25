@@ -13,6 +13,7 @@ import {
   setEntryTitle,
 } from "../api";
 import type { EntryQuery } from "../bindings/EntryQuery";
+import type { Framework } from "../bindings/Framework";
 import type { Project } from "../bindings/Project";
 import type { PromptEntry } from "../bindings/PromptEntry";
 import {
@@ -63,6 +64,22 @@ function entries(count: number, from = 0): PromptEntry[] {
 
 function project(id: string, name: string): Project {
   return { id, name, createdAt: 1, updatedAt: 1 };
+}
+
+function framework(id: string, fields: Partial<Framework> = {}): Framework {
+  return {
+    id,
+    name: id,
+    description: "",
+    template: "{{role}}",
+    summaryKey: null,
+    isCustom: true,
+    deletedAt: null,
+    sections: [{ key: "role", label: "Role", helpText: "" }],
+    createdAt: 1,
+    updatedAt: 1,
+    ...fields,
+  };
 }
 
 /** A promise the test resolves by hand, to order overlapping loads. */
@@ -118,12 +135,17 @@ function ids(result: Rendered): string[] {
   return result.current.history.state.entries.map((e) => e.id);
 }
 
+function frameworkIds(result: Rendered): string[] {
+  const { frameworks } = result.current.app;
+  return frameworks.status === "ready" ? frameworks.items.map((f) => f.id) : [];
+}
+
 function toasts(result: Rendered): string[] {
   return result.current.app.toasts.map((t) => `${t.kind}: ${t.message}`);
 }
 
 beforeEach(() => {
-  vi.mocked(listFrameworks).mockResolvedValue([]);
+  vi.mocked(listFrameworks).mockResolvedValue([framework("rtf")]);
   vi.mocked(listProjects).mockResolvedValue([]);
   vi.mocked(latestEntryProject).mockResolvedValue(null);
   vi.mocked(listPromptEntries).mockResolvedValue([]);
@@ -542,6 +564,32 @@ describe("HistoryProvider", () => {
     });
   });
 
+  it("a pruned framework filter falls back to all frameworks", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([
+      framework("rtf", { deletedAt: 9 }),
+    ]);
+    const { result } = renderHistory();
+    await waitFor(() =>
+      expect(result.current.app.frameworks.status).toBe("ready"),
+    );
+    await openHistory(result);
+    act(() => result.current.history.setFilters({ frameworkId: "rtf" }));
+    await waitFor(() => expect(listPromptEntries).toHaveBeenCalledTimes(2));
+
+    vi.mocked(listFrameworks).mockResolvedValue([]);
+    act(() => result.current.actions.pruneDeletedFrameworks());
+
+    await waitFor(() =>
+      expect(result.current.history.state.filters.frameworkId).toBeNull(),
+    );
+    await waitFor(() => expect(listPromptEntries).toHaveBeenCalledTimes(3));
+    expect(listPromptEntries).toHaveBeenLastCalledWith(
+      everything,
+      PAGE_SIZE,
+      null,
+    );
+  });
+
   it("selects an entry", async () => {
     vi.mocked(listPromptEntries).mockResolvedValue(entries(2));
     const { result } = renderHistory();
@@ -604,6 +652,37 @@ describe("HistoryProvider", () => {
     expect(deletePromptEntry).toHaveBeenCalledWith("e1");
     expect(ids(result)).toEqual(["e0"]);
     expect(result.current.history.state.selectedId).toBeNull();
+  });
+
+  it("drops a deleted framework once its last saved prompt is deleted", async () => {
+    const gone = framework("rtf", { deletedAt: 9 });
+    vi.mocked(listFrameworks).mockResolvedValue([]);
+    vi.mocked(listPromptEntries).mockResolvedValue(entries(1));
+    vi.mocked(deletePromptEntry).mockResolvedValue();
+    const { result } = renderHistory();
+    await openHistory(result);
+    act(() =>
+      result.current.dispatch({ type: "frameworksLoaded", frameworks: [gone] }),
+    );
+    vi.mocked(listFrameworks).mockClear();
+
+    await act(() => result.current.history.remove("e0"));
+
+    await waitFor(() => expect(frameworkIds(result)).toEqual([]));
+    expect(listFrameworks).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not read the framework list when the entry's framework is live", async () => {
+    vi.mocked(listPromptEntries).mockResolvedValue(entries(1));
+    vi.mocked(deletePromptEntry).mockResolvedValue();
+    const { result } = renderHistory();
+    await openHistory(result);
+    await waitFor(() => expect(listFrameworks).toHaveBeenCalled());
+    vi.mocked(listFrameworks).mockClear();
+
+    await act(() => result.current.history.remove("e0"));
+
+    expect(listFrameworks).not.toHaveBeenCalled();
   });
 
   it("toasts a failed edit and leaves the entries alone", async () => {

@@ -4,15 +4,20 @@ import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  createFramework,
   createProject,
+  deleteFramework,
   deleteProject,
   latestEntryProject,
   listFrameworks,
   listProjects,
   renameProject,
+  restoreFramework,
   savePromptEntry,
+  updateFramework,
 } from "../api";
 import type { Framework } from "../bindings/Framework";
+import type { FrameworkInput } from "../bindings/FrameworkInput";
 import type { Project } from "../bindings/Project";
 import type { PromptEntry } from "../bindings/PromptEntry";
 import { writeText } from "../clipboard";
@@ -28,6 +33,10 @@ import { currentDraft, currentTitle, renderedPrompt } from "./reducer";
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   listFrameworks: vi.fn(),
+  createFramework: vi.fn(),
+  updateFramework: vi.fn(),
+  deleteFramework: vi.fn(),
+  restoreFramework: vi.fn(),
   savePromptEntry: vi.fn(),
   listProjects: vi.fn(),
   createProject: vi.fn(),
@@ -57,9 +66,18 @@ function project(id: string, name: string): Project {
 const api = project("p-api", "api");
 const web = project("p-web", "web");
 
+const input: FrameworkInput = {
+  name: "Mine",
+  description: "",
+  template: "{{role}}",
+  summaryKey: "role",
+  sections: [{ key: "role", label: "Role", helpText: "" }],
+};
+
 /** Shows the state the hooks expose and offers the actions as buttons. */
 function Probe() {
   const [result, setResult] = useState("none");
+  const [frameworkResult, setFrameworkResult] = useState("none");
   const state = useAppState();
   const dispatch = useAppDispatch();
   const actions = useAppActions();
@@ -74,6 +92,8 @@ function Probe() {
   });
   const outcome = (promise: Promise<boolean>) =>
     void promise.then((ok) => setResult(String(ok)));
+  const frameworkOutcome = (promise: Promise<Framework | null>) =>
+    void promise.then((f) => setFrameworkResult(f?.id ?? "null"));
   return (
     <div>
       <p>status: {frameworks.status}</p>
@@ -117,6 +137,31 @@ function Probe() {
       </button>
       <button onClick={() => outcome(actions.deleteProject("p-api"))}>
         remove
+      </button>
+      <p>
+        ids:{" "}
+        {frameworks.status === "ready"
+          ? frameworks.items
+              .map((f) => f.id + (f.deletedAt === null ? "" : "!"))
+              .join(",")
+          : ""}
+      </p>
+      <p>framework result: {frameworkResult}</p>
+      <button
+        onClick={() => frameworkOutcome(actions.saveFramework(null, input))}
+      >
+        create framework
+      </button>
+      <button
+        onClick={() => frameworkOutcome(actions.saveFramework("rtf", input))}
+      >
+        edit framework
+      </button>
+      <button onClick={() => outcome(actions.deleteFramework("rtf"))}>
+        delete framework
+      </button>
+      <button onClick={() => frameworkOutcome(actions.restoreFramework("rtf"))}>
+        restore framework
       </button>
       <button
         onClick={() => dispatch({ type: "editTitle", value: "  A title  " })}
@@ -698,5 +743,236 @@ describe("AppStateProvider saving a title and project", () => {
 
     expect(savePromptEntry).toHaveBeenCalledTimes(1);
     expect(toasts()).toEqual(["info: Saved", "info: Already saved"]);
+  });
+});
+
+describe("AppStateProvider framework actions", () => {
+  const mine: Framework = { ...rtf, id: "c-1", name: "Mine", isCustom: true };
+
+  it("saveFramework_dispatches_frameworkSaved_and_returns_it", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([rtf]);
+    vi.mocked(createFramework).mockResolvedValue(mine);
+    vi.mocked(updateFramework).mockResolvedValue({ ...rtf, name: "Edited" });
+    renderProbe();
+    await screen.findByText("ids: rtf");
+
+    await click("create framework");
+    expect(await screen.findByText("ids: rtf,c-1")).toBeInTheDocument();
+    expect(createFramework).toHaveBeenCalledExactlyOnceWith(input);
+    expect(screen.getByText("framework result: c-1")).toBeInTheDocument();
+    expect(screen.getByText("selected: rtf")).toBeInTheDocument();
+    expect(listFrameworks).toHaveBeenCalledTimes(1);
+
+    await click("edit framework");
+    expect(
+      await screen.findByText("framework result: rtf"),
+    ).toBeInTheDocument();
+    expect(updateFramework).toHaveBeenCalledExactlyOnceWith("rtf", input);
+  });
+
+  it("saveFramework_toasts_the_error_message_and_returns_null", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([rtf]);
+    vi.mocked(createFramework).mockRejectedValue(
+      new ApiError("invalid", "Name is taken"),
+    );
+    vi.mocked(updateFramework).mockRejectedValue(
+      new ApiError("notFound", "framework rtf not found"),
+    );
+    renderProbe();
+    await screen.findByText("ids: rtf");
+
+    await click("create framework");
+    expect(
+      await screen.findByText("framework result: null"),
+    ).toBeInTheDocument();
+    expect(toasts()).toEqual(["error: Name is taken"]);
+
+    await click("edit framework");
+    await waitFor(() =>
+      expect(toasts()).toContain("error: That framework no longer exists."),
+    );
+    expect(screen.getByText("ids: rtf")).toBeInTheDocument();
+  });
+
+  it("deleteFramework_dispatches_frameworkDeleted_and_returns_true", async () => {
+    vi.mocked(listFrameworks)
+      .mockResolvedValueOnce([rtf, mine])
+      .mockResolvedValue([{ ...rtf, deletedAt: 9 }, mine]);
+    vi.mocked(deleteFramework).mockResolvedValue({ ...rtf, deletedAt: 9 });
+    renderProbe();
+    await screen.findByText("ids: rtf,c-1");
+
+    await click("delete framework");
+
+    expect(deleteFramework).toHaveBeenCalledExactlyOnceWith("rtf");
+    expect(await screen.findByText("ids: rtf!,c-1")).toBeInTheDocument();
+    expect(screen.getByText("selected: c-1")).toBeInTheDocument();
+    expect(screen.getByText("result: true")).toBeInTheDocument();
+  });
+
+  it("deleteFramework_reads_the_list_again_and_drops_a_framework_the_backend_removed", async () => {
+    vi.mocked(listFrameworks)
+      .mockResolvedValueOnce([rtf, mine])
+      .mockResolvedValue([mine]);
+    vi.mocked(deleteFramework).mockResolvedValue({ ...rtf, deletedAt: 9 });
+    renderProbe();
+    await screen.findByText("ids: rtf,c-1");
+
+    await click("delete framework");
+
+    expect(await screen.findByText("ids: c-1")).toBeInTheDocument();
+    expect(listFrameworks).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("selected: c-1")).toBeInTheDocument();
+    expect(screen.getByText("result: true")).toBeInTheDocument();
+  });
+
+  it("deleteFramework_returns_before_the_list_is_read_again", async () => {
+    const reread = deferred<Framework[]>();
+    vi.mocked(listFrameworks)
+      .mockResolvedValueOnce([rtf, mine])
+      .mockReturnValue(reread.promise);
+    vi.mocked(deleteFramework).mockResolvedValue({ ...rtf, deletedAt: 9 });
+    renderProbe();
+    await screen.findByText("ids: rtf,c-1");
+
+    await click("delete framework");
+
+    expect(await screen.findByText("result: true")).toBeInTheDocument();
+    expect(screen.getByText("ids: rtf!,c-1")).toBeInTheDocument();
+    expect(listFrameworks).toHaveBeenCalledTimes(2);
+    await act(async () => reread.resolve([mine]));
+    expect(await screen.findByText("ids: c-1")).toBeInTheDocument();
+  });
+
+  it("deleteFramework_keeps_a_framework_saved_while_the_list_is_read_again", async () => {
+    const reread = deferred<Framework[]>();
+    const other: Framework = { ...mine, id: "c-2", name: "Other" };
+    vi.mocked(listFrameworks)
+      .mockResolvedValueOnce([rtf, mine])
+      .mockReturnValue(reread.promise);
+    vi.mocked(deleteFramework).mockResolvedValue({ ...rtf, deletedAt: 9 });
+    vi.mocked(createFramework).mockResolvedValue(other);
+    renderProbe();
+    await screen.findByText("ids: rtf,c-1");
+
+    await click("delete framework");
+    await screen.findByText("result: true");
+    await click("create framework");
+    await screen.findByText("framework result: c-2");
+    // The listing was taken before the save landed.
+    await act(async () => reread.resolve([{ ...rtf, deletedAt: 9 }, mine]));
+
+    expect(await screen.findByText("ids: rtf!,c-1,c-2")).toBeInTheDocument();
+  });
+
+  it("deleteFramework_keeps_the_list_and_stays_quiet_when_the_refresh_fails", async () => {
+    vi.mocked(listFrameworks)
+      .mockResolvedValueOnce([rtf, mine])
+      .mockRejectedValue(new ApiError("database", "locked"));
+    vi.mocked(deleteFramework).mockResolvedValue({ ...rtf, deletedAt: 9 });
+    renderProbe();
+    await screen.findByText("ids: rtf,c-1");
+
+    await click("delete framework");
+
+    expect(await screen.findByText("result: true")).toBeInTheDocument();
+    expect(listFrameworks).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("ids: rtf!,c-1")).toBeInTheDocument();
+    expect(toasts()).toEqual([]);
+  });
+
+  it("deleteFramework_toasts_the_error_message_and_returns_false", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([rtf]);
+    vi.mocked(deleteFramework).mockRejectedValue(
+      new ApiError("database", "locked"),
+    );
+    renderProbe();
+    await screen.findByText("ids: rtf");
+
+    await click("delete framework");
+
+    expect(await screen.findByText("result: false")).toBeInTheDocument();
+    expect(toasts()).toEqual(["error: locked"]);
+    expect(screen.getByText("ids: rtf")).toBeInTheDocument();
+  });
+
+  it("restoreFramework_dispatches_frameworkRestored_and_returns_it", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([{ ...rtf, deletedAt: 9 }]);
+    vi.mocked(restoreFramework).mockResolvedValue(rtf);
+    renderProbe();
+    await screen.findByText("ids: rtf!");
+    expect(screen.getByText("selected: none")).toBeInTheDocument();
+
+    await click("restore framework");
+
+    expect(restoreFramework).toHaveBeenCalledExactlyOnceWith("rtf");
+    expect(await screen.findByText("ids: rtf")).toBeInTheDocument();
+    expect(screen.getByText("framework result: rtf")).toBeInTheDocument();
+    expect(screen.getByText("selected: rtf")).toBeInTheDocument();
+  });
+
+  it("restoreFramework_toasts_the_error_message_and_returns_null", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([{ ...rtf, deletedAt: 9 }]);
+    vi.mocked(restoreFramework).mockRejectedValue(
+      new ApiError("database", "locked"),
+    );
+    renderProbe();
+    await screen.findByText("ids: rtf!");
+
+    await click("restore framework");
+
+    expect(
+      await screen.findByText("framework result: null"),
+    ).toBeInTheDocument();
+    expect(toasts()).toEqual(["error: locked"]);
+  });
+
+  it("a_saved_framework_does_not_remount_the_builder_form", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([rtf]);
+    vi.mocked(createFramework).mockResolvedValue(mine);
+    function Form() {
+      const state = useAppState();
+      const dispatch = useAppDispatch();
+      const { saveFramework } = useAppActions();
+      if (state.frameworks.status !== "ready") return null;
+      return (
+        <>
+          <p>count: {state.frameworks.items.length}</p>
+          <input
+            aria-label="role"
+            value={currentDraft(state).role ?? ""}
+            onChange={(e) =>
+              dispatch({
+                type: "editSection",
+                key: "role",
+                value: e.target.value,
+              })
+            }
+          />
+          <button onClick={() => void saveFramework(null, input)}>other</button>
+        </>
+      );
+    }
+    render(
+      <AppStateProvider>
+        <Form />
+      </AppStateProvider>,
+    );
+    const user = userEvent.setup();
+    const field = await screen.findByRole("textbox", { name: "role" });
+    await user.type(field, "hello");
+
+    // A programmatic click leaves the focus on the field, as a save started
+    // from elsewhere in the window would.
+    await act(async () => {
+      screen.getByRole("button", { name: "other" }).click();
+    });
+    // The new framework is in the list, so the save has been processed.
+    expect(await screen.findByText("count: 2")).toBeInTheDocument();
+
+    const after = screen.getByRole("textbox", { name: "role" });
+    expect(after).toBe(field);
+    expect(after).toHaveFocus();
+    expect(after).toHaveValue("hello");
   });
 });
