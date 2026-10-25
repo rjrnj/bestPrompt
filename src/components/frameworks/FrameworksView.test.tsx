@@ -147,6 +147,90 @@ function labelValues() {
     .map((field) => field.value);
 }
 
+/** Waits for the next animation frame, when a dragged row's line is measured. */
+async function nextFrame() {
+  await act(
+    () =>
+      new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+  );
+}
+
+/**
+ * Presses a drag handle at the middle of its row: by the mouse, unless a
+ * pointer is given.
+ */
+function press(handle: HTMLElement, pointerId = 1, isPrimary = true) {
+  const { top, bottom } = handle.closest("li")!.getBoundingClientRect();
+  fireEvent.pointerDown(handle, {
+    button: 0,
+    pointerId,
+    isPrimary,
+    clientY: (top + bottom) / 2,
+  });
+}
+
+/** Moves a pressed pointer to height `y`, then waits for the line. */
+async function moveTo(
+  y: number,
+  target: Element = document.body,
+  pointerId = 1,
+) {
+  fireEvent.pointerMove(target, {
+    pointerId,
+    button: -1,
+    buttons: 1,
+    clientY: y,
+  });
+  await nextFrame();
+}
+
+/** Lets go of `button` at height `y`. */
+function release(
+  y: number,
+  target: Element = document.body,
+  button = 0,
+  pointerId = 1,
+) {
+  fireEvent.pointerUp(target, { pointerId, button, clientY: y });
+}
+
+/** Puts the rows 90 high with 10 between them, the first at `top`. */
+function placeRows(rows: HTMLElement[], top: number) {
+  rows.forEach((row, i) =>
+    vi.spyOn(row, "getBoundingClientRect").mockReturnValue({
+      top: top + i * 100,
+      bottom: top + i * 100 + 90,
+    } as DOMRect),
+  );
+}
+
+/**
+ * Opens Mine with its rows placed for dragging (middles at 45, 145 and
+ * 245), and gives its rows, their drag handles, and the lines on them as
+ * [row, "before" | "after"] pairs.
+ */
+async function openMineForDragging() {
+  renderTabs();
+  const user = userEvent.setup();
+  await openFrameworksTab(user);
+  await user.click(screen.getByRole("button", { name: "Mine" }));
+  const rows = screen
+    .getAllByRole("textbox", { name: "Label" })
+    .map((input) => input.closest("li")!);
+  placeRows(rows, 0);
+  const handles = rows.map((row) =>
+    row.querySelector<HTMLElement>('[title="Drag to reorder"]')!,
+  );
+  const lines = () =>
+    rows.flatMap((row, i) =>
+      Array.from(row.querySelectorAll("[data-drop-line]"), (line) => [
+        i,
+        line.getAttribute("data-drop-line"),
+      ]),
+    );
+  return { rows, handles, lines };
+}
+
 /** The section row whose label field shows `label`. */
 function rowOf(label: string): HTMLElement {
   return screen.getByDisplayValue(label).closest("li")!;
@@ -439,6 +523,220 @@ describe("FrameworksView", () => {
     expect(
       screen.getByRole("heading", { level: 2, name: "Copy of Mine" }),
     ).toBeVisible();
+  });
+
+  it("dragging_a_section_marks_the_gap_it_will_land_in", async () => {
+    const { handles, lines } = await openMineForDragging();
+
+    press(handles[2]);
+    await nextFrame();
+    expect(lines()).toEqual([]);
+    await moveTo(10);
+    expect(lines()).toEqual([[0, "before"]]);
+    await moveTo(100);
+    expect(lines()).toEqual([[1, "before"]]);
+    // Back over its own place: nothing would move.
+    await moveTo(260);
+    expect(lines()).toEqual([]);
+    release(260);
+    expect(labelValues()).toEqual(["Alpha", "Beta", "Gamma"]);
+
+    press(handles[0]);
+    await moveTo(300);
+    expect(lines()).toEqual([[2, "after"]]);
+    release(300);
+    expect(labelValues()).toEqual(["Beta", "Gamma", "Alpha"]);
+    expect(document.querySelector("[data-drop-line]")).toBeNull();
+  });
+
+  it("the_line_follows_rows_that_move_under_a_still_pointer", async () => {
+    const { rows, handles, lines } = await openMineForDragging();
+
+    press(handles[2]);
+    await moveTo(100);
+    expect(lines()).toEqual([[1, "before"]]);
+    // The pane scrolls 100 up: the pointer is now over Beta's lower half.
+    placeRows(rows, -100);
+    await nextFrame();
+    expect(lines()).toEqual([]);
+    // Something above the list grows: the pointer is over Alpha's top.
+    placeRows(rows, 100);
+    await nextFrame();
+    expect(lines()).toEqual([[0, "before"]]);
+
+    release(100);
+    expect(labelValues()).toEqual(["Gamma", "Alpha", "Beta"]);
+  });
+
+  it("a_quick_flick_drops_where_it_is_released", async () => {
+    const { handles } = await openMineForDragging();
+
+    press(handles[2]);
+    release(10);
+
+    expect(labelValues()).toEqual(["Gamma", "Alpha", "Beta"]);
+  });
+
+  it("a_cancelled_drag_takes_its_line_away", async () => {
+    const { handles } = await openMineForDragging();
+
+    press(handles[0]);
+    await moveTo(300);
+    expect(document.querySelector("[data-drop-line]")).not.toBeNull();
+    fireEvent.pointerCancel(handles[0], { pointerId: 1 });
+
+    expect(document.querySelector("[data-drop-line]")).toBeNull();
+    release(300);
+    expect(labelValues()).toEqual(["Alpha", "Beta", "Gamma"]);
+  });
+
+  it("a_drag_follows_the_pointer_away_from_the_handle", async () => {
+    const { handles, lines } = await openMineForDragging();
+
+    press(handles[0]);
+    // The handle lost the pointer: its moves and release go elsewhere.
+    fireEvent.lostPointerCapture(handles[0], { pointerId: 1 });
+    await moveTo(300);
+    expect(lines()).toEqual([[2, "after"]]);
+    release(300);
+
+    expect(document.querySelector("[data-drop-line]")).toBeNull();
+    expect(labelValues()).toEqual(["Beta", "Gamma", "Alpha"]);
+  });
+
+  it("a_move_without_the_main_button_ends_a_drag_that_missed_its_release", async () => {
+    const { handles } = await openMineForDragging();
+
+    press(handles[0]);
+    await moveTo(300);
+    expect(document.querySelector("[data-drop-line]")).not.toBeNull();
+    // Released outside the window, with only another button still held.
+    fireEvent.pointerMove(document.body, {
+      pointerId: 1,
+      button: -1,
+      buttons: 2,
+      clientY: 300,
+    });
+    expect(document.querySelector("[data-drop-line]")).toBeNull();
+
+    // Later clicks, of that button or the main one, are only clicks.
+    release(300, document.body, 2);
+    fireEvent.pointerDown(document.body, { button: 0, pointerId: 1 });
+    release(300);
+    expect(labelValues()).toEqual(["Alpha", "Beta", "Gamma"]);
+  });
+
+  it("only_the_main_button_drops_a_row", async () => {
+    const { handles } = await openMineForDragging();
+
+    press(handles[0]);
+    await moveTo(300);
+    // Another button pressed and held: a move, not a press, while the main
+    // one is down.
+    fireEvent.pointerMove(document.body, {
+      pointerId: 1,
+      button: 2,
+      buttons: 3,
+      clientY: 300,
+    });
+    expect(document.querySelector("[data-drop-line]")).not.toBeNull();
+    expect(labelValues()).toEqual(["Alpha", "Beta", "Gamma"]);
+
+    // The main button let go while the other is held: a move too, and the
+    // drop.
+    fireEvent.pointerMove(document.body, {
+      pointerId: 1,
+      button: 0,
+      buttons: 2,
+      clientY: 300,
+    });
+    expect(labelValues()).toEqual(["Beta", "Gamma", "Alpha"]);
+    expect(document.querySelector("[data-drop-line]")).toBeNull();
+
+    // Letting go of the other button then does nothing more.
+    release(300, document.body, 2);
+    expect(labelValues()).toEqual(["Beta", "Gamma", "Alpha"]);
+  });
+
+  it("leaving_the_window_mid_drag_ends_it_without_a_drop", async () => {
+    const { handles } = await openMineForDragging();
+
+    press(handles[0]);
+    await moveTo(300);
+    fireEvent(window, new Event("blur"));
+    expect(document.querySelector("[data-drop-line]")).toBeNull();
+
+    release(300);
+    expect(labelValues()).toEqual(["Alpha", "Beta", "Gamma"]);
+  });
+
+  it("a_new_press_starts_a_drag_afresh", async () => {
+    const { handles, lines } = await openMineForDragging();
+
+    // A touch drag whose end was missed...
+    press(handles[0], 7);
+    await moveTo(300, document.body, 7);
+    // ...gives way to the mouse.
+    press(handles[2]);
+    await nextFrame();
+    expect(lines()).toEqual([]);
+    await moveTo(10);
+    expect(lines()).toEqual([[0, "before"]]);
+    release(10);
+
+    expect(labelValues()).toEqual(["Gamma", "Alpha", "Beta"]);
+  });
+
+  it("rows_moved_by_keyboard_mid_drag_move_the_line_with_them", async () => {
+    const { rows, handles, lines } = await openMineForDragging();
+
+    press(handles[0]);
+    await moveTo(150);
+    // Past Beta's middle: Alpha would land between Beta and Gamma.
+    expect(lines()).toEqual([[2, "before"]]);
+    fireEvent.click(screen.getByRole("button", { name: "Move Beta up" }));
+    expect(labelValues()).toEqual(["Beta", "Alpha", "Gamma"]);
+    // No line from before the move, until the rows are measured again.
+    expect(lines()).toEqual([]);
+    // On screen now: Beta at 0, Alpha at 100, Gamma at 200. The pointer at
+    // 150 is over Alpha's own place; further down, past Gamma's middle.
+    placeRows([rows[1], rows[0], rows[2]], 0);
+    await nextFrame();
+    expect(lines()).toEqual([]);
+    await moveTo(300);
+    expect(lines()).toEqual([[2, "after"]]);
+
+    release(300);
+    expect(labelValues()).toEqual(["Beta", "Gamma", "Alpha"]);
+  });
+
+  it("removing_the_dragged_row_ends_the_drag", async () => {
+    const { handles } = await openMineForDragging();
+
+    press(handles[0]);
+    await moveTo(300);
+    fireEvent.click(screen.getByRole("button", { name: "Remove Alpha" }));
+
+    expect(labelValues()).toEqual(["Beta", "Gamma"]);
+    expect(document.querySelector("[data-drop-line]")).toBeNull();
+    // A new drag starts as usual.
+    press(handles[2]);
+    await moveTo(10);
+    expect(document.querySelector("[data-drop-line]")).not.toBeNull();
+  });
+
+  it("a_second_finger_leaves_a_drag_alone", async () => {
+    const { handles, lines } = await openMineForDragging();
+
+    press(handles[0], 7);
+    await moveTo(300, document.body, 7);
+    press(handles[1], 8, false);
+    await moveTo(10, document.body, 8);
+    release(10, document.body, 0, 8);
+    expect(lines()).toEqual([[2, "after"]]);
+
+    release(300, document.body, 0, 7);
+    expect(labelValues()).toEqual(["Beta", "Gamma", "Alpha"]);
   });
 
   it("moving_a_section_down_by_keyboard_reorders_it", async () => {

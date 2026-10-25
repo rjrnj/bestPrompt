@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useId,
   useLayoutEffect,
   useRef,
@@ -6,7 +7,7 @@ import {
   type Dispatch,
   type PointerEvent,
 } from "react";
-import { dropIndex } from "../../frameworks/dropIndex";
+import { dropGap, dropIndex, lineAt } from "../../frameworks/dropIndex";
 import {
   unusedRows,
   type EditorAction,
@@ -31,10 +32,39 @@ type Props = {
   errors: EditorErrors | null;
 };
 
+/** A row being dragged by its handle. */
+type Drag = {
+  row: number;
+  pointerId: number;
+  /** The gap it would drop into, as dropGap counts it; null for none. */
+  gap: number | null;
+  /** The rows the gap was measured in. */
+  sections: EditorSection[];
+};
+
+/**
+ * Where `row` is in `sections`, and where it lands if dropped at height `y`
+ * over the rows of `list` as they are on screen. `from` is -1 once the row
+ * is gone.
+ */
+function landing(
+  list: HTMLOListElement | null,
+  sections: EditorSection[],
+  row: number,
+  y: number,
+) {
+  const from = sections.findIndex((s) => s.id === row);
+  const bounds = Array.from(list?.children ?? [], (item) =>
+    item.getBoundingClientRect(),
+  );
+  return { from, to: dropIndex(bounds, from, y) };
+}
+
 /**
  * The framework's sections, one row each, then Add section. Rows move with
  * Move up and Move down, or by dragging the handle; the drag uses pointer
- * events because the desktop webview swallows HTML drag and drop.
+ * events because the desktop webview swallows HTML drag and drop. While a
+ * row is dragged, a line marks the gap it would drop into.
  */
 export function SectionRows({ editor, dispatch, errors }: Props) {
   const { sections, readOnly } = editor;
@@ -42,8 +72,18 @@ export function SectionRows({ editor, dispatch, errors }: Props) {
   // The control to focus once the next render is on screen, by its
   // data-focus value: the moved row's button, or a new row's label.
   const pendingFocus = useRef<string | null>(null);
-  const [dragged, setDragged] = useState<number | null>(null);
+  const [drag, setDrag] = useState<Drag | null>(null);
+  // Where the dragging pointer last was, for the line to follow rows that
+  // move under a still pointer.
+  const pointerY = useRef(0);
   const unused = unusedRows(editor);
+  // A drag ends with its row, and its gap is only shown over the rows it
+  // was measured in, not for the moment the rows have changed under it.
+  const dragging =
+    drag !== null && sections.some((s) => s.id === drag.row) ? drag : null;
+  const gap = dragging?.sections === sections ? dragging.gap : null;
+  const dragRow = drag?.row;
+  const dragPointer = drag?.pointerId;
 
   useLayoutEffect(() => {
     const target = pendingFocus.current;
@@ -53,6 +93,79 @@ export function SectionRows({ editor, dispatch, errors }: Props) {
       ?.querySelector<HTMLElement>(`[data-focus="${target}"]`)
       ?.focus();
   });
+
+  // A drag is followed on the window, not the handle: moving the row in the
+  // page, as a Move button pressed mid-drag can, takes the pointer from the
+  // handle. The line is measured again on every frame, so it follows the
+  // pointer and whatever moves the rows under it: a scroll, a resize, a
+  // change of the rows or of what is above them. The release, anywhere,
+  // drops the row where the line shows, both being measured the same way.
+  useEffect(() => {
+    if (dragRow === undefined) return;
+    const row = dragRow;
+    function follow() {
+      const { from, to } = landing(
+        list.current,
+        sections,
+        row,
+        pointerY.current,
+      );
+      const gap = from === -1 ? null : dropGap(from, to);
+      setDrag((d) =>
+        d === null || from === -1
+          ? null
+          : d.gap === gap && d.sections === sections
+            ? d
+            : { ...d, gap, sections },
+      );
+    }
+    function drop(y: number) {
+      setDrag(null);
+      const { from, to } = landing(list.current, sections, row, y);
+      if (from !== -1 && to !== from) {
+        dispatch({ type: "sectionMoved", row, to });
+      }
+    }
+    // The main button let go while another is held comes as a move, not a
+    // release, and drops. A move without the main button held otherwise, or
+    // the window losing focus, means the release was missed: the drag ends
+    // without a drop, so a later click can't drop the row.
+    function moved(event: globalThis.PointerEvent) {
+      if (event.pointerId !== dragPointer) return;
+      if ((event.buttons & 1) === 0) {
+        if (event.button === 0) drop(event.clientY);
+        else setDrag(null);
+        return;
+      }
+      pointerY.current = event.clientY;
+    }
+    function abandoned() {
+      setDrag(null);
+    }
+    function released(event: globalThis.PointerEvent) {
+      if (event.pointerId === dragPointer && event.button === 0) {
+        drop(event.clientY);
+      }
+    }
+    function cancelled(event: globalThis.PointerEvent) {
+      if (event.pointerId === dragPointer) setDrag(null);
+    }
+    let frame = requestAnimationFrame(function tick() {
+      follow();
+      frame = requestAnimationFrame(tick);
+    });
+    window.addEventListener("pointermove", moved);
+    window.addEventListener("pointerup", released);
+    window.addEventListener("pointercancel", cancelled);
+    window.addEventListener("blur", abandoned);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("pointermove", moved);
+      window.removeEventListener("pointerup", released);
+      window.removeEventListener("pointercancel", cancelled);
+      window.removeEventListener("blur", abandoned);
+    };
+  }, [dragRow, dragPointer, sections, dispatch]);
 
   function move(row: number, to: number, button: "up" | "down") {
     if (to < 0 || to >= sections.length) return;
@@ -66,32 +179,17 @@ export function SectionRows({ editor, dispatch, errors }: Props) {
     dispatch({ type: "sectionRemoved", row: sections[index].id });
   }
 
-  const drag = (row: number) => ({
+  const dragHandle = (row: number) => ({
     onPointerDown(event: PointerEvent<HTMLElement>) {
       if (event.button !== 0) return;
+      // A second finger leaves a drag alone. Any other press while a drag
+      // is going means that drag missed its end: this one starts afresh.
+      if (dragging !== null && !event.isPrimary) return;
       event.preventDefault();
+      // Keeps the press from reaching what the pointer passes over.
       event.currentTarget.setPointerCapture(event.pointerId);
-      setDragged(row);
-    },
-    onPointerUp(event: PointerEvent<HTMLElement>) {
-      if (dragged !== row) return;
-      setDragged(null);
-      dispatch({
-        type: "sectionMoved",
-        row,
-        to: dropIndex(
-          Array.from(list.current?.children ?? [], (item) =>
-            item.getBoundingClientRect(),
-          ),
-          sections.findIndex((s) => s.id === row),
-          event.clientY,
-        ),
-      });
-    },
-    // Ends a drag the pointer-up didn't: a cancelled pointer, or capture
-    // taken away.
-    onLostPointerCapture() {
-      setDragged(null);
+      pointerY.current = event.clientY;
+      setDrag({ row, pointerId: event.pointerId, gap: null, sections });
     },
   });
 
@@ -107,14 +205,15 @@ export function SectionRows({ editor, dispatch, errors }: Props) {
             isSummary={section.committed && section.key === editor.summaryKey}
             unused={unused.includes(section.id)}
             error={errors?.labels[section.id]}
-            dragging={dragged === section.id}
+            dragging={dragging?.row === section.id}
+            dropLine={lineAt(gap, index, sections.length)}
             first={index === 0}
             last={index === sections.length - 1}
             dispatch={dispatch}
             onMoveUp={() => move(section.id, index - 1, "up")}
             onMoveDown={() => move(section.id, index + 1, "down")}
             onRemove={() => remove(index)}
-            dragHandle={drag(section.id)}
+            dragHandle={dragHandle(section.id)}
           />
         ))}
       </ol>
@@ -149,6 +248,8 @@ type RowProps = {
   unused: boolean;
   error: string | undefined;
   dragging: boolean;
+  /** A line in the gap above or below the row, where a dragged row lands. */
+  dropLine: "before" | "after" | null;
   first: boolean;
   last: boolean;
   dispatch: Dispatch<EditorAction>;
@@ -157,8 +258,6 @@ type RowProps = {
   onRemove(): void;
   dragHandle: {
     onPointerDown(event: PointerEvent<HTMLElement>): void;
-    onPointerUp(event: PointerEvent<HTMLElement>): void;
-    onLostPointerCapture(): void;
   };
 };
 
@@ -170,6 +269,7 @@ function SectionRow({
   unused,
   error,
   dragging,
+  dropLine,
   first,
   last,
   dispatch,
@@ -185,12 +285,23 @@ function SectionRow({
 
   return (
     <li
-      className={`flex gap-2 rounded-md border bg-white p-3 dark:bg-slate-900 ${
+      className={`relative flex gap-2 rounded-md border bg-white p-3 dark:bg-slate-900 ${
         dragging
           ? "border-sky-500 opacity-70 dark:border-sky-400"
           : "border-slate-200 dark:border-slate-700"
       }`}
     >
+      {dropLine && (
+        // Centred in the 12px gap between rows, measured from inside the
+        // row's 1px border.
+        <div
+          aria-hidden="true"
+          data-drop-line={dropLine}
+          className={`pointer-events-none absolute -inset-x-px h-0.5 rounded-full bg-sky-500 dark:bg-sky-400 ${
+            dropLine === "before" ? "-top-2" : "-bottom-2"
+          }`}
+        />
+      )}
       {!readOnly && (
         // Mouse and touch only; the Move buttons are the keyboard's way.
         <span
