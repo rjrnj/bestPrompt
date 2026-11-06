@@ -175,7 +175,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     (name: string) =>
       projectAction(async () => ({
         type: "projectCreated",
-        project: await createProjectCommand(name),
+        project: await createProjectCommand(name, null),
       })),
     [projectAction],
   );

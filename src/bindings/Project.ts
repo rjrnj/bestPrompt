@@ -3,4 +3,8 @@
 /**
  * A named group of prompt entries.
  */
-export type Project = { id: string, name: string, createdAt: number, updatedAt: number, };
+export type Project = { id: string, name: string, 
+/**
+ * The folder this project's Claude Code sessions start in.
+ */
+folder: string | null, createdAt: number, updatedAt: number, };

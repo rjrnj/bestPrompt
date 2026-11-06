@@ -5,7 +5,7 @@ import type { Project } from "../bindings/Project";
 import { ProjectSelect } from "./ProjectSelect";
 
 function project(id: string, name: string): Project {
-  return { id, name, createdAt: 1, updatedAt: 1 };
+  return { id, name, folder: null, createdAt: 1, updatedAt: 1 };
 }
 
 const api = project("0192f000-0000-7000-8000-000000000001", "api");

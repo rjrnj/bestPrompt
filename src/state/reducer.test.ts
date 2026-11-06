@@ -393,7 +393,7 @@ describe("toasts", () => {
 });
 
 function project(id: string, name: string): Project {
-  return { id, name, createdAt: 1, updatedAt: 1 };
+  return { id, name, folder: null, createdAt: 1, updatedAt: 1 };
 }
 
 const api = project("p-api", "api");

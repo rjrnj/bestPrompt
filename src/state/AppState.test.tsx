@@ -60,7 +60,7 @@ const rtf: Framework = {
 };
 
 function project(id: string, name: string): Project {
-  return { id, name, createdAt: 1, updatedAt: 1 };
+  return { id, name, folder: null, createdAt: 1, updatedAt: 1 };
 }
 
 const api = project("p-api", "api");
@@ -623,7 +623,7 @@ describe("AppStateProvider projects", () => {
 
     await click("create");
 
-    expect(createProject).toHaveBeenCalledExactlyOnceWith("  new  ");
+    expect(createProject).toHaveBeenCalledExactlyOnceWith("  new  ", null);
     expect(await screen.findByText("result: true")).toBeInTheDocument();
     expect(screen.getByText("project: p-new")).toBeInTheDocument();
     expect(screen.getByText("names: new")).toBeInTheDocument();

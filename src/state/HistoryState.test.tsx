@@ -63,7 +63,7 @@ function entries(count: number, from = 0): PromptEntry[] {
 }
 
 function project(id: string, name: string): Project {
-  return { id, name, createdAt: 1, updatedAt: 1 };
+  return { id, name, folder: null, createdAt: 1, updatedAt: 1 };
 }
 
 function framework(id: string, fields: Partial<Framework> = {}): Framework {

@@ -25,6 +25,7 @@ import {
   savePromptEntry,
   setEntryProject,
   setEntryTitle,
+  setProjectFolder,
   startSession,
   updateFramework,
   writeSession,
@@ -188,7 +189,13 @@ describe("api", () => {
   });
 
   it("lists projects through list_projects", async () => {
-    const project = { id: "p", name: "API", createdAt: 1, updatedAt: 1 };
+    const project = {
+      id: "p",
+      name: "API",
+      folder: null,
+      createdAt: 1,
+      updatedAt: 1,
+    };
     const calls = answering([project]);
 
     await expect(listProjects()).resolves.toEqual([project]);
@@ -197,16 +204,52 @@ describe("api", () => {
   });
 
   it("creates a project through create_project with its name", async () => {
-    const project = { id: "p", name: "API", createdAt: 1, updatedAt: 1 };
+    const project = {
+      id: "p",
+      name: "API",
+      folder: null,
+      createdAt: 1,
+      updatedAt: 1,
+    };
     const calls = answering(project);
 
-    await expect(createProject("API")).resolves.toEqual(project);
+    await expect(createProject("API", "/work/api")).resolves.toEqual(project);
 
-    expect(calls).toEqual([{ cmd: "create_project", args: { name: "API" } }]);
+    expect(calls).toEqual([
+      {
+        cmd: "create_project",
+        args: { name: "API", folder: "/work/api" },
+      },
+    ]);
+  });
+
+  it("sets and clears a project's folder through set_project_folder", async () => {
+    const project = {
+      id: "p",
+      name: "API",
+      folder: null,
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    const calls = answering(project);
+
+    await expect(setProjectFolder("p", null)).resolves.toEqual(project);
+    await setProjectFolder("p", "/work/api");
+
+    expect(calls).toEqual([
+      { cmd: "set_project_folder", args: { id: "p", folder: null } },
+      { cmd: "set_project_folder", args: { id: "p", folder: "/work/api" } },
+    ]);
   });
 
   it("renames a project through rename_project with its id and name", async () => {
-    const project = { id: "p", name: "Docs", createdAt: 1, updatedAt: 2 };
+    const project = {
+      id: "p",
+      name: "Docs",
+      folder: null,
+      createdAt: 1,
+      updatedAt: 2,
+    };
     const calls = answering(project);
 
     await expect(renameProject("p", "Docs")).resolves.toEqual(project);
