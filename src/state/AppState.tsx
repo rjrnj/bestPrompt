@@ -24,9 +24,11 @@ import {
   latestEntryProject,
   listFrameworks,
   listProjects,
+  pickFolder as pickFolderCommand,
   renameProject as renameProjectCommand,
   restoreFramework as restoreFrameworkCommand,
   savePromptEntry,
+  setProjectFolder as setProjectFolderCommand,
   updateFramework,
 } from "../api";
 import type { Framework } from "../bindings/Framework";
@@ -50,9 +52,13 @@ export type AppActions = {
   /** Saves the entry without copying, unless already saved. */
   save: (entry: NewPromptEntry) => Promise<void>;
   /** Creates a project and selects it. False, after a toast, when it fails. */
-  createProject: (name: string) => Promise<boolean>;
+  createProject: (name: string, folder: string | null) => Promise<boolean>;
   /** Renames a project. False, after a toast, when it fails. */
   renameProject: (id: string, name: string) => Promise<boolean>;
+  /** Sets or, with null, clears a project's folder. False, after a toast, when it fails. */
+  setProjectFolder: (id: string, folder: string | null) => Promise<boolean>;
+  /** Asks for a folder. Null when cancelled or, after a toast, when it fails. */
+  pickFolder: () => Promise<string | null>;
   /** Deletes a project. False, after a toast, when it fails. */
   deleteProject: (id: string) => Promise<boolean>;
   /**
@@ -171,11 +177,20 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const pickFolder = useCallback(async (): Promise<string | null> => {
+    try {
+      return await pickFolderCommand();
+    } catch (error) {
+      dispatch(toast("error", messageOf(error)));
+      return null;
+    }
+  }, []);
+
   const createProject = useCallback(
-    (name: string) =>
+    (name: string, folder: string | null) =>
       projectAction(async () => ({
         type: "projectCreated",
-        project: await createProjectCommand(name, null),
+        project: await createProjectCommand(name, folder),
       })),
     [projectAction],
   );
@@ -183,8 +198,17 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const renameProject = useCallback(
     (id: string, name: string) =>
       projectAction(async () => ({
-        type: "projectRenamed",
+        type: "projectUpdated",
         project: await renameProjectCommand(id, name),
+      })),
+    [projectAction],
+  );
+
+  const setProjectFolder = useCallback(
+    (id: string, folder: string | null) =>
+      projectAction(async () => ({
+        type: "projectUpdated",
+        project: await setProjectFolderCommand(id, folder),
       })),
     [projectAction],
   );
@@ -364,6 +388,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       save,
       createProject,
       renameProject,
+      setProjectFolder,
+      pickFolder,
       deleteProject,
       saveFramework,
       deleteFramework,
@@ -376,6 +402,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       save,
       createProject,
       renameProject,
+      setProjectFolder,
+      pickFolder,
       deleteProject,
       saveFramework,
       deleteFramework,

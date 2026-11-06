@@ -1,8 +1,9 @@
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import * as Dialog from "@radix-ui/react-dialog";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { Project } from "../bindings/Project";
 import { useAppActions, useAppState } from "../state/AppState";
+import { FolderText } from "./FolderText";
 import { TextFieldDialog } from "./TextFieldDialog";
 import {
   dangerButton,
@@ -21,7 +22,7 @@ type Props = {
   onCloseAutoFocus?(event: Event): void;
 };
 
-/** The projects, each with Rename and Delete. Prompts are never deleted. */
+/** The projects, each with Rename, Delete and its folder. Prompts are never deleted. */
 export function ManageProjectsDialog({
   open,
   onOpenChange,
@@ -79,82 +80,141 @@ function ProjectList() {
 }
 
 function ProjectRow({ project }: { project: Project }) {
-  const { renameProject, deleteProject } = useAppActions();
+  const { renameProject, deleteProject, setProjectFolder, pickFolder } =
+    useAppActions();
+  const folderButton = useRef<HTMLButtonElement>(null);
   const [renaming, setRenaming] = useState(false);
 
   // The buttons read the same on every row; their accessible names add the
   // project's, so a screen reader can tell them apart.
   const named = (verb: string) => `${verb} ${project.name}`;
 
+  // The folder buttons are unavailable while a pick or a save is pending.
+  const busyRef = useRef(false);
+  const [busy, setBusy] = useState(false);
+
+  async function change(run: () => Promise<unknown>) {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      await run();
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  // A cancelled chooser changes nothing.
+  const chooseFolder = () =>
+    change(async () => {
+      const folder = await pickFolder();
+      if (folder !== null) await setProjectFolder(project.id, folder);
+    });
+
+  // The name and folder take a line of their own when the four buttons don't
+  // fit beside them; the buttons then wrap under it.
   return (
-    <li className="flex items-center gap-2 py-2">
-      <span
-        data-testid="project-name"
-        className="min-w-0 flex-1 text-sm wrap-break-word"
-      >
-        {project.name}
-      </span>
-      <TextFieldDialog
-        open={renaming}
-        onOpenChange={setRenaming}
-        trigger={
+    <li className="flex flex-wrap items-center gap-2 py-2">
+      <div className="min-w-48 flex-1">
+        <span
+          data-testid="project-name"
+          className="block text-sm wrap-break-word"
+        >
+          {project.name}
+        </span>
+        <FolderText folder={project.folder} className="block text-xs" />
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          aria-label={`Folder… for ${project.name}`}
+          ref={folderButton}
+          className={secondaryButton}
+          aria-disabled={busy}
+          onClick={() => void chooseFolder()}
+        >
+          Folder…
+        </button>
+        {project.folder !== null && (
           <button
             type="button"
-            aria-label={named("Rename")}
+            aria-label={`Clear folder of ${project.name}`}
             className={secondaryButton}
+            aria-disabled={busy}
+            onClick={() =>
+              void change(async () => {
+                // The button is about to go; keep focus in this row.
+                folderButton.current?.focus();
+                await setProjectFolder(project.id, null);
+              })
+            }
           >
-            Rename
+            Clear folder
           </button>
-        }
-        title="Rename project"
-        description="Its prompts stay filed under it."
-        fieldLabel="Name"
-        submitLabel="Rename"
-        initialValue={project.name}
-        onSubmit={(name) =>
-          name.trim() === project.name
-            ? Promise.resolve(true)
-            : renameProject(project.id, name)
-        }
-      />
-      <AlertDialog.Root>
-        <AlertDialog.Trigger asChild>
-          <button
-            type="button"
-            aria-label={named("Delete")}
-            className={secondaryButton}
-          >
-            Delete
-          </button>
-        </AlertDialog.Trigger>
-        <AlertDialog.Portal>
-          <AlertDialog.Overlay className={dialogOverlay} />
-          <AlertDialog.Content className={dialogPanel}>
-            <AlertDialog.Title className={dialogTitle}>
-              Delete “{project.name}”?
-            </AlertDialog.Title>
-            <AlertDialog.Description className={dialogDescription}>
-              Its prompts move to No project. No prompts are deleted.
-            </AlertDialog.Description>
-            <div className={dialogButtons}>
-              <AlertDialog.Cancel asChild>
-                <button type="button" className={secondaryButton}>
-                  Cancel
-                </button>
-              </AlertDialog.Cancel>
-              <AlertDialog.Action asChild>
-                <button
-                  type="button"
-                  className={dangerButton}
-                  onClick={() => void deleteProject(project.id)}
-                >
-                  Delete
-                </button>
-              </AlertDialog.Action>
-            </div>
-          </AlertDialog.Content>
-        </AlertDialog.Portal>
-      </AlertDialog.Root>
+        )}
+        <TextFieldDialog
+          open={renaming}
+          onOpenChange={setRenaming}
+          trigger={
+            <button
+              type="button"
+              aria-label={named("Rename")}
+              className={secondaryButton}
+            >
+              Rename
+            </button>
+          }
+          title="Rename project"
+          description="Its prompts stay filed under it."
+          fieldLabel="Name"
+          submitLabel="Rename"
+          initialValue={project.name}
+          onSubmit={(name) =>
+            name.trim() === project.name
+              ? Promise.resolve(true)
+              : renameProject(project.id, name)
+          }
+        />
+        <AlertDialog.Root>
+          <AlertDialog.Trigger asChild>
+            <button
+              type="button"
+              aria-label={named("Delete")}
+              className={secondaryButton}
+            >
+              Delete
+            </button>
+          </AlertDialog.Trigger>
+          <AlertDialog.Portal>
+            <AlertDialog.Overlay className={dialogOverlay} />
+            <AlertDialog.Content className={dialogPanel}>
+              <AlertDialog.Title className={dialogTitle}>
+                Delete “{project.name}”?
+              </AlertDialog.Title>
+              <AlertDialog.Description className={dialogDescription}>
+                Its prompts move to No project. No prompts are deleted.
+              </AlertDialog.Description>
+              <div className={dialogButtons}>
+                <AlertDialog.Cancel asChild>
+                  <button type="button" className={secondaryButton}>
+                    Cancel
+                  </button>
+                </AlertDialog.Cancel>
+                <AlertDialog.Action asChild>
+                  <button
+                    type="button"
+                    className={dangerButton}
+                    onClick={() => void deleteProject(project.id)}
+                  >
+                    Delete
+                  </button>
+                </AlertDialog.Action>
+              </div>
+            </AlertDialog.Content>
+          </AlertDialog.Portal>
+        </AlertDialog.Root>
+      </div>
     </li>
   );
 }

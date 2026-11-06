@@ -127,7 +127,7 @@ function Probe() {
       >
         type
       </button>
-      <button onClick={() => outcome(actions.createProject("  new  "))}>
+      <button onClick={() => outcome(actions.createProject("  new  ", null))}>
         create
       </button>
       <button

@@ -29,6 +29,8 @@ type Props = {
   onSubmit(value: string): Promise<boolean>;
   /** The button that opens the dialog, if it has one. */
   trigger?: ReactNode;
+  /** Extra content between the text field and the buttons. */
+  children?: ReactNode;
 };
 
 /**
@@ -48,6 +50,7 @@ export function TextFieldDialog({
   allowBlank = false,
   onSubmit,
   trigger,
+  children,
 }: Props) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -70,6 +73,7 @@ export function TextFieldDialog({
             initialValue={initialValue}
             allowBlank={allowBlank}
             submitLabel={submitLabel}
+            extra={children}
             onSubmit={async (value) => {
               if (await onSubmit(value)) onOpenChange(false);
             }}
@@ -85,12 +89,14 @@ function TextForm({
   initialValue,
   allowBlank,
   submitLabel,
+  extra,
   onSubmit,
 }: {
   label: string;
   initialValue: string;
   allowBlank: boolean;
   submitLabel: string;
+  extra: ReactNode;
   onSubmit(value: string): Promise<void>;
 }) {
   const inputId = useId();
@@ -121,6 +127,7 @@ function TextForm({
           className={`mt-1.5 ${textInput}`}
         />
       </div>
+      {extra}
       <div className={dialogButtons}>
         <Dialog.Close asChild>
           <button type="button" className={secondaryButton}>

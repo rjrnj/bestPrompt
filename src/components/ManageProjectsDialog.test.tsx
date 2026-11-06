@@ -7,9 +7,12 @@ import {
   latestEntryProject,
   listFrameworks,
   listProjects,
+  pickFolder,
   renameProject,
+  setProjectFolder,
 } from "../api";
 import type { Project } from "../bindings/Project";
+import { FOLDER_MAX_CHARS, shortenPath } from "../paths";
 import { AppStateProvider } from "../state/AppState";
 import { ProjectPicker } from "./ProjectPicker";
 import { Toaster } from "./Toaster";
@@ -22,6 +25,8 @@ vi.mock("../api", async (importOriginal) => ({
   latestEntryProject: vi.fn(),
   renameProject: vi.fn(),
   deleteProject: vi.fn(),
+  pickFolder: vi.fn(),
+  setProjectFolder: vi.fn(),
 }));
 
 function project(id: string, name: string): Project {
@@ -30,6 +35,7 @@ function project(id: string, name: string): Project {
 
 const api = project("0192f000-0000-7000-8000-000000000001", "api");
 const web = project("0192f000-0000-7000-8000-000000000002", "web");
+const withFolder: Project = { ...web, folder: "/home/me/web" };
 
 /** Renders the Builder's picker and opens Manage projects from its list. */
 async function openDialog() {
@@ -178,6 +184,114 @@ describe("ManageProjectsDialog", () => {
     expect(renameProject).not.toHaveBeenCalled();
   });
 
+  it("manage_shows_each_projects_folder", async () => {
+    vi.mocked(listProjects).mockResolvedValue([api, withFolder]);
+    const { dialog } = await openDialog();
+
+    const rows = within(dialog).getAllByRole("listitem");
+    expect(within(rows[0]).getByText("No folder")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("/home/me/web")).toBeInTheDocument();
+    expect(within(rows[1]).queryByText("No folder")).toBeNull();
+    expect(
+      within(dialog).queryByRole("button", { name: "Clear folder of api" }),
+    ).toBeNull();
+  });
+
+  it("choosing_a_folder_saves_it", async () => {
+    vi.mocked(pickFolder).mockResolvedValue("/home/me/api");
+    vi.mocked(setProjectFolder).mockResolvedValue({
+      ...api,
+      folder: "/home/me/api",
+    });
+    const { user, dialog } = await openDialog();
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Folder… for api" }),
+    );
+
+    await waitFor(() =>
+      expect(setProjectFolder).toHaveBeenCalledWith(api.id, "/home/me/api"),
+    );
+    expect(await within(dialog).findByText("/home/me/api")).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: "Clear folder of api" }),
+    ).toBeInTheDocument();
+  });
+
+  it("a_double_click_on_folder_picks_and_saves_once", async () => {
+    let resolvePick: (path: string) => void = () => {};
+    vi.mocked(pickFolder).mockReturnValue(
+      new Promise((resolve) => (resolvePick = resolve)),
+    );
+    vi.mocked(setProjectFolder).mockResolvedValue({
+      ...api,
+      folder: "/home/me/api",
+    });
+    const { user, dialog } = await openDialog();
+    const folder = within(dialog).getByRole("button", {
+      name: "Folder… for api",
+    });
+
+    await user.dblClick(folder);
+    expect(folder).toHaveAttribute("aria-disabled", "true");
+    resolvePick("/home/me/api");
+
+    expect(await within(dialog).findByText("/home/me/api")).toBeInTheDocument();
+    expect(pickFolder).toHaveBeenCalledTimes(1);
+    expect(setProjectFolder).toHaveBeenCalledTimes(1);
+    expect(folder).toHaveAttribute("aria-disabled", "false");
+  });
+
+  it("clearing_a_folder_saves_null", async () => {
+    vi.mocked(listProjects).mockResolvedValue([api, withFolder]);
+    vi.mocked(setProjectFolder).mockResolvedValue(web);
+    const { user, dialog } = await openDialog();
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Clear folder of web" }),
+    );
+
+    expect(setProjectFolder).toHaveBeenCalledWith(web.id, null);
+    await waitFor(() =>
+      expect(within(dialog).queryByText("/home/me/web")).toBeNull(),
+    );
+    expect(
+      within(dialog).queryByRole("button", { name: "Clear folder of web" }),
+    ).toBeNull();
+  });
+
+  it("a_cancelled_chooser_changes_nothing", async () => {
+    vi.mocked(pickFolder).mockResolvedValue(null);
+    const { user, dialog } = await openDialog();
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Folder… for api" }),
+    );
+
+    await waitFor(() => expect(pickFolder).toHaveBeenCalled());
+    expect(setProjectFolder).not.toHaveBeenCalled();
+    expect(within(dialog).getAllByText("No folder")).toHaveLength(2);
+  });
+
+  it("a_refused_folder_is_toasted", async () => {
+    vi.mocked(listProjects).mockResolvedValue([api, withFolder]);
+    vi.mocked(pickFolder).mockResolvedValue("/gone");
+    vi.mocked(setProjectFolder).mockRejectedValue(
+      new ApiError("invalid", "That folder no longer exists."),
+    );
+    const { user, dialog } = await openDialog();
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Folder… for web" }),
+    );
+
+    expect(
+      await screen.findByText("That folder no longer exists."),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText("/home/me/web")).toBeInTheDocument();
+    expect(within(dialog).queryByText("/gone")).toBeNull();
+  });
+
   it("says when there are no projects yet", async () => {
     vi.mocked(listProjects).mockResolvedValue([]);
     const { dialog } = await openDialog();
@@ -195,5 +309,62 @@ describe("ManageProjectsDialog", () => {
     await waitFor(() =>
       expect(screen.getByRole("combobox", { name: "Project" })).toHaveFocus(),
     );
+  });
+
+  it("gives_screen_readers_the_full_path_of_a_long_folder", async () => {
+    const long = "/home/me/projects/clients/acme/services/billing/api";
+    vi.mocked(listProjects).mockResolvedValue([api, { ...web, folder: long }]);
+    const { dialog } = await openDialog();
+
+    const full = within(dialog).getByText(long);
+    expect(full).toHaveClass("sr-only");
+    expect(
+      within(dialog).getByText(shortenPath(long, FOLDER_MAX_CHARS)),
+    ).toHaveAttribute("aria-hidden", "true");
+    expect(within(dialog).getAllByText(long)).toHaveLength(1);
+  });
+
+  it("shows_a_short_folder_once", async () => {
+    vi.mocked(listProjects).mockResolvedValue([api, withFolder]);
+    const { dialog } = await openDialog();
+
+    expect(within(dialog).getAllByText("/home/me/web")).toHaveLength(1);
+    expect(dialog.querySelector(".sr-only")).toBeNull();
+  });
+
+  it("clear_folder_moves_focus_to_that_rows_folder_button", async () => {
+    vi.mocked(listProjects).mockResolvedValue([api, withFolder]);
+    vi.mocked(setProjectFolder).mockResolvedValue(web);
+    const { user, dialog } = await openDialog();
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Clear folder of web" }),
+    );
+
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole("button", { name: "Folder… for web" }),
+      ).toHaveFocus(),
+    );
+  });
+
+  it("a_failed_chooser_is_toasted_and_can_be_retried", async () => {
+    vi.mocked(pickFolder).mockRejectedValueOnce(
+      new ApiError("failed", "chooser unavailable"),
+    );
+    vi.mocked(pickFolder).mockResolvedValue(null);
+    const { user, dialog } = await openDialog();
+    const folder = within(dialog).getByRole("button", {
+      name: "Folder… for api",
+    });
+
+    await user.click(folder);
+
+    expect(await screen.findByText("chooser unavailable")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(folder).toHaveAttribute("aria-disabled", "false"),
+    );
+    await user.click(folder);
+    await waitFor(() => expect(pickFolder).toHaveBeenCalledTimes(2));
   });
 });

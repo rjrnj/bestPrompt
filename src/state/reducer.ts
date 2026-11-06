@@ -88,7 +88,7 @@ export type Action =
   | { type: "projectListOpened" }
   | { type: "startingProjectFound"; id: string | null }
   | { type: "projectCreated"; project: Project }
-  | { type: "projectRenamed"; project: Project }
+  | { type: "projectUpdated"; project: Project }
   | { type: "projectDeleted"; id: string }
   | { type: "editTitle"; value: string }
   | { type: "entryOpened"; entry: PromptEntry }
@@ -276,7 +276,7 @@ export function reducer(state: State, action: Action): State {
         selectedProjectId: action.project.id,
         projectChosen: true,
       };
-    case "projectRenamed":
+    case "projectUpdated":
       return withListedProjects(state, (projects) =>
         sortProjects(
           projects.map((p) =>
