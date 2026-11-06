@@ -1,6 +1,7 @@
 pub mod claude;
 pub mod commands;
 pub mod db;
+pub mod terminal;
 mod window;
 
 use std::path::PathBuf;
@@ -13,6 +14,8 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use claude::ClaudeState;
 use commands::Db;
 use db::DbError;
+use terminal::Sessions;
+use terminal::folders::PickedFolders;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -28,13 +31,24 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
+            app.manage(Sessions::default());
+            app.manage(PickedFolders::new());
             open_database_or_exit(app);
             start_claude_detection(app);
             Ok(())
         });
-    commands::register(builder)
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+    let app = commands::register(builder)
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+    app.run(|app, event| {
+        // On Windows the app's job object would end the sessions' processes
+        // anyway; on Linux nothing else does.
+        if let tauri::RunEvent::Exit = event
+            && let Some(sessions) = app.try_state::<Sessions>()
+        {
+            sessions.close_all();
+        }
+    });
 }
 
 /// Why the app couldn't get a working database at startup.
