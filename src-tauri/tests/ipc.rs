@@ -4,34 +4,73 @@
 //! frontend expects.
 
 use std::collections::BTreeSet;
-use std::sync::Mutex;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
+use bestprompt_lib::claude::{ClaudeExe, ClaudeState};
 use bestprompt_lib::commands::{Db, register};
 use bestprompt_lib::db::builtins::seed_builtins;
 use bestprompt_lib::db::entries::PromptEntry;
 use bestprompt_lib::db::frameworks::Framework;
 use bestprompt_lib::db::projects::Project;
 use bestprompt_lib::db::{migrate, open_in_memory};
+use bestprompt_lib::terminal::Sessions;
+use bestprompt_lib::terminal::folders::PickedFolders;
 use serde_json::{Value, json};
 use tauri::ipc::{CallbackFn, InvokeBody, InvokeResponseBody};
 use tauri::test::{INVOKE_KEY, MockRuntime, get_ipc_response, mock_builder};
 use tauri::webview::InvokeRequest;
-use tauri::{WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+
+/// Everything the app sent down channels, with each channel's id.
+type Sent = Arc<Mutex<Vec<(u32, InvokeResponseBody)>>>;
 
 /// The app as `run` builds it, minus the plugins, on a database with the
 /// built-ins seeded, with one window of the given label.
 fn window(label: &str) -> WebviewWindow<MockRuntime> {
+    window_with_channels(label, Sent::default())
+}
+
+/// Like `window`, recording what the app sends down channels in `sent`.
+/// Claude Code is `examples/fake_claude.rs`, which `cargo test` builds into
+/// `target/<profile>/examples/`, next to this binary's `deps/`.
+fn window_with_channels(label: &str, sent: Sent) -> WebviewWindow<MockRuntime> {
     let mut conn = open_in_memory().unwrap();
     migrate::migrate(&mut conn).unwrap();
     seed_builtins(&mut conn).unwrap();
     let app = register(mock_builder())
         .manage(Db(Mutex::new(conn)))
+        .manage(fake_claude())
+        .manage(Sessions::default())
+        .manage(PickedFolders::new())
+        .channel_interceptor(move |_, callback, _, body| {
+            sent.lock().unwrap().push((callback.0, body.clone()));
+            true
+        })
         .build(tauri::generate_context!())
         .unwrap();
     // `build` doesn't create the windows from `tauri.conf.json`; `run` would.
     WebviewWindowBuilder::new(&app, label, WebviewUrl::default())
         .build()
         .unwrap()
+}
+
+/// The fake writes its arguments to the file this names, in the folder it
+/// starts in: one line each, its UTF-8 in hex.
+const ARGS_VAR: &str = "FAKE_CLAUDE_ARGS";
+const ARGS_FILE: &str = "fake-claude-args";
+
+fn fake_claude() -> ClaudeState {
+    let exe = std::env::current_exe().unwrap();
+    let profile = exe.parent().unwrap().parent().unwrap();
+    let fake = profile
+        .join("examples")
+        .join(format!("fake_claude{}", std::env::consts::EXE_SUFFIX));
+    let env = std::env::vars_os()
+        .chain([(ARGS_VAR.into(), ARGS_FILE.into())])
+        .collect();
+    ClaudeState::from_parts(Some(ClaudeExe::Exe(fake)), env, None)
 }
 
 /// The window the capability grants the commands to.
@@ -477,4 +516,172 @@ fn an_invalid_framework_reaches_the_webview_as_invalid() {
     .unwrap_err();
 
     assert_eq!(error["kind"], "invalid");
+}
+
+const OUTPUT: &str = "__CHANNEL__:1";
+const EVENTS: &str = "__CHANNEL__:2";
+
+/// The raw bytes sent down channel `id` so far.
+fn raw_on(sent: &Sent, id: u32) -> Vec<u8> {
+    sent.lock()
+        .unwrap()
+        .iter()
+        .filter(|(channel, _)| *channel == id)
+        .flat_map(|(_, body)| match body {
+            InvokeResponseBody::Raw(bytes) => bytes.clone(),
+            InvokeResponseBody::Json(text) => text.clone().into_bytes(),
+        })
+        .collect()
+}
+
+/// Waits until `found` holds for what was sent down channel `id`.
+fn wait_on(sent: &Sent, id: u32, what: &str, found: impl Fn(&str) -> bool) {
+    let start = Instant::now();
+    loop {
+        let text = String::from_utf8_lossy(&raw_on(sent, id)).into_owned();
+        if found(&text) {
+            return;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "timed out waiting for {what}: {text:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Starts the fake CLI through `start_session` in a new folder the user
+/// picked, with `prompt`, and waits until it's ready. Returns the session
+/// id, what `start_session` returned, and the folder, which lives as long
+/// as the value.
+fn start_fake_session(
+    window: &WebviewWindow<MockRuntime>,
+    sent: &Sent,
+    prompt: Option<&str>,
+) -> (String, Value, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    window
+        .state::<PickedFolders>()
+        .record(dir.path().to_path_buf());
+
+    let started = invoke(
+        window,
+        "start_session",
+        json!({
+            "folder": dir.path(),
+            "cols": 120,
+            "rows": 30,
+            "prompt": prompt,
+            "output": OUTPUT,
+            "events": EVENTS,
+        }),
+    )
+    .unwrap();
+    let id = started["id"].as_str().unwrap().to_owned();
+    // ConPTY asks where the cursor is and shows nothing until it's told, as
+    // xterm.js does in the app.
+    if cfg!(windows) {
+        wait_on(sent, 1, "the cursor query", |text| text.contains("\x1b[6n"));
+        let reply = json!({ "id": id, "data": "\x1b[1;1R" });
+        assert_eq!(invoke(window, "write_session", reply), Ok(Value::Null));
+    }
+    wait_on(sent, 1, "ready", |text| text.contains("ready"));
+    (id, started, dir)
+}
+
+#[test]
+fn a_session_runs_through_ipc() {
+    let sent = Sent::default();
+    let window = window_with_channels("main", sent.clone());
+    let (id, started, dir) = start_fake_session(&window, &sent, None);
+
+    let wrote = invoke(&window, "write_session", json!({ "id": id, "data": "abc" }));
+    wait_on(&sent, 1, "the input", |text| text.contains("hex 616263"));
+    let resized = invoke(
+        &window,
+        "resize_session",
+        json!({ "id": id, "cols": 100, "rows": 40 }),
+    );
+    let closed = invoke(&window, "close_session", json!({ "id": id }));
+    wait_on(&sent, 2, "the exit", |text| {
+        text.contains(r#""type":"exited""#)
+    });
+    let after = invoke(&window, "write_session", json!({ "id": id, "data": "x" }));
+
+    assert_eq!(started, json!({ "id": id, "prefilled": false }));
+    let args = std::fs::read_to_string(dir.path().join(ARGS_FILE)).unwrap();
+    assert_eq!(args, "");
+    assert_eq!(wrote, Ok(Value::Null));
+    assert_eq!(resized, Ok(Value::Null));
+    assert_eq!(closed, Ok(Value::Null));
+    assert_eq!(
+        after,
+        Err(json!({ "kind": "notFound", "message": "That session has ended." }))
+    );
+}
+
+#[test]
+fn a_session_starts_with_a_prompt_through_ipc() {
+    let sent = Sent::default();
+    let window = window_with_channels("main", sent.clone());
+
+    let (id, started, dir) = start_fake_session(&window, &sent, Some("fix\r\nit"));
+
+    let hex: String = b"--prefill=fix\nit"
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let args = std::fs::read_to_string(dir.path().join(ARGS_FILE)).unwrap();
+    assert_eq!(args, format!("{hex}\n"));
+    assert_eq!(started, json!({ "id": id, "prefilled": true }));
+    let closed = invoke(&window, "close_session", json!({ "id": id }));
+    assert_eq!(closed, Ok(Value::Null));
+}
+
+/// An unknown session is refused before the clipboard is touched.
+#[test]
+fn pasting_into_an_unknown_session_is_an_ended_error() {
+    let window = main_window();
+
+    let error = invoke(&window, "paste_clipboard", json!({ "id": "nope" }));
+
+    assert_eq!(
+        error,
+        Err(json!({ "kind": "notFound", "message": "That session has ended." }))
+    );
+}
+
+#[test]
+fn a_folder_never_picked_cannot_start_a_session() {
+    let window = main_window();
+    let dir = tempfile::tempdir().unwrap();
+
+    let error = invoke(
+        &window,
+        "start_session",
+        json!({
+            "folder": dir.path(),
+            "cols": 80,
+            "rows": 24,
+            "output": OUTPUT,
+            "events": EVENTS,
+        }),
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        json!({ "kind": "invalid", "message": "That folder isn't one you chose." })
+    );
+}
+
+#[test]
+fn the_webview_can_read_the_claude_status() {
+    let window = main_window();
+
+    let status = invoke(&window, "claude_status", json!({})).unwrap();
+
+    assert_eq!(status["found"], true);
+    let path = PathBuf::from(status["path"].as_str().unwrap());
+    assert!(path.ends_with(format!("fake_claude{}", std::env::consts::EXE_SUFFIX)));
 }

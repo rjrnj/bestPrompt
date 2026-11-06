@@ -1,5 +1,7 @@
+pub mod claude;
 pub mod commands;
 pub mod db;
+pub mod terminal;
 mod window;
 
 use std::path::PathBuf;
@@ -9,8 +11,15 @@ use rusqlite::Connection;
 use tauri::{App, AppHandle, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
+use claude::ClaudeState;
 use commands::Db;
 use db::DbError;
+use terminal::Sessions;
+use terminal::folders::PickedFolders;
+
+/// Crates whose own log lines are dropped. portable-pty logs the whole
+/// command line of a spawn that fails, and that can hold the user's prompt.
+pub(crate) const SILENCED: &[&str] = &["portable_pty"];
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -19,19 +28,35 @@ pub fn run() {
         // text of SQLite errors through the `log` facade, and without a
         // backend those lines go nowhere. Writes to stdout and the app log dir.
         .plugin(
-            tauri_plugin_log::Builder::new()
-                .level(log::LevelFilter::Info)
+            SILENCED
+                .iter()
+                .fold(
+                    tauri_plugin_log::Builder::new().level(log::LevelFilter::Info),
+                    |builder, target| builder.level_for(*target, log::LevelFilter::Off),
+                )
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
+            app.manage(Sessions::default());
+            app.manage(PickedFolders::new());
             open_database_or_exit(app);
+            start_claude_detection(app);
             Ok(())
         });
-    commands::register(builder)
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+    let app = commands::register(builder)
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+    app.run(|app, event| {
+        // On Windows the app's job object would end the sessions' processes
+        // anyway; on Linux nothing else does.
+        if let tauri::RunEvent::Exit = event
+            && let Some(sessions) = app.try_state::<Sessions>()
+        {
+            sessions.close_all();
+        }
+    });
 }
 
 /// Why the app couldn't get a working database at startup.
@@ -80,6 +105,26 @@ fn open_database_or_exit(app: &mut App) {
                 .show(move |_| handle.exit(1));
         }
     }
+}
+
+/// Puts the Claude Code state in managed state and finds the CLI on a
+/// background thread, so reading the login shell never delays the window.
+fn start_claude_detection(app: &mut App) {
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|error| log::warn!("could not resolve the home directory: {error}"))
+        .ok();
+    app.manage(ClaudeState::new(home));
+    let handle = app.handle().clone();
+    std::thread::spawn(move || {
+        let state = handle.state::<ClaudeState>();
+        state.init();
+        match state.exe() {
+            Some(exe) => log::info!("found Claude Code at {}", exe.path().display()),
+            None => log::info!("Claude Code was not found"),
+        }
+    });
 }
 
 fn open_database(app: &AppHandle) -> Result<Connection, StartupError> {

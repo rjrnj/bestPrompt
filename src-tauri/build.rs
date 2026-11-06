@@ -21,6 +21,14 @@ const COMMANDS: &[&str] = &[
     "create_project",
     "rename_project",
     "delete_project",
+    "claude_status",
+    "detect_claude",
+    "pick_folder",
+    "start_session",
+    "write_session",
+    "resize_session",
+    "paste_clipboard",
+    "close_session",
 ];
 
 fn main() {

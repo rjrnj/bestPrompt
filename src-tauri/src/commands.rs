@@ -1,18 +1,26 @@
-//! The Tauri commands the webview can call. Each is a thin wrapper around a
-//! data-layer function; the logic and its tests live in `db`.
+//! The Tauri commands the webview can call. Each is a thin wrapper; the
+//! logic and its tests live in `db`, `claude` and `terminal`.
 //!
 //! The commands are `async` so they run off the main thread; a sync command
-//! would freeze the window for as long as the query takes.
+//! would freeze the window for as long as the query takes. One, the folder
+//! dialog, can wait for as long as the user likes, so it hands the wait to a
+//! blocking thread and doesn't hold an async worker.
 
 use std::sync::{Mutex, PoisonError};
 
 use rusqlite::Connection;
-use tauri::{Builder, Runtime, State};
+use tauri::ipc::{Channel, InvokeResponseBody};
+use tauri::{AppHandle, Builder, Manager, Runtime, State};
+use tauri_plugin_clipboard_manager::ClipboardExt;
+use tauri_plugin_dialog::DialogExt;
 
+use crate::claude::{ClaudeState, ClaudeStatus};
 use crate::db::DbError;
 use crate::db::entries::{self, EntryCursor, EntryQuery, NewPromptEntry, PromptEntry};
 use crate::db::frameworks::{self, Framework, FrameworkInput};
 use crate::db::projects::{self, Project};
+use crate::terminal::folders::{PickedFolders, allowed_folder};
+use crate::terminal::{SessionError, SessionEvent, Sessions, StartedSession};
 
 /// The app's database connection, held in Tauri's managed state.
 pub struct Db(pub Mutex<Connection>);
@@ -46,6 +54,14 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
         create_project,
         rename_project,
         delete_project,
+        claude_status,
+        detect_claude,
+        pick_folder,
+        start_session,
+        write_session,
+        resize_session,
+        paste_clipboard,
+        close_session,
     ])
 }
 
@@ -149,4 +165,121 @@ fn rename_project(db: State<'_, Db>, id: String, name: String) -> Result<Project
 #[tauri::command(async)]
 fn delete_project(db: State<'_, Db>, id: String) -> Result<(), DbError> {
     db.with(|conn| projects::delete_project(conn, &id))
+}
+
+#[tauri::command(async)]
+fn claude_status(claude: State<'_, ClaudeState>) -> ClaudeStatus {
+    claude.status()
+}
+
+#[tauri::command(async)]
+fn detect_claude(claude: State<'_, ClaudeState>) -> ClaudeStatus {
+    claude.detect()
+}
+
+/// Asks the user for a folder and remembers it as one a session may start
+/// in. `None` if they cancelled. The dialog stays open as long as the user
+/// likes, so it waits on a blocking thread, not an async worker.
+#[tauri::command]
+async fn pick_folder<R: Runtime>(app: AppHandle<R>) -> Option<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = app
+            .dialog()
+            .file()
+            .blocking_pick_folder()?
+            .into_path()
+            .map_err(|error| log::warn!("the picked folder isn't a path: {error}"))
+            .ok()?;
+        let text = path
+            .to_str()
+            .or_else(|| {
+                log::warn!("the picked folder's name isn't valid text");
+                None
+            })?
+            .to_owned();
+        app.state::<PickedFolders>().record(path);
+        Some(text)
+    })
+    .await
+    .unwrap_or_else(|error| {
+        log::error!("the folder dialog failed: {error}");
+        None
+    })
+}
+
+/// Starts Claude Code in `folder`, which must be one the user chose, with
+/// `prompt` in its input box if it can be passed. Output goes down `output`
+/// as raw bytes; the exit goes down `events`.
+#[tauri::command(async)]
+#[allow(clippy::too_many_arguments)]
+fn start_session(
+    claude: State<'_, ClaudeState>,
+    sessions: State<'_, Sessions>,
+    picked: State<'_, PickedFolders>,
+    folder: String,
+    cols: u16,
+    rows: u16,
+    prompt: Option<String>,
+    output: Channel<InvokeResponseBody>,
+    events: Channel<SessionEvent>,
+) -> Result<StartedSession, SessionError> {
+    // Saved project folders join the picked ones here once projects have them.
+    let folder = allowed_folder(&folder, &picked, &[])?;
+    sessions.start(
+        &claude,
+        &folder,
+        (cols, rows),
+        prompt.as_deref(),
+        move |chunk| {
+            let _ = output.send(InvokeResponseBody::Raw(chunk.to_vec()));
+        },
+        move |code| {
+            let _ = events.send(SessionEvent::Exited { code });
+        },
+    )
+}
+
+#[tauri::command(async)]
+fn write_session(
+    sessions: State<'_, Sessions>,
+    id: String,
+    data: String,
+) -> Result<(), SessionError> {
+    sessions.write(&id, data.as_bytes())
+}
+
+#[tauri::command(async)]
+fn resize_session(
+    sessions: State<'_, Sessions>,
+    id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), SessionError> {
+    sessions.resize(&id, cols, rows)
+}
+
+/// Pastes the system clipboard into the session. The text is read here and
+/// goes straight to Claude: the webview is not allowed to read the clipboard.
+/// A clipboard with no text pastes nothing.
+#[tauri::command(async)]
+fn paste_clipboard<R: Runtime>(
+    app: AppHandle<R>,
+    sessions: State<'_, Sessions>,
+    id: String,
+) -> Result<(), SessionError> {
+    // An unknown session never touches the clipboard.
+    sessions.paste(&id, "")?;
+    let text = match app.clipboard().read_text() {
+        Ok(text) => text,
+        Err(error) => {
+            log::info!("nothing to paste from the clipboard: {error}");
+            return Ok(());
+        }
+    };
+    sessions.paste(&id, &text)
+}
+
+#[tauri::command(async)]
+fn close_session(sessions: State<'_, Sessions>, id: String) -> Result<(), SessionError> {
+    sessions.close(&id)
 }

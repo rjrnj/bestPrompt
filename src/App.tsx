@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { AppTabs } from "./components/AppTabs";
 import { FrameworkPicker } from "./components/FrameworkPicker";
 import { FrameworksView } from "./components/frameworks/FrameworksView";
@@ -10,6 +11,16 @@ import { PromptPreview } from "./components/PromptPreview";
 import { Toaster } from "./components/Toaster";
 import { AppStateProvider, useAppState } from "./state/AppState";
 import { HistoryProvider } from "./state/HistoryState";
+
+// Temporary and dev-only. Not even imported in the production build, so
+// xterm.js stays out of it.
+const DevSession = import.meta.env.DEV
+  ? lazy(() =>
+      import("./components/terminal/DevSession").then((m) => ({
+        default: m.DevSession,
+      })),
+    )
+  : null;
 
 function App() {
   return (
@@ -68,17 +79,24 @@ function Builder() {
     return <LoadErrorPanel message={frameworks.message} />;
   }
   return (
-    <div className="grid h-full grid-cols-2 grid-rows-[minmax(0,1fr)] gap-4 p-4">
-      {/* Each pane scrolls on its own, so the preview stays in view
+    <div className="flex h-full flex-col">
+      <div className="grid min-h-0 flex-1 grid-cols-2 grid-rows-[minmax(0,1fr)] gap-4 p-4">
+        {/* Each pane scrolls on its own, so the preview stays in view
           however long the form gets. The explicit row lets a pane shrink
           below its content instead of stretching the row. The form pane
           is padded inside its scroll container so the fields' focus
           rings are not clipped at its edges, with room on the right for a
           scrollbar drawn over the content, as on Linux. */}
-      <div className="-m-1 min-h-0 overflow-y-auto p-1 overlay-scrollbars:pr-4">
-        <PromptForm />
+        <div className="-m-1 min-h-0 overflow-y-auto p-1 overlay-scrollbars:pr-4">
+          <PromptForm />
+        </div>
+        <PromptPreview actions={<PromptActions />} />
       </div>
-      <PromptPreview actions={<PromptActions />} />
+      {DevSession && import.meta.env.MODE !== "test" && (
+        <Suspense fallback={null}>
+          <DevSession />
+        </Suspense>
+      )}
     </div>
   );
 }

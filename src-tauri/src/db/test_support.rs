@@ -116,6 +116,12 @@ pub fn insert_titled_entry(
 /// `"LEVEL message"`. Only the calling thread's log lines are collected, so
 /// tests running in parallel don't see each other's.
 pub fn logged<T>(f: impl FnOnce() -> T) -> (T, Vec<String>) {
+    let (result, lines) = logged_with_targets(f);
+    (result, lines.into_iter().map(|(_, line)| line).collect())
+}
+
+/// Like `logged`, with each line's target, the module that logged it.
+pub fn logged_with_targets<T>(f: impl FnOnce() -> T) -> (T, Vec<(String, String)>) {
     static INSTALL: Once = Once::new();
     INSTALL.call_once(|| {
         log::set_logger(&RECORDER).expect("no other logger is installed in tests");
@@ -140,11 +146,14 @@ static RECORDER: Recorder = Recorder {
 
 /// One capture per thread currently inside `logged`.
 struct Recorder {
-    captures: Mutex<Vec<(ThreadId, Vec<String>)>>,
+    captures: Mutex<Captures>,
 }
 
+/// Each thread's lines, as (target, line).
+type Captures = Vec<(ThreadId, Vec<(String, String)>)>;
+
 impl Recorder {
-    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<(ThreadId, Vec<String>)>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Captures> {
         // A test that panicked while holding the lock shouldn't fail the others.
         self.captures
             .lock()
@@ -160,7 +169,8 @@ impl log::Log for Recorder {
     fn log(&self, record: &log::Record) {
         let thread = thread::current().id();
         if let Some((_, lines)) = self.lock().iter_mut().rfind(|(id, _)| *id == thread) {
-            lines.push(format!("{} {}", record.level(), record.args()));
+            let line = format!("{} {}", record.level(), record.args());
+            lines.push((record.target().to_owned(), line));
         }
     }
 

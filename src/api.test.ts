@@ -1,24 +1,33 @@
+import { Channel } from "@tauri-apps/api/core";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  claudeStatus,
+  closeSession,
   createFramework,
   createProject,
   deleteFramework,
   deleteProject,
   deletePromptEntry,
+  detectClaude,
   getFramework,
   getPromptEntry,
   latestEntryProject,
   listFrameworks,
   listProjects,
   listPromptEntries,
+  pasteClipboard,
+  pickFolder,
   renameProject,
+  resizeSession,
   restoreFramework,
   savePromptEntry,
   setEntryProject,
   setEntryTitle,
+  startSession,
   updateFramework,
+  writeSession,
 } from "./api";
 import type { EntryQuery } from "./bindings/EntryQuery";
 import type { Framework } from "./bindings/Framework";
@@ -305,5 +314,120 @@ describe("api", () => {
 
     expect(error).toBeInstanceOf(ApiError);
     expect(error).toMatchObject({ kind: "database", message: "boom" });
+  });
+
+  it("turns a failed session error into an ApiError of kind failed", async () => {
+    mockIPC(() => {
+      throw { kind: "failed", message: "Couldn't start Claude Code." };
+    });
+
+    const error = await startSession(
+      "/work",
+      { cols: 80, rows: 24 },
+      null,
+      vi.fn(),
+      vi.fn(),
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({
+      kind: "failed",
+      message: "Couldn't start Claude Code.",
+    });
+  });
+
+  it("asks for the Claude Code status", async () => {
+    const status = { found: true, path: "/usr/bin/claude" };
+    const calls = answering(status);
+
+    await expect(claudeStatus()).resolves.toEqual(status);
+    await expect(detectClaude()).resolves.toEqual(status);
+
+    expect(calls).toEqual([
+      { cmd: "claude_status", args: {} },
+      { cmd: "detect_claude", args: {} },
+    ]);
+  });
+
+  it("picks a folder", async () => {
+    const calls = answering("/work");
+
+    await expect(pickFolder()).resolves.toBe("/work");
+
+    expect(calls).toEqual([{ cmd: "pick_folder", args: {} }]);
+  });
+
+  it("writes, resizes and closes a session", async () => {
+    const calls = answering(null);
+
+    await writeSession("s", "ls -l");
+    await resizeSession("s", 100, 30);
+    await closeSession("s");
+
+    expect(calls).toEqual([
+      { cmd: "write_session", args: { id: "s", data: "ls -l" } },
+      { cmd: "resize_session", args: { id: "s", cols: 100, rows: 30 } },
+      { cmd: "close_session", args: { id: "s" } },
+    ]);
+  });
+
+  it("pastes the clipboard into a session by its id", async () => {
+    const calls = answering(null);
+
+    await pasteClipboard("s");
+
+    expect(calls).toEqual([{ cmd: "paste_clipboard", args: { id: "s" } }]);
+  });
+
+  it("starts a session over two channels and hands output over as bytes", async () => {
+    let args: Record<string, unknown> = {};
+    let cmd = "";
+    mockIPC((c, a) => {
+      cmd = c;
+      args = a as Record<string, unknown>;
+      return { id: "session-1", prefilled: false };
+    });
+    const onOutput = vi.fn();
+    const onEvent = vi.fn();
+
+    await expect(
+      startSession("/work", { cols: 100, rows: 30 }, null, onOutput, onEvent),
+    ).resolves.toEqual({ id: "session-1", prefilled: false });
+
+    expect(cmd).toBe("start_session");
+    expect(args).toMatchObject({
+      folder: "/work",
+      cols: 100,
+      rows: 30,
+      prompt: null,
+    });
+    const output = args.output as Channel<unknown>;
+    const events = args.events as Channel<unknown>;
+    expect(output).toBeInstanceOf(Channel);
+    expect(events).toBeInstanceOf(Channel);
+    expect(output).not.toBe(events);
+
+    output.onmessage(new Uint8Array([104, 105]).buffer);
+    output.onmessage([111, 107]);
+    events.onmessage({ type: "exited", code: 0 });
+
+    expect(onOutput).toHaveBeenNthCalledWith(1, new Uint8Array([104, 105]));
+    expect(onOutput).toHaveBeenNthCalledWith(2, new Uint8Array([111, 107]));
+    expect(onOutput.mock.calls[0][0]).toBeInstanceOf(Uint8Array);
+    expect(onEvent).toHaveBeenCalledWith({ type: "exited", code: 0 });
+  });
+
+  it("starts a session with a prompt and says whether it was prefilled", async () => {
+    let args: Record<string, unknown> = {};
+    mockIPC((_, a) => {
+      args = a as Record<string, unknown>;
+      return { id: "session-2", prefilled: true };
+    });
+
+    await expect(
+      startSession("/work", { cols: 80, rows: 24 }, "fix it", vi.fn(), vi.fn()),
+    ).resolves.toEqual({ id: "session-2", prefilled: true });
+
+    expect(args).toMatchObject({ folder: "/work", prompt: "fix it" });
   });
 });

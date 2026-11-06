@@ -22,6 +22,14 @@
     "allow-list-projects",
     "allow-create-project",
     "allow-rename-project",
-    "allow-delete-project"
+    "allow-delete-project",
+    "allow-claude-status",
+    "allow-detect-claude",
+    "allow-pick-folder",
+    "allow-start-session",
+    "allow-write-session",
+    "allow-resize-session",
+    "allow-paste-clipboard",
+    "allow-close-session"
   ]
 }
