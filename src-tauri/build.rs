@@ -21,6 +21,8 @@ const COMMANDS: &[&str] = &[
     "create_project",
     "rename_project",
     "delete_project",
+    "claude_status",
+    "detect_claude",
 ];
 
 fn main() {

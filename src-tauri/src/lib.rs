@@ -1,3 +1,4 @@
+pub mod claude;
 pub mod commands;
 pub mod db;
 mod window;
@@ -9,6 +10,7 @@ use rusqlite::Connection;
 use tauri::{App, AppHandle, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
+use claude::ClaudeState;
 use commands::Db;
 use db::DbError;
 
@@ -27,6 +29,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             open_database_or_exit(app);
+            start_claude_detection(app);
             Ok(())
         });
     commands::register(builder)
@@ -80,6 +83,26 @@ fn open_database_or_exit(app: &mut App) {
                 .show(move |_| handle.exit(1));
         }
     }
+}
+
+/// Puts the Claude Code state in managed state and finds the CLI on a
+/// background thread, so reading the login shell never delays the window.
+fn start_claude_detection(app: &mut App) {
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|error| log::warn!("could not resolve the home directory: {error}"))
+        .ok();
+    app.manage(ClaudeState::new(home));
+    let handle = app.handle().clone();
+    std::thread::spawn(move || {
+        let state = handle.state::<ClaudeState>();
+        state.init();
+        match state.exe() {
+            Some(exe) => log::info!("found Claude Code at {}", exe.path().display()),
+            None => log::info!("Claude Code was not found"),
+        }
+    });
 }
 
 fn open_database(app: &AppHandle) -> Result<Connection, StartupError> {

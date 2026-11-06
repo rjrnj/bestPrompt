@@ -3,6 +3,7 @@
 // generates from the Rust types.
 
 import { invoke } from "@tauri-apps/api/core";
+import type { ClaudeStatus } from "./bindings/ClaudeStatus";
 import type { DbError, DbErrorKind } from "./bindings/DbError";
 import type { EntryCursor } from "./bindings/EntryCursor";
 import type { EntryQuery } from "./bindings/EntryQuery";
@@ -164,4 +165,12 @@ export function renameProject(id: string, name: string): Promise<Project> {
 
 export function deleteProject(id: string): Promise<void> {
   return call("delete_project", { id });
+}
+
+export function claudeStatus(): Promise<ClaudeStatus> {
+  return call("claude_status");
+}
+
+export function detectClaude(): Promise<ClaudeStatus> {
+  return call("detect_claude");
 }

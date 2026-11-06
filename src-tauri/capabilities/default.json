@@ -22,6 +22,8 @@
     "allow-list-projects",
     "allow-create-project",
     "allow-rename-project",
-    "allow-delete-project"
+    "allow-delete-project",
+    "allow-claude-status",
+    "allow-detect-claude"
   ]
 }

@@ -4,8 +4,10 @@
 //! frontend expects.
 
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
+use bestprompt_lib::claude::{ClaudeExe, ClaudeState};
 use bestprompt_lib::commands::{Db, register};
 use bestprompt_lib::db::builtins::seed_builtins;
 use bestprompt_lib::db::entries::PromptEntry;
@@ -26,12 +28,19 @@ fn window(label: &str) -> WebviewWindow<MockRuntime> {
     seed_builtins(&mut conn).unwrap();
     let app = register(mock_builder())
         .manage(Db(Mutex::new(conn)))
+        .manage(claude())
         .build(tauri::generate_context!())
         .unwrap();
     // `build` doesn't create the windows from `tauri.conf.json`; `run` would.
     WebviewWindowBuilder::new(&app, label, WebviewUrl::default())
         .build()
         .unwrap()
+}
+
+/// Claude Code as detection would report it. Nothing here starts it.
+fn claude() -> ClaudeState {
+    let exe = std::env::temp_dir().join("bin").join("claude");
+    ClaudeState::from_parts(Some(ClaudeExe::Exe(exe)), Vec::new(), None)
 }
 
 /// The window the capability grants the commands to.
@@ -477,4 +486,15 @@ fn an_invalid_framework_reaches_the_webview_as_invalid() {
     .unwrap_err();
 
     assert_eq!(error["kind"], "invalid");
+}
+
+#[test]
+fn the_webview_can_read_the_claude_status() {
+    let window = main_window();
+
+    let status = invoke(&window, "claude_status", json!({})).unwrap();
+
+    assert_eq!(status["found"], true);
+    let path = PathBuf::from(status["path"].as_str().unwrap());
+    assert!(path.ends_with(PathBuf::from("bin").join("claude")));
 }

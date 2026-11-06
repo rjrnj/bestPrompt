@@ -2,11 +2,13 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ApiError,
+  claudeStatus,
   createFramework,
   createProject,
   deleteFramework,
   deleteProject,
   deletePromptEntry,
+  detectClaude,
   getFramework,
   getPromptEntry,
   latestEntryProject,
@@ -305,5 +307,18 @@ describe("api", () => {
 
     expect(error).toBeInstanceOf(ApiError);
     expect(error).toMatchObject({ kind: "database", message: "boom" });
+  });
+
+  it("asks for the Claude Code status", async () => {
+    const status = { found: true, path: "/usr/bin/claude" };
+    const calls = answering(status);
+
+    await expect(claudeStatus()).resolves.toEqual(status);
+    await expect(detectClaude()).resolves.toEqual(status);
+
+    expect(calls).toEqual([
+      { cmd: "claude_status", args: {} },
+      { cmd: "detect_claude", args: {} },
+    ]);
   });
 });

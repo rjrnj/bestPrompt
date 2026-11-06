@@ -1,5 +1,5 @@
-//! The Tauri commands the webview can call. Each is a thin wrapper around a
-//! data-layer function; the logic and its tests live in `db`.
+//! The Tauri commands the webview can call. Each is a thin wrapper; the
+//! logic and its tests live in `db` and `claude`.
 //!
 //! The commands are `async` so they run off the main thread; a sync command
 //! would freeze the window for as long as the query takes.
@@ -9,6 +9,7 @@ use std::sync::{Mutex, PoisonError};
 use rusqlite::Connection;
 use tauri::{Builder, Runtime, State};
 
+use crate::claude::{ClaudeState, ClaudeStatus};
 use crate::db::DbError;
 use crate::db::entries::{self, EntryCursor, EntryQuery, NewPromptEntry, PromptEntry};
 use crate::db::frameworks::{self, Framework, FrameworkInput};
@@ -46,6 +47,8 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
         create_project,
         rename_project,
         delete_project,
+        claude_status,
+        detect_claude,
     ])
 }
 
@@ -149,4 +152,14 @@ fn rename_project(db: State<'_, Db>, id: String, name: String) -> Result<Project
 #[tauri::command(async)]
 fn delete_project(db: State<'_, Db>, id: String) -> Result<(), DbError> {
     db.with(|conn| projects::delete_project(conn, &id))
+}
+
+#[tauri::command(async)]
+fn claude_status(claude: State<'_, ClaudeState>) -> ClaudeStatus {
+    claude.status()
+}
+
+#[tauri::command(async)]
+fn detect_claude(claude: State<'_, ClaudeState>) -> ClaudeStatus {
+    claude.detect()
 }
