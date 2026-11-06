@@ -7,8 +7,9 @@ import { afterEach } from "vitest";
 afterEach(cleanup);
 
 // jsdom lacks what Radix Select uses to open and position its list: pointer
-// capture, scrollIntoView and ResizeObserver. None of them affect what the
-// tests assert, so no-ops suffice.
+// capture, scrollIntoView and ResizeObserver, and what xterm.js needs to open
+// a terminal: matchMedia. None of them affect what the tests assert, so
+// no-ops suffice (matchMedia answers "no match", the light scheme).
 Element.prototype.hasPointerCapture ??= () => false;
 Element.prototype.setPointerCapture ??= () => {};
 Element.prototype.releasePointerCapture ??= () => {};
@@ -18,3 +19,12 @@ globalThis.ResizeObserver ??= class {
   unobserve() {}
   disconnect() {}
 };
+window.matchMedia ??= (query: string) =>
+  ({
+    matches: false,
+    media: query,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+  }) as unknown as MediaQueryList;
