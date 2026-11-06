@@ -56,13 +56,20 @@ fn window_with_channels(label: &str, sent: Sent) -> WebviewWindow<MockRuntime> {
         .unwrap()
 }
 
+/// The fake writes its arguments to the file this names, in the folder it
+/// starts in: one line each, its UTF-8 in hex.
+const ARGS_VAR: &str = "FAKE_CLAUDE_ARGS";
+const ARGS_FILE: &str = "fake-claude-args";
+
 fn fake_claude() -> ClaudeState {
     let exe = std::env::current_exe().unwrap();
     let profile = exe.parent().unwrap().parent().unwrap();
     let fake = profile
         .join("examples")
         .join(format!("fake_claude{}", std::env::consts::EXE_SUFFIX));
-    let env = std::env::vars_os().collect();
+    let env = std::env::vars_os()
+        .chain([(ARGS_VAR.into(), ARGS_FILE.into())])
+        .collect();
     ClaudeState::from_parts(Some(ClaudeExe::Exe(fake)), env, None)
 }
 
@@ -544,12 +551,14 @@ fn wait_on(sent: &Sent, id: u32, what: &str, found: impl Fn(&str) -> bool) {
 }
 
 /// Starts the fake CLI through `start_session` in a new folder the user
-/// picked, and waits until it's ready. Returns the session id and the
-/// folder, which lives as long as the value.
+/// picked, with `prompt`, and waits until it's ready. Returns the session
+/// id, what `start_session` returned, and the folder, which lives as long
+/// as the value.
 fn start_fake_session(
     window: &WebviewWindow<MockRuntime>,
     sent: &Sent,
-) -> (String, tempfile::TempDir) {
+    prompt: Option<&str>,
+) -> (String, Value, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     window
         .state::<PickedFolders>()
@@ -562,12 +571,13 @@ fn start_fake_session(
             "folder": dir.path(),
             "cols": 120,
             "rows": 30,
+            "prompt": prompt,
             "output": OUTPUT,
             "events": EVENTS,
         }),
     )
     .unwrap();
-    let id = started.as_str().unwrap().to_owned();
+    let id = started["id"].as_str().unwrap().to_owned();
     // ConPTY asks where the cursor is and shows nothing until it's told, as
     // xterm.js does in the app.
     if cfg!(windows) {
@@ -576,14 +586,14 @@ fn start_fake_session(
         assert_eq!(invoke(window, "write_session", reply), Ok(Value::Null));
     }
     wait_on(sent, 1, "ready", |text| text.contains("ready"));
-    (id, dir)
+    (id, started, dir)
 }
 
 #[test]
 fn a_session_runs_through_ipc() {
     let sent = Sent::default();
     let window = window_with_channels("main", sent.clone());
-    let (id, _dir) = start_fake_session(&window, &sent);
+    let (id, started, dir) = start_fake_session(&window, &sent, None);
 
     let wrote = invoke(&window, "write_session", json!({ "id": id, "data": "abc" }));
     wait_on(&sent, 1, "the input", |text| text.contains("hex 616263"));
@@ -598,6 +608,9 @@ fn a_session_runs_through_ipc() {
     });
     let after = invoke(&window, "write_session", json!({ "id": id, "data": "x" }));
 
+    assert_eq!(started, json!({ "id": id, "prefilled": false }));
+    let args = std::fs::read_to_string(dir.path().join(ARGS_FILE)).unwrap();
+    assert_eq!(args, "");
     assert_eq!(wrote, Ok(Value::Null));
     assert_eq!(resized, Ok(Value::Null));
     assert_eq!(closed, Ok(Value::Null));
@@ -605,6 +618,24 @@ fn a_session_runs_through_ipc() {
         after,
         Err(json!({ "kind": "notFound", "message": "That session has ended." }))
     );
+}
+
+#[test]
+fn a_session_starts_with_a_prompt_through_ipc() {
+    let sent = Sent::default();
+    let window = window_with_channels("main", sent.clone());
+
+    let (id, started, dir) = start_fake_session(&window, &sent, Some("fix\r\nit"));
+
+    let hex: String = b"--prefill=fix\nit"
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let args = std::fs::read_to_string(dir.path().join(ARGS_FILE)).unwrap();
+    assert_eq!(args, format!("{hex}\n"));
+    assert_eq!(started, json!({ "id": id, "prefilled": true }));
+    let closed = invoke(&window, "close_session", json!({ "id": id }));
+    assert_eq!(closed, Ok(Value::Null));
 }
 
 /// An unknown session is refused before the clipboard is touched.

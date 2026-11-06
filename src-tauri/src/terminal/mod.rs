@@ -1,5 +1,6 @@
-//! The embedded terminal: Claude Code sessions running in a PTY, which
-//! folders a session may start in, and the errors sessions report.
+//! The embedded terminal: Claude Code sessions running in a PTY, how one is
+//! started with a prompt in Claude's input box, which folders a session may
+//! start in, and the errors sessions report.
 
 mod cleanup;
 pub mod folders;
@@ -30,6 +31,16 @@ use paste::{ModeTracker, paste_input};
 #[ts(export)]
 pub enum SessionEvent {
     Exited { code: Option<i32> },
+}
+
+/// What `start_session` returns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct StartedSession {
+    pub id: String,
+    /// Whether the prompt was handed to Claude to fill its input box with.
+    pub prefilled: bool,
 }
 
 /// How long the terminal stays open after its process exits. Windows builds
@@ -68,26 +79,32 @@ impl Drop for Sessions {
 
 impl Sessions {
     /// Starts the detected Claude Code in `folder` with the base
-    /// environment, in a terminal of `size` (columns, rows), and returns the
-    /// new session's id. `on_output` gets every chunk of output and
-    /// `on_exit` the exit code, if the process had one.
+    /// environment, in a terminal of `size` (columns, rows). Given a
+    /// `prompt`, Claude fills its input box with it, unsent, once any
+    /// questions it asks at startup are answered; `prefilled` says whether
+    /// the prompt could be passed. `on_output` gets every chunk of output
+    /// and `on_exit` the exit code, if the process had one.
     pub fn start(
         &self,
         claude: &ClaudeState,
         folder: &Path,
         size: (u16, u16),
+        prompt: Option<&str>,
         on_output: impl Fn(&[u8]) + Send + 'static,
         on_exit: impl FnOnce(Option<i32>) + Send + 'static,
-    ) -> Result<String, SessionError> {
+    ) -> Result<StartedSession, SessionError> {
         let exe = claude.exe().ok_or(SessionError::ClaudeNotFound)?;
-        let cmd = command(&exe, &claude.base_env(), folder)?;
-        self.spawn(cmd, folder, size, on_output, on_exit)
+        let Launch { cmd, prefilled } = launch(&exe, &claude.base_env(), folder, prompt)?;
+        let id = self.spawn(cmd, prefilled, folder, size, on_output, on_exit)?;
+        Ok(StartedSession { id, prefilled })
     }
 
-    /// Starts `cmd` in `folder` and returns the new session's id.
+    /// Starts `cmd` in `folder` and returns the new session's id. If `cmd`
+    /// carries the prompt, a failed spawn reports none of its text.
     fn spawn(
         &self,
         cmd: CommandBuilder,
+        prefilled: bool,
         folder: &Path,
         size: (u16, u16),
         on_output: impl Fn(&[u8]) + Send + 'static,
@@ -103,7 +120,13 @@ impl Sessions {
         if !folder.is_dir() {
             return Err(SessionError::FolderMissing);
         }
-        let mut child = pty.slave.spawn_command(cmd).map_err(spawn_failed)?;
+        let mut child = pty.slave.spawn_command(cmd).map_err(|error| {
+            if prefilled {
+                spawn_failed_without_prompt(error)
+            } else {
+                spawn_failed(error)
+            }
+        })?;
         drop(pty.slave);
         let adopted = child
             .process_id()
@@ -324,6 +347,168 @@ const STRIPPED_VARS: [&str; 19] = [
     "CURSOR_TRACE_ID",
 ];
 
+/// What a session's process is started with.
+struct Launch {
+    cmd: CommandBuilder,
+    /// Whether `cmd` passes the prompt.
+    prefilled: bool,
+}
+
+/// The launch of `exe` in `folder` from the base environment `env`, with
+/// `prompt` for Claude's input box when it can be passed. When it can't,
+/// the reason is logged, never the prompt.
+fn launch(
+    exe: &ClaudeExe,
+    env: &[(OsString, OsString)],
+    folder: &Path,
+    prompt: Option<&str>,
+) -> Result<Launch, SessionError> {
+    let mut cmd = command(exe, env, folder)?;
+    let prefilled = match prompt.map(|prompt| prefill_arg(exe, cmd.get_argv(), prompt)) {
+        None => false,
+        Some(Ok(arg)) => {
+            cmd.arg(arg);
+            true
+        }
+        Some(Err(reason)) => {
+            log::info!("starting Claude Code without the prompt: {reason}");
+            false
+        }
+    };
+    Ok(Launch { cmd, prefilled })
+}
+
+/// The option that fills Claude's input box with its value, unsent. Joined
+/// to the prompt by `=`, so a prompt starting with `-` can't be read as
+/// another option.
+const PREFILL: &str = "--prefill=";
+
+/// CreateProcess's limit on a command line, in UTF-16 units, its
+/// terminating NUL included.
+#[cfg(windows)]
+const COMMAND_LINE_MAX: usize = 32_767;
+
+/// Room left under that limit for a launcher `.exe` that starts the real
+/// CLI again with a longer command line.
+#[cfg(windows)]
+const LAUNCHER_MARGIN: usize = 1_024;
+
+/// Linux's limit on one argument (`MAX_ARG_STRLEN`), in bytes, its NUL
+/// included. macOS is held to it as well.
+#[cfg(unix)]
+const ARG_MAX: usize = 131_072;
+
+/// Why a session starts without its prompt. Only this is ever logged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+enum NoPrefill {
+    #[error("the prompt is empty")]
+    Empty,
+    #[error("the prompt contains a NUL, which no argument can hold")]
+    Nul,
+    #[error("Claude Code runs through cmd.exe, which would read the prompt as its own syntax")]
+    ThroughCmd,
+    #[error("the prompt would make the command line too long")]
+    TooLong,
+}
+
+/// The argument that has Claude fill its input box with `prompt`, its line
+/// endings made LF and its other control characters shown as pictures, to
+/// follow `argv`, the command so far with the program first.
+fn prefill_arg(exe: &ClaudeExe, argv: &[OsString], prompt: &str) -> Result<OsString, NoPrefill> {
+    let prompt = prompt.replace("\r\n", "\n").replace('\r', "\n");
+    if prompt.is_empty() {
+        return Err(NoPrefill::Empty);
+    }
+    if prompt.contains('\0') {
+        return Err(NoPrefill::Nul);
+    }
+    // `cmd.exe` would expand `%...%` and act on `&`, `|` and the rest, and
+    // takes no more than 8191 characters.
+    if matches!(exe, ClaudeExe::Cmd(_)) {
+        return Err(NoPrefill::ThroughCmd);
+    }
+    let arg = OsString::from(format!("{PREFILL}{}", shown(&prompt)));
+    if !fits(argv, &arg) {
+        return Err(NoPrefill::TooLong);
+    }
+    Ok(arg)
+}
+
+/// `prompt` with each control character other than tab and newline made
+/// its Unicode picture, so Claude's terminal shows it instead of acting on
+/// it: ESC becomes U+241B and DEL U+2421. The C1 controls have no pictures
+/// and become U+FFFD.
+fn shown(prompt: &str) -> String {
+    prompt
+        .chars()
+        .map(|c| match c {
+            '\t' | '\n' => c,
+            '\x00'..='\x1f' => char::from_u32(0x2400 + c as u32).unwrap_or(c),
+            '\x7f' => '\u{2421}',
+            '\u{80}'..='\u{9f}' => '\u{fffd}',
+            c => c,
+        })
+        .collect()
+}
+
+/// Whether the command line `argv` and then `arg` make is within
+/// CreateProcess's limit, less the margin. portable-pty starts the program
+/// `argv[0]` names, which is the detected path as it is.
+#[cfg(windows)]
+fn fits(argv: &[OsString], arg: &OsStr) -> bool {
+    let all = argv.iter().map(OsString::as_os_str).chain([arg]);
+    command_line_len(all) <= COMMAND_LINE_MAX - LAUNCHER_MARGIN
+}
+
+/// Whether `arg` and its NUL are within the limit on one argument.
+#[cfg(unix)]
+fn fits(_argv: &[OsString], arg: &OsStr) -> bool {
+    arg.len() < ARG_MAX
+}
+
+/// The length in UTF-16 units, terminating NUL included, of the command
+/// line portable-pty builds for `argv`, the program first. It writes each
+/// one quoted as `CommandBuilder::append_quoted` does, with a space between
+/// them, and ends the line with a NUL (portable-pty 0.9,
+/// `src/cmdbuilder.rs`, `CommandBuilder::cmdline`).
+#[cfg(windows)]
+fn command_line_len<'a>(argv: impl IntoIterator<Item = &'a OsStr>) -> usize {
+    use std::os::windows::ffi::OsStrExt;
+    // Each `+ 1` is the space after an argument, or the NUL after the last.
+    argv.into_iter()
+        .map(|arg| quoted_len(&arg.encode_wide().collect::<Vec<_>>()) + 1)
+        .sum()
+}
+
+/// The length of `arg` as portable-pty quotes it. An argument that isn't
+/// empty and holds no space, tab, newline, vertical tab or quote is written
+/// as it is. Any other is put in quotes, where a quote is escaped with a
+/// backslash and the backslashes before it, or before the closing quote,
+/// are doubled.
+#[cfg(windows)]
+fn quoted_len(arg: &[u16]) -> usize {
+    const BACKSLASH: u16 = b'\\' as u16;
+    const QUOTE: u16 = b'"' as u16;
+    let special = [b' ', b'\t', b'\n', 0x0b, b'"'].map(u16::from);
+    if !arg.is_empty() && !arg.iter().any(|unit| special.contains(unit)) {
+        return arg.len();
+    }
+    let mut len = 2;
+    let mut backslashes = 0;
+    for &unit in arg {
+        match unit {
+            BACKSLASH => {
+                backslashes += 1;
+                continue;
+            }
+            QUOTE => len += 2 * backslashes + 2,
+            _ => len += backslashes + 1,
+        }
+        backslashes = 0;
+    }
+    len + 2 * backslashes
+}
+
 /// `env` without the variables in `STRIPPED_VARS`.
 fn session_env(env: &[(OsString, OsString)]) -> Vec<(OsString, OsString)> {
     env.iter()
@@ -384,6 +569,24 @@ fn spawn_failed(error: impl std::fmt::Display) -> SessionError {
     SessionError::SpawnFailed {
         detail: format!("{error:#}"),
     }
+}
+
+/// A failed spawn of a command that carries the prompt. On Windows,
+/// portable-pty's error quotes the whole command line, so only the OS error
+/// code at its end is kept.
+fn spawn_failed_without_prompt(error: impl std::fmt::Display) -> SessionError {
+    let detail = match os_error_code(&format!("{error:#}")) {
+        Some(code) => format!("Claude Code could not be started (os error {code})"),
+        None => "Claude Code could not be started".to_owned(),
+    };
+    SessionError::SpawnFailed { detail }
+}
+
+/// The code in the `(os error N)` that `text` ends with, as the text of an
+/// I/O error does.
+fn os_error_code(text: &str) -> Option<i32> {
+    let (_, code) = text.strip_suffix(')')?.rsplit_once("(os error ")?;
+    code.parse().ok()
 }
 
 /// A poisoned lock is still usable: every value behind one stays valid
@@ -615,5 +818,231 @@ mod tests {
             assert!(cmd.get_env(name).is_none(), "{name}");
         }
         assert!(cmd.get_env("PATH").is_some());
+    }
+
+    fn claude_exe() -> (ClaudeExe, Vec<OsString>) {
+        let path = PathBuf::from(r"C:\Program Files\Claude\claude.exe");
+        (ClaudeExe::Exe(path.clone()), vec![path.into()])
+    }
+
+    #[test]
+    fn a_prompt_is_one_prefill_argument_with_lf_line_endings() {
+        let (exe, argv) = claude_exe();
+        let cases = [
+            ("hello", "--prefill=hello"),
+            ("a\r\nb\rc\nd\r\n\r\n", "--prefill=a\nb\nc\nd\n\n"),
+            ("-p print", "--prefill=-p print"),
+            ("--help", "--prefill=--help"),
+            (" ", "--prefill= "),
+        ];
+        for (prompt, arg) in cases {
+            assert_eq!(
+                prefill_arg(&exe, &argv, prompt),
+                Ok(arg.into()),
+                "{prompt:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_os_error_code_is_taken_from_a_spawn_error() {
+        let cases = [
+            (
+                "CreateProcessW `\"p --prefill=x (os error 9)\"` failed: Not found. (os error 2)",
+                Some(2),
+            ),
+            ("failed: Access is denied. (os error 5)", Some(5)),
+            ("Unable to spawn p because it does not exist", None),
+            ("failed (os error two)", None),
+            ("failed (os error 2) after", None),
+        ];
+        for (text, code) in cases {
+            assert_eq!(os_error_code(text), code, "{text}");
+        }
+    }
+
+    /// Claude shows the prompt on its terminal, so a control character is
+    /// shown as its picture instead of acting there.
+    #[test]
+    fn control_characters_become_their_pictures() {
+        let (exe, argv) = claude_exe();
+        let cases = [
+            ("a\x1b[31mb", "a\u{241b}[31mb"),
+            ("ding\x07", "ding\u{2407}"),
+            (
+                "\x01\x08\x0b\x0c\x1f",
+                "\u{2401}\u{2408}\u{240b}\u{240c}\u{241f}",
+            ),
+            ("x\x7fy", "x\u{2421}y"),
+            ("a\u{9b}31mb\u{80}\u{9f}", "a\u{fffd}31mb\u{fffd}\u{fffd}"),
+            ("a\tb\nc", "a\tb\nc"),
+            ("a\r\nb\rc", "a\nb\nc"),
+        ];
+        for (prompt, shown) in cases {
+            let arg = format!("{PREFILL}{shown}");
+            assert_eq!(
+                prefill_arg(&exe, &argv, prompt),
+                Ok(arg.into()),
+                "{prompt:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_prompt_is_not_passed() {
+        let (exe, argv) = claude_exe();
+        assert_eq!(prefill_arg(&exe, &argv, ""), Err(NoPrefill::Empty));
+    }
+
+    #[test]
+    fn a_prompt_with_a_nul_is_not_passed() {
+        let (exe, argv) = claude_exe();
+        for prompt in ["a\0b", "\0"] {
+            assert_eq!(prefill_arg(&exe, &argv, prompt), Err(NoPrefill::Nul));
+        }
+    }
+
+    #[test]
+    fn a_prompt_is_not_passed_through_cmd() {
+        let shim = PathBuf::from(r"C:\npm\claude.cmd");
+        let argv = command(&ClaudeExe::Cmd(shim.clone()), &[], Path::new("work"))
+            .unwrap()
+            .get_argv()
+            .clone();
+        let result = prefill_arg(&ClaudeExe::Cmd(shim), &argv, "hello");
+        assert_eq!(result, Err(NoPrefill::ThroughCmd));
+    }
+
+    /// Each case is the command line as portable-pty's `cmdline` writes it.
+    #[cfg(windows)]
+    #[test]
+    fn the_command_line_length_counts_what_portable_pty_writes() {
+        let cases: [(&[&str], &str); 13] = [
+            (&[r"C:\claude.exe"], r"C:\claude.exe"),
+            (&[r"C:\claude.exe", "x"], r"C:\claude.exe x"),
+            (
+                &[r"C:\Program Files\claude.exe", "--prefill=a b"],
+                r#""C:\Program Files\claude.exe" "--prefill=a b""#,
+            ),
+            (&["p", ""], r#"p """#),
+            (&["p", r"a\b\"], r"p a\b\"),
+            (&["p", r#"a"b"#], r#"p "a\"b""#),
+            (&["p", r#"a\"b"#], r#"p "a\\\"b""#),
+            (&["p", r#"a\\"b"#], r#"p "a\\\\\"b""#),
+            (&["p", r"a b\"], r#"p "a b\\""#),
+            (&["p", r"a\\ b"], r#"p "a\\ b""#),
+            (&["p", "a\tb\nc\x0bd"], "p \"a\tb\nc\x0bd\""),
+            (&["p", "%PATH%^&|<>"], "p %PATH%^&|<>"),
+            (&["p", "é🎉", "q"], "p é🎉 q"),
+        ];
+        for (argv, line) in cases {
+            let expected = line.encode_utf16().count() + 1;
+            assert_eq!(
+                command_line_len(argv.iter().map(OsStr::new)),
+                expected,
+                "{argv:?}"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_prompt_that_would_make_the_command_line_too_long_is_not_passed() {
+        let (exe, argv) = claude_exe();
+        let program = argv[0].as_os_str();
+        let overhead = command_line_len([program, OsStr::new(PREFILL)]);
+        let max = COMMAND_LINE_MAX - LAUNCHER_MARGIN;
+        // An `x` adds one unit and no quoting.
+        let fits = "x".repeat(max - overhead);
+        let over = format!("{fits}x");
+        assert!(prefill_arg(&exe, &argv, &fits).is_ok());
+        assert_eq!(prefill_arg(&exe, &argv, &over), Err(NoPrefill::TooLong));
+        // CreateProcess would take it, but a launcher may not.
+        let in_margin = "x".repeat(COMMAND_LINE_MAX - overhead);
+        assert_eq!(
+            prefill_arg(&exe, &argv, &in_margin),
+            Err(NoPrefill::TooLong)
+        );
+
+        // A space quotes the argument, and each quote takes a backslash.
+        let quoted = format!("{} \"", "x".repeat(max - overhead - 5));
+        let arg = format!("{PREFILL}{quoted}");
+        assert_eq!(command_line_len([program, OsStr::new(&arg)]), max);
+        assert!(prefill_arg(&exe, &argv, &quoted).is_ok());
+        let over = format!("x{quoted}");
+        assert_eq!(prefill_arg(&exe, &argv, &over), Err(NoPrefill::TooLong));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_prompt_longer_than_an_argument_may_be_is_not_passed() {
+        let path = PathBuf::from("/usr/local/bin/claude");
+        let argv = [path.clone().into_os_string()];
+        let exe = ClaudeExe::Exe(path);
+        // The argument and its NUL fill the limit exactly.
+        let fits = "x".repeat(ARG_MAX - PREFILL.len() - 1);
+        let over = format!("{fits}x");
+        assert!(prefill_arg(&exe, &argv, &fits).is_ok());
+        assert_eq!(prefill_arg(&exe, &argv, &over), Err(NoPrefill::TooLong));
+    }
+
+    /// `launch` in `work` from an empty environment, with what it logged
+    /// at info or above: portable-pty traces the environment it reads.
+    fn launch_logged(
+        exe: &ClaudeExe,
+        prompt: Option<&str>,
+    ) -> (Result<Launch, SessionError>, Vec<String>) {
+        let (launch, log) = logged(|| launch(exe, &[], Path::new("work"), prompt));
+        let log = log
+            .into_iter()
+            .filter(|line| !line.starts_with("TRACE ") && !line.starts_with("DEBUG "))
+            .collect();
+        (launch, log)
+    }
+
+    #[test]
+    fn a_launch_passes_the_prompt_after_everything_else() {
+        let exe = ClaudeExe::Exe(PathBuf::from("claude"));
+
+        let (with, log) = launch_logged(&exe, Some("a\r\nb"));
+        let without = launch(&exe, &[], Path::new("work"), None).unwrap();
+
+        let with = with.unwrap();
+        assert!(with.prefilled);
+        assert_eq!(with.cmd.get_argv(), &["claude", "--prefill=a\nb"]);
+        assert!(log.is_empty(), "{log:?}");
+        assert!(!without.prefilled);
+        assert_eq!(without.cmd.get_argv(), &["claude"]);
+    }
+
+    /// The reason is logged, once, and never the prompt.
+    #[test]
+    fn a_launch_without_its_prompt_logs_only_why() {
+        let shim = ClaudeExe::Cmd(PathBuf::from(r"C:\npm\claude.cmd"));
+        let exe = ClaudeExe::Exe(PathBuf::from("claude"));
+        let cases = [
+            (&shim, "secret plan", NoPrefill::ThroughCmd),
+            (&exe, "", NoPrefill::Empty),
+            (&exe, "secret\0plan", NoPrefill::Nul),
+        ];
+        for (exe, prompt, reason) in cases {
+            let (launch, log) = launch_logged(exe, Some(prompt));
+
+            let launch = launch.unwrap();
+            assert!(!launch.prefilled);
+            assert!(
+                !launch
+                    .cmd
+                    .get_argv()
+                    .iter()
+                    .any(|arg| arg.to_string_lossy().starts_with(PREFILL))
+            );
+            assert_eq!(
+                log,
+                [format!(
+                    "INFO starting Claude Code without the prompt: {reason}"
+                )]
+            );
+        }
     }
 }

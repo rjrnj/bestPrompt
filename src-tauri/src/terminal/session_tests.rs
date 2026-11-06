@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use super::*;
+use crate::db::test_support::logged_with_targets;
 
 /// How long a test waits for something that should happen.
 const WAIT: Duration = Duration::from_secs(10);
@@ -26,14 +27,19 @@ fn fake_claude() -> PathBuf {
         .join(format!("fake_claude{}", std::env::consts::EXE_SUFFIX))
 }
 
+/// Where in a test's folder the fake writes its arguments.
+const ARGS_FILE: &str = "args";
+
 /// A running session of the fake CLI, closed when dropped.
 struct Fake {
     sessions: Arc<Sessions>,
     id: String,
+    /// Whether the prompt was passed to the fake.
+    prefilled: bool,
     folder: PathBuf,
     output: Arc<Mutex<Vec<u8>>>,
     exited: Receiver<Option<i32>>,
-    _root: tempfile::TempDir,
+    root: tempfile::TempDir,
 }
 
 struct Options<'a> {
@@ -42,6 +48,8 @@ struct Options<'a> {
     folder_name: &'a str,
     /// What to start instead of the fake itself.
     exe: Option<ClaudeExe>,
+    /// What the session is started with to fill Claude's input box.
+    prompt: Option<&'a str>,
 }
 
 impl Default for Options<'_> {
@@ -50,6 +58,7 @@ impl Default for Options<'_> {
             mode: None,
             folder_name: "work",
             exe: None,
+            prompt: None,
         }
     }
 }
@@ -69,6 +78,10 @@ impl Fake {
         std::fs::create_dir(&folder).unwrap();
         let exe = options.exe.unwrap_or(ClaudeExe::Exe(fake_claude()));
         let mut env: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+        env.push((
+            "FAKE_CLAUDE_ARGS".into(),
+            root.path().join(ARGS_FILE).into(),
+        ));
         if let Some(mode) = options.mode {
             env.push(("FAKE_CLAUDE_MODE".into(), mode.into()));
         }
@@ -79,11 +92,12 @@ impl Fake {
         let (exit_tx, exited) = mpsc::channel();
         let (query_tx, queries) = mpsc::channel();
         let sink = output.clone();
-        let id = sessions
+        let started = sessions
             .start(
                 &claude,
                 &folder,
                 (200, 30),
+                options.prompt,
                 move |chunk| {
                     let mut output = sink.lock().unwrap();
                     output.extend_from_slice(chunk);
@@ -103,14 +117,16 @@ impl Fake {
                 },
             )
             .unwrap();
+        let id = started.id;
         answer_cursor_queries(Arc::downgrade(&sessions), id.clone(), queries);
         Fake {
             sessions,
             id,
+            prefilled: started.prefilled,
             folder,
             output,
             exited,
-            _root: root,
+            root,
         }
     }
 
@@ -142,6 +158,22 @@ impl Fake {
 
     fn wait_ready(&self) {
         self.wait_for("ready", |text| text.contains("ready"));
+    }
+
+    /// The arguments the fake was started with, which it has written by the
+    /// time it is ready.
+    fn args(&self) -> Vec<String> {
+        self.wait_ready();
+        std::fs::read_to_string(self.root.path().join(ARGS_FILE))
+            .unwrap()
+            .lines()
+            .map(|hex| {
+                let bytes = (0..hex.len() / 2)
+                    .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap())
+                    .collect();
+                String::from_utf8(bytes).unwrap()
+            })
+            .collect()
     }
 
     /// Every byte the fake reported reading, in order. Line breaks are
@@ -244,6 +276,52 @@ fn output_reaches_the_channel() {
 }
 
 #[test]
+fn without_a_prompt_claude_gets_no_arguments() {
+    let fake = Fake::start(None);
+
+    assert_eq!(fake.args(), Vec::<String>::new());
+    assert!(!fake.prefilled);
+}
+
+/// Each prompt reaches Claude whole, as the one argument `--prefill=` and
+/// the prompt with its line endings made `\n`, however the command line had
+/// to quote it.
+#[test]
+fn a_prompt_reaches_claude_as_one_prefill_argument() {
+    let long: String = "Say \"hi\" to C:\\dir\\ & 100% | <x> ^\r\n\twith émoji 🎉\n"
+        .chars()
+        .cycle()
+        .take(10_000)
+        .collect();
+    let long_expected = long.replace("\r\n", "\n");
+    let cases: [(&str, &str); 8] = [
+        (
+            r#"say "hi" and \"quoted\" in C:\dir\ ending\"#,
+            r#"say "hi" and \"quoted\" in C:\dir\ ending\"#,
+        ),
+        (r#"a\\"b\\ "c\"#, r#"a\\"b\\ "c\"#),
+        ("%PATH% ^ & | < > ^& \"&\"", "%PATH% ^ & | < > ^& \"&\""),
+        ("-p do nothing", "-p do nothing"),
+        (
+            "one\ntwo\r\nthree\rfour\tfive",
+            "one\ntwo\nthree\nfour\tfive",
+        ),
+        ("héllo wörld 日本語 🎉👍🏽", "héllo wörld 日本語 🎉👍🏽"),
+        ("last line\n\n", "last line\n\n"),
+        (&long, &long_expected),
+    ];
+    for (prompt, expected) in cases {
+        let fake = Fake::start_with(Options {
+            prompt: Some(prompt),
+            ..Options::default()
+        });
+
+        assert_eq!(fake.args(), [format!("--prefill={expected}")], "{prompt:?}");
+        assert!(fake.prefilled, "{prompt:?}");
+    }
+}
+
+#[test]
 fn input_reaches_the_program() {
     let fake = Fake::start(None);
     fake.wait_ready();
@@ -316,17 +394,37 @@ fn cmd_shim() -> (tempfile::TempDir, PathBuf) {
     (shims, shim)
 }
 
-/// A shim in a folder whose name has a space starts through `cmd.exe`.
+/// `cmd.exe` would read the prompt as its own syntax, so a shim is started
+/// without it, though it passes on whatever arguments it is given.
 #[cfg(windows)]
 #[test]
-fn a_cmd_shim_starts_through_cmd() {
+fn a_cmd_shim_is_started_without_the_prompt() {
     let (_shims, shim) = cmd_shim();
     let fake = Fake::start_with(Options {
         exe: Some(ClaudeExe::Cmd(shim)),
+        prompt: Some("hello"),
         ..Options::default()
     });
 
-    fake.wait_ready();
+    assert_eq!(fake.args(), Vec::<String>::new());
+    assert!(!fake.prefilled);
+}
+
+/// A prompt that fits the command line with the margin left over is passed.
+#[cfg(windows)]
+#[test]
+fn a_prompt_that_just_fits_the_command_line_is_passed() {
+    let program = fake_claude().into_os_string();
+    let overhead = command_line_len([program.as_os_str(), OsStr::new(PREFILL)]);
+    let prompt = "x".repeat(COMMAND_LINE_MAX - LAUNCHER_MARGIN - overhead);
+
+    let fake = Fake::start_with(Options {
+        prompt: Some(&prompt),
+        ..Options::default()
+    });
+
+    assert!(fake.prefilled);
+    assert_eq!(fake.args(), [format!("{PREFILL}{prompt}")]);
 }
 
 /// A person's paste is bracketed once Claude asked for it.
@@ -363,9 +461,58 @@ fn a_folder_gone_before_the_spawn_is_missing() {
     let claude = ClaudeState::from_parts(Some(ClaudeExe::Exe(fake_claude())), env, None);
     let sessions = Sessions::default();
 
-    let started = sessions.start(&claude, &gone, (80, 24), |_| {}, |_| {});
+    let started = sessions.start(&claude, &gone, (80, 24), None, |_| {}, |_| {});
 
     assert!(matches!(started, Err(SessionError::FolderMissing)));
+}
+
+/// On Windows, portable-pty's error for a failed spawn quotes the whole
+/// command line, prompt included, and it logs that line itself.
+#[test]
+fn a_failed_spawn_never_reports_the_prompt() {
+    let root = tempfile::tempdir().unwrap();
+    let missing = root
+        .path()
+        .join(format!("missing{}", std::env::consts::EXE_SUFFIX));
+    let env = std::env::vars_os().collect();
+    let claude = ClaudeState::from_parts(Some(ClaudeExe::Exe(missing)), env, None);
+    let sessions = Sessions::default();
+    let prompt = "a secret plan 4417";
+
+    let (error, log) = logged_with_targets(|| {
+        let started = sessions.start(&claude, root.path(), (80, 24), Some(prompt), |_| {}, |_| {});
+        let error = started.unwrap_err();
+        // Serialising is what logs the detail.
+        serde_json::to_value(&error).unwrap();
+        error
+    });
+
+    let SessionError::SpawnFailed { detail } = &error else {
+        panic!("{error:?}");
+    };
+    assert!(
+        detail.starts_with("Claude Code could not be started"),
+        "{detail}"
+    );
+    let silenced = |target: &str| {
+        crate::SILENCED
+            .iter()
+            .any(|crate_name| target.split("::").next() == Some(crate_name))
+    };
+    for (target, line) in &log {
+        assert!(
+            !line.contains(prompt) || silenced(target),
+            "{target}: {line}"
+        );
+    }
+    // The app's logger drops portable-pty's own line.
+    if cfg!(windows) {
+        assert!(
+            log.iter()
+                .any(|(target, line)| line.contains(prompt) && silenced(target)),
+            "{log:?}"
+        );
+    }
 }
 
 #[test]

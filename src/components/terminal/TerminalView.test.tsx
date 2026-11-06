@@ -18,6 +18,9 @@ vi.mock("../../api", async (importOriginal) => ({
 }));
 vi.mock("../../clipboard", () => ({ writeText: vi.fn() }));
 
+/** What `startSession` resolves with for the session these tests start. */
+const v1 = { id: "v1", prefilled: false };
+
 afterEach(() => {
   disposeTerminal("v1");
   vi.unstubAllGlobals();
@@ -32,7 +35,7 @@ describe("TerminalView", () => {
   });
 
   it("attaches the terminal's element on mount and detaches it on unmount without disposing", async () => {
-    vi.mocked(startSession).mockResolvedValue("v1");
+    vi.mocked(startSession).mockResolvedValue(v1);
     await startTerminalSession("/work", () => {});
     const terminal = terminalFor("v1")!;
 
@@ -51,10 +54,12 @@ describe("TerminalView", () => {
 
   it("a_session_that_has_ended_is_not_resized", async () => {
     let onEvent!: (e: SessionEvent) => void;
-    vi.mocked(startSession).mockImplementation(async (_f, _s, _o, events) => {
-      onEvent = events;
-      return "v1";
-    });
+    vi.mocked(startSession).mockImplementation(
+      async (_f, _s, _p, _o, events) => {
+        onEvent = events;
+        return v1;
+      },
+    );
     await startTerminalSession("/work", () => {});
     const terminal = terminalFor("v1")!;
     // jsdom lays nothing out: give the box a size, and have each fit pick
@@ -95,7 +100,7 @@ describe("TerminalView", () => {
   });
 
   it("the_terminal_is_fitted_to_a_box_without_padding", async () => {
-    vi.mocked(startSession).mockResolvedValue("v1");
+    vi.mocked(startSession).mockResolvedValue(v1);
     await startTerminalSession("/work", () => {});
     const terminal = terminalFor("v1")!;
 

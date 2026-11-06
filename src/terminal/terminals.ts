@@ -13,6 +13,7 @@ import {
   writeSession,
 } from "../api";
 import type { SessionEvent } from "../bindings/SessionEvent";
+import type { StartedSession } from "../bindings/StartedSession";
 import { writeText } from "../clipboard";
 import { currentPlatform, keyAction } from "./keys";
 
@@ -52,15 +53,23 @@ function colourScheme(): MediaQueryList | undefined {
 }
 
 /**
- * Starts a session in `folder` and the terminal that shows it. The terminal
- * is made first, because the session's output can arrive before its id does.
- * `onTrace` is dev-only: it sees every chunk of output before the terminal.
+ * Starts a session in `folder` and the terminal that shows it, with `prompt`
+ * for Claude's input box if there is one; `prefilled` in the result says
+ * whether it could be passed. The terminal is made first, because the
+ * session's output can arrive before its id does. `onTrace` is dev-only: it
+ * sees every chunk of output before the terminal.
  */
 export async function startTerminalSession(
   folder: string,
   onEvent: (e: SessionEvent) => void,
-  onTrace?: (bytes: Uint8Array) => void,
-): Promise<string> {
+  {
+    prompt,
+    onTrace,
+  }: {
+    prompt?: string;
+    onTrace?: (bytes: Uint8Array) => void;
+  } = {},
+): Promise<StartedSession> {
   const media = colourScheme();
   const terminal = new Terminal({
     scrollback: 5000,
@@ -148,10 +157,12 @@ export async function startTerminalSession(
     terminal.dispose();
   };
 
+  let started: StartedSession;
   try {
-    id = await startSession(
+    started = await startSession(
       folder,
       { cols: terminal.cols, rows: terminal.rows },
+      prompt ?? null,
       (bytes) => {
         if (disposed) return;
         onTrace?.(bytes);
@@ -166,9 +177,10 @@ export async function startTerminalSession(
     dispose();
     throw error;
   }
+  id = started.id;
   entries.set(id, { terminal, fit, resize, dispose });
   queued.splice(0).forEach(send);
-  return id;
+  return started;
 }
 
 export function terminalFor(sessionId: string): Terminal | undefined {

@@ -14,6 +14,7 @@ import type { Project } from "./bindings/Project";
 import type { PromptEntry } from "./bindings/PromptEntry";
 import type { SessionErrorKind } from "./bindings/SessionError";
 import type { SessionEvent } from "./bindings/SessionEvent";
+import type { StartedSession } from "./bindings/StartedSession";
 
 /** A command that failed, with the `kind` the backend reported. */
 export class ApiError extends Error {
@@ -185,16 +186,19 @@ export function pickFolder(): Promise<string | null> {
 }
 
 /**
- * Starts Claude Code in `folder` and resolves with the session id. Output
- * reaches `onOutput` as raw bytes, possibly before this resolves; `onEvent`
- * gets the session's other events.
+ * Starts Claude Code in `folder` and resolves with the new session. Given a
+ * `prompt`, Claude fills its input box with it, unsent, once any questions
+ * it asks at startup are answered; `prefilled` says whether the prompt could
+ * be passed. Output reaches `onOutput` as raw bytes, possibly before this
+ * resolves; `onEvent` gets the session's other events.
  */
 export function startSession(
   folder: string,
   size: { cols: number; rows: number },
+  prompt: string | null,
   onOutput: (bytes: Uint8Array) => void,
   onEvent: (e: SessionEvent) => void,
-): Promise<string> {
+): Promise<StartedSession> {
   // Raw bytes arrive as an ArrayBuffer, or as a number array when the
   // webview serialises them as JSON.
   const output = new Channel<ArrayBuffer | number[]>((data) =>
@@ -205,6 +209,7 @@ export function startSession(
     folder,
     cols: size.cols,
     rows: size.rows,
+    prompt,
     output,
     events,
   });

@@ -20,7 +20,7 @@ use crate::db::entries::{self, EntryCursor, EntryQuery, NewPromptEntry, PromptEn
 use crate::db::frameworks::{self, Framework, FrameworkInput};
 use crate::db::projects::{self, Project};
 use crate::terminal::folders::{PickedFolders, allowed_folder};
-use crate::terminal::{SessionError, SessionEvent, Sessions};
+use crate::terminal::{SessionError, SessionEvent, Sessions, StartedSession};
 
 /// The app's database connection, held in Tauri's managed state.
 pub struct Db(pub Mutex<Connection>);
@@ -207,8 +207,9 @@ async fn pick_folder<R: Runtime>(app: AppHandle<R>) -> Option<String> {
     })
 }
 
-/// Starts Claude Code in `folder`, which must be one the user chose.
-/// Output goes down `output` as raw bytes; the exit goes down `events`.
+/// Starts Claude Code in `folder`, which must be one the user chose, with
+/// `prompt` in its input box if it can be passed. Output goes down `output`
+/// as raw bytes; the exit goes down `events`.
 #[tauri::command(async)]
 #[allow(clippy::too_many_arguments)]
 fn start_session(
@@ -218,15 +219,17 @@ fn start_session(
     folder: String,
     cols: u16,
     rows: u16,
+    prompt: Option<String>,
     output: Channel<InvokeResponseBody>,
     events: Channel<SessionEvent>,
-) -> Result<String, SessionError> {
+) -> Result<StartedSession, SessionError> {
     // Saved project folders join the picked ones here once projects have them.
     let folder = allowed_folder(&folder, &picked, &[])?;
     sessions.start(
         &claude,
         &folder,
         (cols, rows),
+        prompt.as_deref(),
         move |chunk| {
             let _ = output.send(InvokeResponseBody::Raw(chunk.to_vec()));
         },

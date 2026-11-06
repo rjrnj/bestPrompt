@@ -3,7 +3,12 @@
 //! in raw mode, asks for bracketed paste, and then reports every chunk of
 //! input it reads as `hex <bytes>`, followed by the terminal size.
 //!
-//! `FAKE_CLAUDE_MODE` picks a mode:
+//! If `FAKE_CLAUDE_ARGS` names a file, relative to the folder the fake
+//! starts in, it writes the arguments it got there before it is ready: one
+//! line per argument, its UTF-8 in hex. A file, because ConPTY redraws long
+//! lines as it wraps them instead of passing them through.
+//!
+//! `FAKE_CLAUDE_MODE` picks a mode, so the arguments stay the session's:
 //!
 //! - `spawn-child`: starts a copy of itself that sleeps, and prints
 //!   `child <pid>`.
@@ -21,6 +26,9 @@ const QUIT_CODE: i32 = 7;
 /// The variable that picks the mode.
 const MODE: &str = "FAKE_CLAUDE_MODE";
 
+/// The variable naming the file the arguments are written to.
+const ARGS: &str = "FAKE_CLAUDE_ARGS";
+
 fn main() {
     let mode = std::env::var(MODE).unwrap_or_default();
     if mode == "sleep" {
@@ -30,6 +38,13 @@ fn main() {
 
     raw_mode();
     print_raw("\x1b[?2004h");
+    if let Some(path) = std::env::var_os(ARGS) {
+        let lines: String = std::env::args_os()
+            .skip(1)
+            .map(|arg| format!("{}\n", hex(arg.to_string_lossy().as_bytes())))
+            .collect();
+        std::fs::write(path, lines).expect("write the arguments");
+    }
     print_line("ready");
     let cwd = std::env::current_dir().expect("current dir");
     print_line(&format!("cwd {}", cwd.display()));

@@ -17,6 +17,10 @@ use db::DbError;
 use terminal::Sessions;
 use terminal::folders::PickedFolders;
 
+/// Crates whose own log lines are dropped. portable-pty logs the whole
+/// command line of a spawn that fails, and that can hold the user's prompt.
+pub(crate) const SILENCED: &[&str] = &["portable_pty"];
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -24,8 +28,12 @@ pub fn run() {
         // text of SQLite errors through the `log` facade, and without a
         // backend those lines go nowhere. Writes to stdout and the app log dir.
         .plugin(
-            tauri_plugin_log::Builder::new()
-                .level(log::LevelFilter::Info)
+            SILENCED
+                .iter()
+                .fold(
+                    tauri_plugin_log::Builder::new().level(log::LevelFilter::Info),
+                    |builder, target| builder.level_for(*target, log::LevelFilter::Off),
+                )
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())

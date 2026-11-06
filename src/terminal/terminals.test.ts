@@ -7,6 +7,7 @@ import {
   writeSession,
 } from "../api";
 import type { SessionEvent } from "../bindings/SessionEvent";
+import type { StartedSession } from "../bindings/StartedSession";
 import { writeText } from "../clipboard";
 import {
   disposeTerminal,
@@ -25,6 +26,12 @@ vi.mock("../api", async (importOriginal) => ({
 vi.mock("../clipboard", () => ({ writeText: vi.fn() }));
 
 const noEvents = () => {};
+
+/** What `startSession` resolves with for a session started as `id`. */
+const session = (id: string, prefilled = false): StartedSession => ({
+  id,
+  prefilled,
+});
 
 beforeEach(() => {
   vi.mocked(writeSession).mockResolvedValue();
@@ -57,10 +64,38 @@ function fakeColourScheme(dark: boolean) {
 }
 
 describe("the terminal registry", () => {
+  it("the_prompt_is_passed_on_and_whether_it_was_prefilled_comes_back", async () => {
+    vi.mocked(startSession).mockResolvedValue(session("s14", true));
+
+    const started = await startTerminalSession("/work", noEvents, {
+      prompt: "fix it",
+    });
+
+    expect(started).toEqual({ id: "s14", prefilled: true });
+    expect(startSession).toHaveBeenCalledWith(
+      "/work",
+      expect.anything(),
+      "fix it",
+      expect.any(Function),
+      expect.any(Function),
+    );
+    disposeTerminal("s14");
+  });
+
+  it("without_a_prompt_none_is_passed", async () => {
+    vi.mocked(startSession).mockResolvedValue(session("s15"));
+
+    const started = await startTerminalSession("/work", noEvents);
+
+    expect(started).toEqual({ id: "s15", prefilled: false });
+    expect(vi.mocked(startSession).mock.calls[0][2]).toBeNull();
+    disposeTerminal("s15");
+  });
+
   it("output_written_while_hidden_is_there_when_shown", async () => {
-    vi.mocked(startSession).mockImplementation(async (_f, _s, onOutput) => {
+    vi.mocked(startSession).mockImplementation(async (_f, _s, _p, onOutput) => {
       onOutput(new TextEncoder().encode("hello"));
-      return "s1";
+      return session("s1");
     });
 
     await startTerminalSession("/work", noEvents);
@@ -76,7 +111,7 @@ describe("the terminal registry", () => {
 
   it("the_theme_follows_the_colour_scheme", async () => {
     const setDark = fakeColourScheme(true);
-    vi.mocked(startSession).mockResolvedValue("s2");
+    vi.mocked(startSession).mockResolvedValue(session("s2"));
 
     await startTerminalSession("/work", noEvents);
     const terminal = terminalFor("s2")!;
@@ -90,19 +125,19 @@ describe("the terminal registry", () => {
   });
 
   it("typing_before_the_id_is_known_is_sent_once_it_is", async () => {
-    let resolve!: (id: string) => void;
-    vi.mocked(startSession).mockImplementation((_f, _s, onOutput) => {
+    let resolve!: (started: StartedSession) => void;
+    vi.mocked(startSession).mockImplementation((_f, _s, _p, onOutput) => {
       // A cursor position query: the terminal answers through onData, the
       // same path a key press takes.
       onOutput(new TextEncoder().encode("[6n"));
-      return new Promise<string>((r) => (resolve = r));
+      return new Promise<StartedSession>((r) => (resolve = r));
     });
 
     const started = startTerminalSession("/work", noEvents);
     await new Promise((r) => setTimeout(r, 50));
     expect(writeSession).not.toHaveBeenCalled();
 
-    resolve("s3");
+    resolve(session("s3"));
     await started;
 
     expect(writeSession).toHaveBeenCalledWith("s3", "[1;1R");
@@ -110,7 +145,7 @@ describe("the terminal registry", () => {
   });
 
   it("ctrl_shift_v_pastes_through_the_backend", async () => {
-    vi.mocked(startSession).mockResolvedValue("s4");
+    vi.mocked(startSession).mockResolvedValue(session("s4"));
     vi.mocked(pasteClipboard).mockResolvedValue();
     await startTerminalSession("/work", noEvents);
     const terminal = terminalFor("s4")!;
@@ -131,7 +166,7 @@ describe("the terminal registry", () => {
   });
 
   it("copying_clears_the_selection_so_the_next_ctrl_c_reaches_claude", async () => {
-    vi.mocked(startSession).mockResolvedValue("s11");
+    vi.mocked(startSession).mockResolvedValue(session("s11"));
     vi.mocked(writeText).mockResolvedValue();
     await startTerminalSession("/work", noEvents);
     const terminal = terminalFor("s11")!;
@@ -172,12 +207,12 @@ describe("the terminal registry", () => {
 
   it("output_after_dispose_is_dropped", async () => {
     let onOutput!: (bytes: Uint8Array) => void;
-    vi.mocked(startSession).mockImplementation(async (_f, _s, output) => {
+    vi.mocked(startSession).mockImplementation(async (_f, _s, _p, output) => {
       onOutput = output;
-      return "s5";
+      return session("s5");
     });
     const traced = vi.fn();
-    await startTerminalSession("/work", noEvents, traced);
+    await startTerminalSession("/work", noEvents, { onTrace: traced });
     const write = vi.spyOn(terminalFor("s5")!, "write");
 
     disposeTerminal("s5");
@@ -189,10 +224,12 @@ describe("the terminal registry", () => {
 
   it("typing_after_the_session_exits_is_not_sent", async () => {
     let onEvent!: (e: SessionEvent) => void;
-    vi.mocked(startSession).mockImplementation(async (_f, _s, _o, events) => {
-      onEvent = events;
-      return "s6";
-    });
+    vi.mocked(startSession).mockImplementation(
+      async (_f, _s, _p, _o, events) => {
+        onEvent = events;
+        return session("s6");
+      },
+    );
     const seen = vi.fn();
     await startTerminalSession("/work", seen);
     const terminal = terminalFor("s6")!;
@@ -209,7 +246,7 @@ describe("the terminal registry", () => {
 
   it("after_a_write_finds_the_session_ended_nothing_more_is_sent", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.mocked(startSession).mockResolvedValue("s7");
+    vi.mocked(startSession).mockResolvedValue(session("s7"));
     vi.mocked(writeSession).mockRejectedValueOnce(
       new ApiError("notFound", "That session has ended."),
     );
@@ -229,7 +266,7 @@ describe("the terminal registry", () => {
 
   it("other_write_errors_are_logged_and_typing_goes_on", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.mocked(startSession).mockResolvedValue("s9");
+    vi.mocked(startSession).mockResolvedValue(session("s9"));
     vi.mocked(writeSession).mockRejectedValue(new ApiError("failed", "x"));
     await startTerminalSession("/work", noEvents);
     const terminal = terminalFor("s9")!;
@@ -244,10 +281,12 @@ describe("the terminal registry", () => {
 
   it("a_resize_after_the_session_exits_is_not_sent", async () => {
     let onEvent!: (e: SessionEvent) => void;
-    vi.mocked(startSession).mockImplementation(async (_f, _s, _o, events) => {
-      onEvent = events;
-      return "s12";
-    });
+    vi.mocked(startSession).mockImplementation(
+      async (_f, _s, _p, _o, events) => {
+        onEvent = events;
+        return session("s12");
+      },
+    );
     await startTerminalSession("/work", noEvents);
 
     resizeTerminalSession("s12", 100, 30);
@@ -261,7 +300,7 @@ describe("the terminal registry", () => {
 
   it("after_a_resize_finds_the_session_ended_nothing_more_is_sent", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.mocked(startSession).mockResolvedValue("s13");
+    vi.mocked(startSession).mockResolvedValue(session("s13"));
     vi.mocked(resizeSession).mockRejectedValueOnce(
       new ApiError("notFound", "That session has ended."),
     );
@@ -282,10 +321,12 @@ describe("the terminal registry", () => {
 
   it("paste_after_the_session_exits_is_not_sent", async () => {
     let onEvent!: (e: SessionEvent) => void;
-    vi.mocked(startSession).mockImplementation(async (_f, _s, _o, events) => {
-      onEvent = events;
-      return "s8";
-    });
+    vi.mocked(startSession).mockImplementation(
+      async (_f, _s, _p, _o, events) => {
+        onEvent = events;
+        return session("s8");
+      },
+    );
     await startTerminalSession("/work", noEvents);
     const terminal = terminalFor("s8")!;
     terminal.open(document.createElement("div"));
@@ -306,7 +347,7 @@ describe("the terminal registry", () => {
 
   it("after_a_paste_finds_the_session_ended_nothing_more_is_sent", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.mocked(startSession).mockResolvedValue("s10");
+    vi.mocked(startSession).mockResolvedValue(session("s10"));
     vi.mocked(pasteClipboard).mockRejectedValueOnce(
       new ApiError("notFound", "That session has ended."),
     );

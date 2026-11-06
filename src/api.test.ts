@@ -324,6 +324,7 @@ describe("api", () => {
     const error = await startSession(
       "/work",
       { cols: 80, rows: 24 },
+      null,
       vi.fn(),
       vi.fn(),
     ).catch((e: unknown) => e);
@@ -384,17 +385,22 @@ describe("api", () => {
     mockIPC((c, a) => {
       cmd = c;
       args = a as Record<string, unknown>;
-      return "session-1";
+      return { id: "session-1", prefilled: false };
     });
     const onOutput = vi.fn();
     const onEvent = vi.fn();
 
     await expect(
-      startSession("/work", { cols: 100, rows: 30 }, onOutput, onEvent),
-    ).resolves.toBe("session-1");
+      startSession("/work", { cols: 100, rows: 30 }, null, onOutput, onEvent),
+    ).resolves.toEqual({ id: "session-1", prefilled: false });
 
     expect(cmd).toBe("start_session");
-    expect(args).toMatchObject({ folder: "/work", cols: 100, rows: 30 });
+    expect(args).toMatchObject({
+      folder: "/work",
+      cols: 100,
+      rows: 30,
+      prompt: null,
+    });
     const output = args.output as Channel<unknown>;
     const events = args.events as Channel<unknown>;
     expect(output).toBeInstanceOf(Channel);
@@ -409,5 +415,19 @@ describe("api", () => {
     expect(onOutput).toHaveBeenNthCalledWith(2, new Uint8Array([111, 107]));
     expect(onOutput.mock.calls[0][0]).toBeInstanceOf(Uint8Array);
     expect(onEvent).toHaveBeenCalledWith({ type: "exited", code: 0 });
+  });
+
+  it("starts a session with a prompt and says whether it was prefilled", async () => {
+    let args: Record<string, unknown> = {};
+    mockIPC((_, a) => {
+      args = a as Record<string, unknown>;
+      return { id: "session-2", prefilled: true };
+    });
+
+    await expect(
+      startSession("/work", { cols: 80, rows: 24 }, "fix it", vi.fn(), vi.fn()),
+    ).resolves.toEqual({ id: "session-2", prefilled: true });
+
+    expect(args).toMatchObject({ folder: "/work", prompt: "fix it" });
   });
 });
