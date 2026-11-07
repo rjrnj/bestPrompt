@@ -3,11 +3,14 @@ import { currentTitle } from "../state/reducer";
 import { useCurrentPrompt } from "../state/useCurrentPrompt";
 import { primaryButton, secondaryButton } from "./styles";
 
+/** The Show Claude Code button's id, so Hide can hand it the focus. */
+export const SHOW_DRAWER_ID = "show-claude-code";
+
 /**
  * Copy, Save and Clear for the selected framework's draft. Copy and Save
  * are offered only when the preview shows a prompt, and not while a save is
  * running; Clear whenever the draft or the title has any text, whitespace
- * included.
+ * included. Show Claude Code brings back the hidden drawer.
  * Renders nothing until a framework is selected.
  */
 export function PromptActions() {
@@ -64,6 +67,16 @@ export function PromptActions() {
       >
         Clear
       </button>
+      {!state.drawer.open && (
+        <button
+          type="button"
+          id={SHOW_DRAWER_ID}
+          className={secondaryButton}
+          onClick={() => dispatch({ type: "drawerToggled", open: true })}
+        >
+          Show Claude Code
+        </button>
+      )}
     </>
   );
 }

@@ -1,8 +1,9 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  closeSession,
   deleteProject,
   latestEntryProject,
   listFrameworks,
@@ -12,8 +13,10 @@ import {
   setProjectFolder,
 } from "../api";
 import type { Project } from "../bindings/Project";
+import type { StartedSession } from "../bindings/StartedSession";
 import { FOLDER_MAX_CHARS, shortenPath } from "../paths";
-import { AppStateProvider } from "../state/AppState";
+import { AppStateProvider, useAppActions } from "../state/AppState";
+import { disposeTerminal, startTerminalSession } from "../terminal/terminals";
 import { ProjectPicker } from "./ProjectPicker";
 import { Toaster } from "./Toaster";
 
@@ -27,6 +30,12 @@ vi.mock("../api", async (importOriginal) => ({
   deleteProject: vi.fn(),
   pickFolder: vi.fn(),
   setProjectFolder: vi.fn(),
+  closeSession: vi.fn(),
+}));
+// No xterm: the sessions here are only started and closed.
+vi.mock("../terminal/terminals", () => ({
+  startTerminalSession: vi.fn(),
+  disposeTerminal: vi.fn(),
 }));
 
 function project(id: string, name: string): Project {
@@ -37,15 +46,65 @@ const api = project("0192f000-0000-7000-8000-000000000001", "api");
 const web = project("0192f000-0000-7000-8000-000000000002", "web");
 const withFolder: Project = { ...web, folder: "/home/me/web" };
 
-/** Renders the Builder's picker and opens Manage projects from its list. */
-async function openDialog() {
+/** Starts a Claude Code session for web, as the drawer would. */
+function StartWebSession() {
+  const { startSession } = useAppActions();
+  return (
+    <button type="button" onClick={() => void startSession(web.id)}>
+      Start for web
+    </button>
+  );
+}
+
+/** Closes web's Claude Code session, as the drawer's Close would. */
+function CloseWebSession() {
+  const { closeSession } = useAppActions();
+  return (
+    <button type="button" onClick={() => void closeSession(web.id)}>
+      Close for web
+    </button>
+  );
+}
+
+/** Restarts web's Claude Code session, as the drawer's Restart would. */
+function RestartWebSession() {
+  const { restartSession } = useAppActions();
+  return (
+    <button type="button" onClick={() => void restartSession(web.id)}>
+      Restart for web
+    </button>
+  );
+}
+
+/**
+ * Renders the Builder's picker and opens Manage projects from its list.
+ * `closeFirst` starts closing web's session, once started, before that.
+ */
+async function openDialog({
+  startFirst = false,
+  waitForStart = true,
+  closeFirst = false,
+} = {}) {
   render(
     <AppStateProvider>
       <ProjectPicker />
+      <StartWebSession />
+      <CloseWebSession />
+      <RestartWebSession />
       <Toaster />
     </AppStateProvider>,
   );
   const user = userEvent.setup();
+  if (startFirst) {
+    await user.click(screen.getByRole("button", { name: "Start for web" }));
+    if (waitForStart) {
+      await waitFor(() => expect(startTerminalSession).toHaveBeenCalled());
+    }
+  }
+  if (closeFirst) {
+    await user.click(screen.getByRole("button", { name: "Close for web" }));
+    await waitFor(() => expect(closeSession).toHaveBeenCalled());
+  }
   await user.click(screen.getByRole("combobox", { name: "Project" }));
   await user.click(
     await screen.findByRole("option", { name: "Manage projects…" }),
@@ -366,5 +425,274 @@ describe("ManageProjectsDialog", () => {
     );
     await user.click(folder);
     await waitFor(() => expect(pickFolder).toHaveBeenCalledTimes(2));
+  });
+
+  it("deleting_a_project_with_a_session_says_it_will_end", async () => {
+    vi.mocked(listProjects).mockResolvedValue([api, withFolder]);
+    vi.mocked(startTerminalSession).mockResolvedValue({
+      id: "s-web",
+      prefilled: false,
+    });
+    vi.mocked(closeSession).mockResolvedValue();
+    vi.mocked(deleteProject).mockResolvedValue();
+    const { user, dialog } = await openDialog({ startFirst: true });
+    expect(startTerminalSession).toHaveBeenCalledWith(
+      "/home/me/web",
+      expect.any(Function),
+      { prompt: undefined },
+    );
+
+    // Only the project with the session says so.
+    await user.click(
+      within(dialog).getByRole("button", { name: "Delete api" }),
+    );
+    expect(await screen.findByRole("alertdialog")).toHaveAccessibleDescription(
+      "Its prompts move to No project. No prompts are deleted.",
+    );
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Delete web" }),
+    );
+    const confirm = await screen.findByRole("alertdialog");
+    expect(confirm).toHaveAccessibleDescription(
+      "Its prompts move to No project. No prompts are deleted. Its Claude Code session will end.",
+    );
+    await user.click(within(confirm).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(deleteProject).toHaveBeenCalledWith(web.id));
+    expect(closeSession).toHaveBeenCalledWith("s-web");
+    expect(disposeTerminal).toHaveBeenCalledWith("s-web");
+    expect(vi.mocked(closeSession).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(deleteProject).mock.invocationCallOrder[0],
+    );
+  });
+
+  it("a_session_still_starting_when_its_project_is_deleted_is_ended", async () => {
+    vi.mocked(listProjects).mockResolvedValue([api, withFolder]);
+    let finishStart!: (session: StartedSession) => void;
+    vi.mocked(startTerminalSession).mockReturnValue(
+      new Promise((resolve) => {
+        finishStart = resolve;
+      }),
+    );
+    vi.mocked(closeSession).mockResolvedValue();
+    vi.mocked(deleteProject).mockResolvedValue();
+    const { user, dialog } = await openDialog({ startFirst: true });
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Delete web" }),
+    );
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+    await waitFor(() => expect(deleteProject).toHaveBeenCalledWith(web.id));
+    expect(closeSession).not.toHaveBeenCalled();
+
+    // The start finishes after the delete: nothing could reach that
+    // session, so it is ended rather than kept.
+    await act(async () => finishStart({ id: "s-late", prefilled: false }));
+
+    await waitFor(() => expect(closeSession).toHaveBeenCalledWith("s-late"));
+    expect(disposeTerminal).toHaveBeenCalledWith("s-late");
+  });
+
+  it("a_session_that_cannot_be_ended_keeps_its_project", async () => {
+    vi.mocked(listProjects).mockResolvedValue([api, withFolder]);
+    vi.mocked(startTerminalSession).mockResolvedValue({
+      id: "s-web",
+      prefilled: false,
+    });
+    vi.mocked(closeSession).mockRejectedValue(
+      new ApiError("failed", "Couldn't reach the session."),
+    );
+    const { user, dialog } = await openDialog({ startFirst: true });
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Delete web" }),
+    );
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+
+    expect(
+      await screen.findByText("Couldn't reach the session."),
+    ).toBeInTheDocument();
+    expect(deleteProject).not.toHaveBeenCalled();
+    expect(disposeTerminal).not.toHaveBeenCalled();
+    expect(names(dialog)).toEqual(["api", "web"]);
+  });
+
+  it("a_delete_waits_for_a_close_under_way_and_stops_if_it_fails", async () => {
+    vi.mocked(listProjects).mockResolvedValue([api, withFolder]);
+    vi.mocked(startTerminalSession).mockResolvedValue({
+      id: "s-web",
+      prefilled: false,
+    });
+    let failClose!: (error: Error) => void;
+    vi.mocked(closeSession).mockReturnValueOnce(
+      new Promise((_resolve, reject) => (failClose = reject)),
+    );
+    vi.mocked(deleteProject).mockResolvedValue();
+    const { user, dialog } = await openDialog({
+      startFirst: true,
+      closeFirst: true,
+    });
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Delete web" }),
+    );
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+    // The close under way decides: the delete waits for it.
+    await act(async () => {});
+    expect(deleteProject).not.toHaveBeenCalled();
+
+    await act(async () =>
+      failClose(new ApiError("failed", "Couldn't reach the session.")),
+    );
+
+    expect(
+      await screen.findByText("Couldn't reach the session."),
+    ).toBeInTheDocument();
+    expect(deleteProject).not.toHaveBeenCalled();
+    expect(disposeTerminal).not.toHaveBeenCalled();
+    expect(names(dialog)).toEqual(["api", "web"]);
+  });
+
+  it("a_delete_goes_ahead_once_the_close_under_way_succeeds", async () => {
+    vi.mocked(listProjects).mockResolvedValue([api, withFolder]);
+    vi.mocked(startTerminalSession).mockResolvedValue({
+      id: "s-web",
+      prefilled: false,
+    });
+    let finishClose!: () => void;
+    vi.mocked(closeSession).mockReturnValueOnce(
+      new Promise((resolve) => (finishClose = resolve)),
+    );
+    vi.mocked(deleteProject).mockResolvedValue();
+    const { user, dialog } = await openDialog({
+      startFirst: true,
+      closeFirst: true,
+    });
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Delete web" }),
+    );
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+    await act(async () => {});
+    expect(deleteProject).not.toHaveBeenCalled();
+
+    await act(async () => finishClose());
+
+    await waitFor(() => expect(deleteProject).toHaveBeenCalledWith(web.id));
+    expect(closeSession).toHaveBeenCalledTimes(1);
+    expect(disposeTerminal).toHaveBeenCalledWith("s-web");
+    await waitFor(() => expect(names(dialog)).toEqual(["api"]));
+  });
+
+  it("a_delete_during_a_restarts_folder_pick_ends_the_session_first", async () => {
+    vi.mocked(listProjects).mockResolvedValue([api, withFolder]);
+    vi.mocked(startTerminalSession).mockResolvedValue({
+      id: "s-web",
+      prefilled: false,
+    });
+    vi.mocked(setProjectFolder).mockResolvedValue(web);
+    let choose!: (folder: string | null) => void;
+    vi.mocked(pickFolder).mockReturnValue(
+      new Promise((resolve) => (choose = resolve)),
+    );
+    vi.mocked(closeSession).mockResolvedValue();
+    vi.mocked(deleteProject).mockResolvedValue();
+    const first = await openDialog({ startFirst: true });
+    // web's folder is cleared, so Restart asks for one.
+    await first.user.click(
+      within(first.dialog).getByRole("button", { name: "Clear folder of web" }),
+    );
+    await waitFor(() => expect(setProjectFolder).toHaveBeenCalled());
+    await first.user.click(
+      within(first.dialog).getByRole("button", { name: "Done" }),
+    );
+    const user = first.user;
+    await user.click(screen.getByRole("button", { name: "Restart for web" }));
+    await waitFor(() => expect(pickFolder).toHaveBeenCalled());
+
+    await user.click(screen.getByRole("combobox", { name: "Project" }));
+    await user.click(
+      await screen.findByRole("option", { name: "Manage projects…" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Manage projects",
+    });
+    await user.click(
+      within(dialog).getByRole("button", { name: "Delete web" }),
+    );
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+    await act(async () => {});
+    expect(deleteProject).not.toHaveBeenCalled();
+
+    // The chooser answers after the delete: the session the restart left
+    // running is ended before the project goes.
+    await act(async () => choose("/home/me/picked"));
+
+    await waitFor(() => expect(deleteProject).toHaveBeenCalledWith(web.id));
+    expect(closeSession).toHaveBeenCalledWith("s-web");
+    expect(disposeTerminal).toHaveBeenCalledWith("s-web");
+    expect(vi.mocked(closeSession).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(deleteProject).mock.invocationCallOrder[0],
+    );
+    expect(startTerminalSession).toHaveBeenCalledTimes(1);
+    expect(setProjectFolder).toHaveBeenCalledTimes(1);
+  });
+
+  it("a_delete_while_choosing_a_folder_saves_nothing_and_says_nothing", async () => {
+    // web has no folder, so starting for it asks for one.
+    let choose!: (folder: string | null) => void;
+    vi.mocked(pickFolder).mockReturnValue(
+      new Promise((resolve) => {
+        choose = resolve;
+      }),
+    );
+    vi.mocked(setProjectFolder).mockRejectedValue(
+      new ApiError("notFound", "That project no longer exists."),
+    );
+    vi.mocked(deleteProject).mockResolvedValue();
+    const { user, dialog } = await openDialog({
+      startFirst: true,
+      waitForStart: false,
+    });
+    expect(pickFolder).toHaveBeenCalled();
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Delete web" }),
+    );
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+    await waitFor(() => expect(deleteProject).toHaveBeenCalledWith(web.id));
+
+    // The chooser answers after the project has gone.
+    await act(async () => choose("/home/me/picked"));
+
+    expect(setProjectFolder).not.toHaveBeenCalled();
+    expect(startTerminalSession).not.toHaveBeenCalled();
+    expect(screen.queryByText("That project no longer exists.")).toBeNull();
   });
 });

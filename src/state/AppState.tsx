@@ -17,10 +17,13 @@ import {
 import { flushSync } from "react-dom";
 import {
   ApiError,
+  claudeStatus,
+  closeSession as closeSessionCommand,
   createFramework,
   createProject as createProjectCommand,
   deleteFramework as deleteFrameworkCommand,
   deleteProject as deleteProjectCommand,
+  detectClaude,
   latestEntryProject,
   listFrameworks,
   listProjects,
@@ -35,14 +38,38 @@ import type { Framework } from "../bindings/Framework";
 import type { FrameworkInput } from "../bindings/FrameworkInput";
 import type { NewPromptEntry } from "../bindings/NewPromptEntry";
 import type { Project } from "../bindings/Project";
+import type { SessionEvent } from "../bindings/SessionEvent";
+import type { StartedSession } from "../bindings/StartedSession";
 import { writeText } from "../clipboard";
+import { hasOwn } from "../hasOwn";
 import {
-  initialState,
+  initialStateFor,
+  listedProjects,
+  NO_PROJECT_KEY,
   reducer,
   type Action,
+  type Session,
   type State,
   type Toast,
 } from "./reducer";
+
+// xterm.js loads with the first session, not with the app.
+const terminals = () => import("../terminal/terminals");
+
+/**
+ * Drops a session's terminal. The module is already loaded whenever a
+ * terminal exists, so a failed load here only means there is none to drop.
+ */
+async function disposeTerminalOf(id: string): Promise<void> {
+  try {
+    (await terminals()).disposeTerminal(id);
+  } catch (error) {
+    console.error("Could not load the terminal code", error);
+  }
+}
+
+/** The backend's words when a session's folder has gone. */
+const FOLDER_MISSING = "That folder no longer exists.";
 
 /** The async operations components can start. */
 export type AppActions = {
@@ -78,6 +105,33 @@ export type AppActions = {
   pruneDeletedFrameworks: () => void;
   /** Restores a deleted framework. Null, after a toast, when it fails. */
   restoreFramework: (id: string) => Promise<Framework | null>;
+  /** Looks for Claude Code again. */
+  lookAgain: () => Promise<void>;
+  /**
+   * Starts Claude Code for `key` (a project id, or `NO_PROJECT_KEY`) and
+   * opens the drawer. It runs in the project's folder; No project reuses
+   * the folder of its last session. Without one it asks, and saves the
+   * answer on the project (No project keeps it for this session only).
+   * Replaces any session `key` already has. Null when the pick is
+   * cancelled or, after a toast, when starting fails.
+   */
+  startSession: (
+    key: string,
+    options?: { prompt?: string },
+  ) => Promise<StartedSession | null>;
+  /** As `startSession`, but always asks for the folder first. */
+  chooseFolderAndStart: (key: string) => Promise<StartedSession | null>;
+  /**
+   * Ends `key`'s session, if it has one, and drops its terminal; a session
+   * still starting is ended as soon as it has, and a close already under
+   * way is waited for. False, after a toast, when it couldn't be closed.
+   */
+  closeSession: (key: string) => Promise<boolean>;
+  /**
+   * Ends `key`'s session and starts a new one in the folder a fresh start
+   * would use, found (or asked for) before the session ends.
+   */
+  restartSession: (key: string) => Promise<StartedSession | null>;
 };
 
 const StateContext = createContext<State | null>(null);
@@ -107,7 +161,16 @@ function report(
 }
 
 export function AppStateProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, initialState);
+  const [state, dispatch] = useReducer(
+    reducer,
+    window.innerHeight,
+    initialStateFor,
+  );
+  // The latest state, for the session actions, which read it across awaits.
+  const latest = useRef(state);
+  useEffect(() => {
+    latest.current = state;
+  });
   // Each load takes a number; a result is applied only if no later load has
   // started since, so overlapping loads can't finish out of order.
   const loadCount = useRef(0);
@@ -213,13 +276,281 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [projectAction],
   );
 
+  // The backend answers once its startup detection is done. A failed call
+  // can only be the bridge itself; it counts as not found, which offers
+  // Look again.
+  useEffect(() => {
+    let current = true;
+    claudeStatus().then(
+      (status) => {
+        if (current) dispatch({ type: "claudeDetected", found: status.found });
+      },
+      () => {
+        if (current) dispatch({ type: "claudeDetected", found: false });
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, []);
+
+  const lookAgain = useCallback(async () => {
+    try {
+      const status = await detectClaude();
+      dispatch({ type: "claudeDetected", found: status.found });
+    } catch (error) {
+      dispatch(toast("error", messageOf(error)));
+    }
+  }, []);
+
+  // The folder of each key's last session, which No project starts in
+  // again; projects use the folder saved on them.
+  const lastFolders = useRef(new Map<string, string>());
+  // Keys with a start, restart or close under way, so a second click can't
+  // start a second session for the same key; each settles once its work
+  // has finished.
+  const busyKeys = useRef(new Map<string, Promise<void>>());
+  // Keys whose session is being closed, with whether the close succeeds.
+  const closingKeys = useRef(new Map<string, Promise<boolean>>());
+  // Busy keys whose session was closed, or whose project was deleted,
+  // meanwhile: a session that starts for one is ended at once, since
+  // nothing would show it or could close it.
+  const cancelledKeys = useRef(new Set<string>());
+
+  /** Runs `run` for `key`, or returns `idle` if `key` is already busy. */
+  const exclusive = useCallback(
+    async <T,>(key: string, run: () => Promise<T>, idle: T): Promise<T> => {
+      if (busyKeys.current.has(key)) return idle;
+      let finished!: () => void;
+      busyKeys.current.set(key, new Promise((resolve) => (finished = resolve)));
+      try {
+        return await run();
+      } finally {
+        busyKeys.current.delete(key);
+        cancelledKeys.current.delete(key);
+        finished();
+      }
+    },
+    [],
+  );
+
+  /**
+   * The folder to start `key`'s session in: the saved or last one unless
+   * `choose`, else one picked now and, for a project, saved on it. Null
+   * when cancelled or when the save failed, after a toast.
+   */
+  const folderFor = useCallback(
+    async (key: string, choose: boolean): Promise<string | null> => {
+      if (key === NO_PROJECT_KEY) {
+        const last = lastFolders.current.get(key);
+        if (!choose && last !== undefined) return last;
+        return pickFolder();
+      }
+      const project = listedProjects(latest.current).find((p) => p.id === key);
+      if (!choose && project !== undefined && project.folder !== null) {
+        return project.folder;
+      }
+      const picked = await pickFolder();
+      // Cancelled, or closed or deleted while the chooser was open: there
+      // is nothing to save it on.
+      if (picked === null || cancelledKeys.current.has(key)) return null;
+      return (await setProjectFolder(key, picked)) ? picked : null;
+    },
+    [pickFolder, setProjectFolder],
+  );
+
+  /**
+   * Ends `session`, `key`'s current one: closes it if it is still running
+   * (one that ended meanwhile is fine), then drops its terminal. False,
+   * after a toast, when it couldn't be closed; it is kept then.
+   */
+  const endSession = useCallback(
+    async (key: string, session: Session): Promise<boolean> => {
+      const ending = (async () => {
+        if (session.state === "running") {
+          try {
+            await closeSessionCommand(session.id);
+          } catch (error) {
+            if (!(error instanceof ApiError && error.kind === "notFound")) {
+              dispatch(toast("error", messageOf(error)));
+              return false;
+            }
+          }
+        }
+        await disposeTerminalOf(session.id);
+        dispatch({ type: "sessionClosed", key });
+        return true;
+      })();
+      closingKeys.current.set(key, ending);
+      try {
+        return await ending;
+      } finally {
+        if (closingKeys.current.get(key) === ending) {
+          closingKeys.current.delete(key);
+        }
+      }
+    },
+    [],
+  );
+
+  /** Ends a session that started for a key cancelled meanwhile. */
+  const discard = useCallback(async (id: string) => {
+    try {
+      await closeSessionCommand(id);
+    } catch (error) {
+      // One that has already ended is fine.
+      if (!(error instanceof ApiError && error.kind === "notFound")) {
+        console.error("Could not end the session", error);
+      }
+    }
+    await disposeTerminalOf(id);
+  }, []);
+
+  /** `key`'s session, if it has one. */
+  const sessionOf = useCallback((key: string): Session | null => {
+    const { sessions } = latest.current;
+    return hasOwn(sessions, key) ? sessions[key] : null;
+  }, []);
+
+  /** Starts `key`'s session in `folder`, ending any it has first. */
+  const launch = useCallback(
+    async (
+      key: string,
+      folder: string,
+      prompt: string | undefined,
+    ): Promise<StartedSession | null> => {
+      const old = sessionOf(key);
+      if (old !== null && !(await endSession(key, old))) return null;
+      if (cancelledKeys.current.has(key)) return null;
+      // The exit can arrive before the id does; it waits for it here.
+      let id: string | null = null;
+      let earlyExit: { code: number | null } | null = null;
+      const onEvent = (event: SessionEvent) => {
+        if (event.type !== "exited") return;
+        if (id === null) earlyExit = { code: event.code };
+        else dispatch({ type: "sessionExited", key, id, code: event.code });
+      };
+      let started: StartedSession;
+      try {
+        const { startTerminalSession } = await terminals();
+        started = await startTerminalSession(folder, onEvent, { prompt });
+      } catch (error) {
+        dispatch(toast("error", messageOf(error)));
+        if (error instanceof ApiError) {
+          if (error.kind === "invalid" && error.message === FOLDER_MISSING) {
+            // The drawer offers Choose folder…, so it shows.
+            dispatch({ type: "sessionFolderMissing", key });
+            dispatch({ type: "drawerToggled", open: true });
+          } else if (error.kind === "notFound") {
+            // Claude Code has gone since it was found.
+            dispatch({ type: "claudeDetected", found: false });
+          }
+        }
+        return null;
+      }
+      if (cancelledKeys.current.has(key)) {
+        await discard(started.id);
+        return null;
+      }
+      id = started.id;
+      lastFolders.current.set(key, folder);
+      dispatch({ type: "sessionStarted", key, id, folder });
+      dispatch({ type: "drawerToggled", open: true });
+      const exit = earlyExit as { code: number | null } | null;
+      if (exit !== null) {
+        dispatch({ type: "sessionExited", key, id, code: exit.code });
+      }
+      return started;
+    },
+    [discard, endSession, sessionOf],
+  );
+
+  const startSession = useCallback(
+    (key: string, options?: { prompt?: string }) =>
+      exclusive(
+        key,
+        async () => {
+          const folder = await folderFor(key, false);
+          if (folder === null) return null;
+          return launch(key, folder, options?.prompt);
+        },
+        null,
+      ),
+    [exclusive, folderFor, launch],
+  );
+
+  const chooseFolderAndStart = useCallback(
+    (key: string) =>
+      exclusive(
+        key,
+        async () => {
+          const folder = await folderFor(key, true);
+          if (folder === null) return null;
+          return launch(key, folder, undefined);
+        },
+        null,
+      ),
+    [exclusive, folderFor, launch],
+  );
+
+  const closeSession = useCallback(
+    async (key: string): Promise<boolean> => {
+      for (;;) {
+        const busy = busyKeys.current.get(key);
+        if (busy === undefined) {
+          return exclusive(
+            key,
+            async () => {
+              const session = sessionOf(key);
+              return session === null || (await endSession(key, session));
+            },
+            true,
+          );
+        }
+        // Whatever is under way for the key stops at its next step.
+        cancelledKeys.current.add(key);
+        // A close under way: its result is this one's.
+        const closing = closingKeys.current.get(key);
+        if (closing !== undefined) return closing;
+        // A start with no session yet: its session is ended as soon as it
+        // has started.
+        if (sessionOf(key) === null) return true;
+        // A session that the work under way may yet end, or leave, as a
+        // restart whose pick is cancelled does: wait, then end what is left.
+        await busy;
+      }
+    },
+    [exclusive, endSession, sessionOf],
+  );
+
+  const restartSession = useCallback(
+    (key: string) =>
+      exclusive(
+        key,
+        async () => {
+          // Found before the session ends, as a fresh start would find it:
+          // a folder that can't be found, or a cancelled pick, leaves the
+          // session running.
+          const folder = await folderFor(key, false);
+          if (folder === null) return null;
+          return launch(key, folder, undefined);
+        },
+        null,
+      ),
+    [exclusive, folderFor, launch],
+  );
+
   const deleteProject = useCallback(
-    (id: string) =>
-      projectAction(async () => {
+    async (id: string) => {
+      // Its session ends first: nothing could reach it once the project is
+      // gone. If it can't be ended (after a toast), the project stays.
+      if (!(await closeSession(id))) return false;
+      return projectAction(async () => {
         await deleteProjectCommand(id);
         return { type: "projectDeleted", id };
-      }),
-    [projectAction],
+      });
+    },
+    [closeSession, projectAction],
   );
 
   /**
@@ -395,6 +726,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       deleteFramework,
       pruneDeletedFrameworks,
       restoreFramework,
+      lookAgain,
+      startSession,
+      chooseFolderAndStart,
+      closeSession,
+      restartSession,
     }),
     [
       loadFrameworks,
@@ -409,6 +745,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       deleteFramework,
       pruneDeletedFrameworks,
       restoreFramework,
+      lookAgain,
+      startSession,
+      chooseFolderAndStart,
+      closeSession,
+      restartSession,
     ],
   );
 

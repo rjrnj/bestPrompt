@@ -231,13 +231,19 @@ fn delete_project(db: State<'_, Db>, id: String) -> Result<(), DbError> {
     db.with(|conn| projects::delete_project(conn, &id))
 }
 
+/// What detection found. Waits for startup detection first, on a worker
+/// thread, so an early call doesn't report the CLI missing.
 #[tauri::command(async)]
 fn claude_status(claude: State<'_, ClaudeState>) -> ClaudeStatus {
+    claude.wait_until_detected();
     claude.status()
 }
 
+/// Looks for the CLI again, once startup detection has read the
+/// environment it searches.
 #[tauri::command(async)]
 fn detect_claude(claude: State<'_, ClaudeState>) -> ClaudeStatus {
+    claude.wait_until_detected();
     claude.detect()
 }
 
@@ -292,6 +298,8 @@ fn start_session(
     output: Channel<InvokeResponseBody>,
     events: Channel<SessionEvent>,
 ) -> Result<StartedSession, SessionError> {
+    // Not `ClaudeNotFound` just because startup detection hasn't finished.
+    claude.wait_until_detected();
     // A folder saved on a project may start a session without a fresh pick.
     let saved = saved_or_none(saved_folders(&db));
     let folder = allowed_folder(&folder, &picked, &saved)?;

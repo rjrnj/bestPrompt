@@ -211,15 +211,13 @@ describe("the terminal registry", () => {
       onOutput = output;
       return session("s5");
     });
-    const traced = vi.fn();
-    await startTerminalSession("/work", noEvents, { onTrace: traced });
+    await startTerminalSession("/work", noEvents);
     const write = vi.spyOn(terminalFor("s5")!, "write");
 
     disposeTerminal("s5");
     expect(() => onOutput(new TextEncoder().encode("late"))).not.toThrow();
 
     expect(write).not.toHaveBeenCalled();
-    expect(traced).not.toHaveBeenCalled();
   });
 
   it("typing_after_the_session_exits_is_not_sent", async () => {
