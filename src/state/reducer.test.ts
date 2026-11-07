@@ -393,7 +393,7 @@ describe("toasts", () => {
 });
 
 function project(id: string, name: string): Project {
-  return { id, name, createdAt: 1, updatedAt: 1 };
+  return { id, name, folder: null, createdAt: 1, updatedAt: 1 };
 }
 
 const api = project("p-api", "api");
@@ -560,11 +560,21 @@ describe("projects", () => {
   it("replaces a renamed project and keeps the list sorted", () => {
     const renamed = { ...api, name: "zzz" };
     const state = reducer(withProjects, {
-      type: "projectRenamed",
+      type: "projectUpdated",
       project: renamed,
     });
 
     expect(state.projects).toEqual({ status: "ready", items: [web, renamed] });
+  });
+
+  it("replaces a project whose folder changed", () => {
+    const moved = { ...api, folder: "C:\\work\\api" };
+    const state = reducer(withProjects, {
+      type: "projectUpdated",
+      project: moved,
+    });
+
+    expect(state.projects).toEqual({ status: "ready", items: [moved, web] });
   });
 
   it("clears the selection when the selected project is deleted", () => {
@@ -594,7 +604,7 @@ describe("projects", () => {
 
   it("leaves a project list that has not loaded alone on rename and delete", () => {
     const renamed = reducer(initialState, {
-      type: "projectRenamed",
+      type: "projectUpdated",
       project: api,
     });
     const deleted = reducer(initialState, {
@@ -662,7 +672,7 @@ describe("projects", () => {
     const mid = project("p-m", "Mid");
     const renamed = run([
       { type: "projectCreated", project: mid },
-      { type: "projectRenamed", project: { ...mid, name: "zzz" } },
+      { type: "projectUpdated", project: { ...mid, name: "zzz" } },
       { type: "projectsLoaded", projects: [api, web] },
     ]);
     const deleted = run([

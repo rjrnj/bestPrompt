@@ -161,8 +161,18 @@ export function listProjects(): Promise<Project[]> {
   return call("list_projects");
 }
 
-export function createProject(name: string): Promise<Project> {
-  return call("create_project", { name });
+export function createProject(
+  name: string,
+  folder: string | null,
+): Promise<Project> {
+  return call("create_project", { name, folder });
+}
+
+export function setProjectFolder(
+  id: string,
+  folder: string | null,
+): Promise<Project> {
+  return call("set_project_folder", { id, folder });
 }
 
 export function renameProject(id: string, name: string): Promise<Project> {

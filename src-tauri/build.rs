@@ -19,6 +19,7 @@ const COMMANDS: &[&str] = &[
     "latest_entry_project",
     "list_projects",
     "create_project",
+    "set_project_folder",
     "rename_project",
     "delete_project",
     "claude_status",

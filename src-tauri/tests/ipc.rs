@@ -326,6 +326,191 @@ fn the_webview_can_create_list_rename_and_delete_a_project() {
     assert!(after.is_empty());
 }
 
+fn projects(window: &WebviewWindow<MockRuntime>) -> Vec<Project> {
+    serde_json::from_value(invoke(window, "list_projects", json!({})).unwrap()).unwrap()
+}
+
+#[test]
+fn a_folder_not_picked_is_refused_for_a_project() {
+    let window = main_window();
+    let dir = tempfile::tempdir().unwrap();
+    let existing: Project = serde_json::from_value(
+        invoke(&window, "create_project", json!({ "name": "Old" })).unwrap(),
+    )
+    .unwrap();
+    let refused = json!({ "kind": "invalid", "message": "That folder isn't one you chose." });
+
+    let created = invoke(
+        &window,
+        "create_project",
+        json!({ "name": "API", "folder": dir.path() }),
+    );
+    let set = invoke(
+        &window,
+        "set_project_folder",
+        json!({ "id": existing.id, "folder": dir.path() }),
+    );
+
+    assert_eq!(created, Err(refused.clone()));
+    assert_eq!(set, Err(refused));
+    assert_eq!(projects(&window), [existing]);
+}
+
+#[test]
+fn a_picked_folder_is_stored() {
+    let window = main_window();
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().to_str().unwrap().to_owned();
+    window
+        .state::<PickedFolders>()
+        .record(dir.path().to_path_buf());
+
+    let created: Project = serde_json::from_value(
+        invoke(
+            &window,
+            "create_project",
+            json!({ "name": "API", "folder": folder }),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(created.folder.as_deref(), Some(folder.as_str()));
+    assert_eq!(projects(&window), std::slice::from_ref(&created));
+
+    let cleared: Project = serde_json::from_value(
+        invoke(
+            &window,
+            "set_project_folder",
+            json!({ "id": created.id, "folder": null }),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(cleared.folder, None);
+    assert_eq!(projects(&window), std::slice::from_ref(&cleared));
+
+    let set: Project = serde_json::from_value(
+        invoke(
+            &window,
+            "set_project_folder",
+            json!({ "id": created.id, "folder": folder }),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(set.folder.as_deref(), Some(folder.as_str()));
+    assert_eq!(projects(&window), [set]);
+}
+
+#[test]
+fn a_projects_own_folder_can_be_set_again_without_a_pick() {
+    let window = main_window();
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().to_str().unwrap().to_owned();
+    window
+        .state::<PickedFolders>()
+        .record(dir.path().to_path_buf());
+    let project: Project = serde_json::from_value(
+        invoke(
+            &window,
+            "create_project",
+            json!({ "name": "API", "folder": folder }),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // A later run: nothing is picked, but the project still has the folder.
+    let later = main_window();
+    later
+        .state::<Db>()
+        .0
+        .lock()
+        .unwrap()
+        .execute(
+            "INSERT INTO projects (id, name, folder, created_at, updated_at) VALUES (?1, 'API', ?2, 0, 0)",
+            [&project.id, &folder],
+        )
+        .unwrap();
+    let set: Project = serde_json::from_value(
+        invoke(
+            &later,
+            "set_project_folder",
+            json!({ "id": project.id, "folder": folder }),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(set.folder.as_deref(), Some(folder.as_str()));
+}
+
+#[test]
+fn another_projects_folder_is_refused() {
+    let window = main_window();
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().to_str().unwrap().to_owned();
+    {
+        let db = window.state::<Db>();
+        let conn = db.0.lock().unwrap();
+        conn.execute_batch(&format!(
+            "INSERT INTO projects (id, name, folder, created_at, updated_at) VALUES ('a', 'A', '{}', 0, 0);
+             INSERT INTO projects (id, name, created_at, updated_at) VALUES ('b', 'B', 0, 0);",
+            folder.replace('\'', "''")
+        ))
+        .unwrap();
+    }
+
+    let error = invoke(
+        &window,
+        "set_project_folder",
+        json!({ "id": "b", "folder": folder }),
+    );
+
+    assert_eq!(
+        error,
+        Err(json!({ "kind": "invalid", "message": "That folder isn't one you chose." }))
+    );
+}
+
+#[test]
+fn a_projects_folder_can_start_a_session_without_a_pick() {
+    let sent = Sent::default();
+    let window = window_with_channels("main", sent.clone());
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().to_str().unwrap().to_owned();
+    // Saved straight into the database, as an earlier run would have left it.
+    window
+        .state::<Db>()
+        .0
+        .lock()
+        .unwrap()
+        .execute(
+            "INSERT INTO projects (id, name, folder, created_at, updated_at) VALUES ('p', 'API', ?1, 0, 0)",
+            [&folder],
+        )
+        .unwrap();
+
+    let started = invoke(
+        &window,
+        "start_session",
+        json!({
+            "folder": folder,
+            "cols": 120,
+            "rows": 30,
+            "output": OUTPUT,
+            "events": EVENTS,
+        }),
+    )
+    .unwrap();
+
+    let id = started["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        invoke(&window, "close_session", json!({ "id": id })),
+        Ok(Value::Null)
+    );
+}
+
 #[test]
 fn a_duplicate_project_name_reaches_the_webview_as_invalid() {
     let window = main_window();

@@ -9,6 +9,7 @@
 use std::sync::{Mutex, PoisonError};
 
 use rusqlite::Connection;
+use serde::Serialize;
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Builder, Manager, Runtime, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -52,6 +53,7 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
         latest_entry_project,
         list_projects,
         create_project,
+        set_project_folder,
         rename_project,
         delete_project,
         claude_status,
@@ -152,9 +154,71 @@ fn list_projects(db: State<'_, Db>) -> Result<Vec<Project>, DbError> {
     db.with(|conn| projects::list_projects(conn))
 }
 
+/// Why a project command failed: the database refused, or the folder isn't
+/// one the project may use. Both go to the webview as `{ kind, message }`.
+#[derive(Debug, thiserror::Error, Serialize)]
+#[serde(untagged)]
+enum ProjectError {
+    #[error(transparent)]
+    Db(#[from] DbError),
+    #[error(transparent)]
+    Folder(#[from] SessionError),
+}
+
+/// The folders saved on projects, which a session may start in without a
+/// fresh pick.
+fn saved_folders(db: &Db) -> Result<Vec<String>, DbError> {
+    let projects = db.with(|conn| projects::list_projects(conn))?;
+    Ok(projects
+        .into_iter()
+        .filter_map(|project| project.folder)
+        .collect())
+}
+
+/// The saved folders, or none if they couldn't be read. They only add
+/// permission, so a failed read must not stop a picked folder from starting.
+fn saved_or_none(saved: Result<Vec<String>, DbError>) -> Vec<String> {
+    saved.unwrap_or_else(|error| {
+        log::error!("couldn't read the saved project folders: {error}");
+        Vec::new()
+    })
+}
+
 #[tauri::command(async)]
-fn create_project(db: State<'_, Db>, name: String) -> Result<Project, DbError> {
-    db.with(|conn| projects::create_project(conn, &name))
+fn create_project(
+    db: State<'_, Db>,
+    picked: State<'_, PickedFolders>,
+    name: String,
+    folder: Option<String>,
+) -> Result<Project, ProjectError> {
+    if let Some(folder) = &folder {
+        allowed_folder(folder, &picked, &[])?;
+    }
+    Ok(db.with(|conn| projects::create_project(conn, &name, folder.as_deref()))?)
+}
+
+/// Sets the folder a project's sessions start in, or clears it with `null`.
+/// A folder must be one picked this run, or the one the project already has.
+#[tauri::command(async)]
+fn set_project_folder(
+    db: State<'_, Db>,
+    picked: State<'_, PickedFolders>,
+    id: String,
+    folder: Option<String>,
+) -> Result<Project, ProjectError> {
+    if let Some(folder) = &folder {
+        let current = db.with(|conn| {
+            let listed = projects::list_projects(conn)?;
+            let project = listed.into_iter().find(|project| project.id == id);
+            Ok(project.map(|project| project.folder))
+        })?;
+        // The folder check runs before the update, so an unknown id (which
+        // has no current folder) with a folder that wasn't picked is refused
+        // as not chosen; the update reports an unknown id only after that.
+        let stored: Vec<String> = current.flatten().into_iter().collect();
+        allowed_folder(folder, &picked, &stored)?;
+    }
+    Ok(db.with(|conn| projects::set_project_folder(conn, &id, folder.as_deref()))?)
 }
 
 #[tauri::command(async)]
@@ -179,13 +243,17 @@ fn detect_claude(claude: State<'_, ClaudeState>) -> ClaudeStatus {
 
 /// Asks the user for a folder and remembers it as one a session may start
 /// in. `None` if they cancelled. The dialog stays open as long as the user
-/// likes, so it waits on a blocking thread, not an async worker.
+/// likes, so it waits on a blocking thread, not an async worker. The
+/// calling window owns the dialog, so it can't be used until the dialog
+/// closes.
 #[tauri::command]
-async fn pick_folder<R: Runtime>(app: AppHandle<R>) -> Option<String> {
+async fn pick_folder<R: Runtime>(window: tauri::WebviewWindow<R>) -> Option<String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let app = window.app_handle();
         let path = app
             .dialog()
             .file()
+            .set_parent(&window)
             .blocking_pick_folder()?
             .into_path()
             .map_err(|error| log::warn!("the picked folder isn't a path: {error}"))
@@ -213,6 +281,7 @@ async fn pick_folder<R: Runtime>(app: AppHandle<R>) -> Option<String> {
 #[tauri::command(async)]
 #[allow(clippy::too_many_arguments)]
 fn start_session(
+    db: State<'_, Db>,
     claude: State<'_, ClaudeState>,
     sessions: State<'_, Sessions>,
     picked: State<'_, PickedFolders>,
@@ -223,8 +292,9 @@ fn start_session(
     output: Channel<InvokeResponseBody>,
     events: Channel<SessionEvent>,
 ) -> Result<StartedSession, SessionError> {
-    // Saved project folders join the picked ones here once projects have them.
-    let folder = allowed_folder(&folder, &picked, &[])?;
+    // A folder saved on a project may start a session without a fresh pick.
+    let saved = saved_or_none(saved_folders(&db));
+    let folder = allowed_folder(&folder, &picked, &saved)?;
     sessions.start(
         &claude,
         &folder,
@@ -282,4 +352,15 @@ fn paste_clipboard<R: Runtime>(
 #[tauri::command(async)]
 fn close_session(sessions: State<'_, Sessions>, id: String) -> Result<(), SessionError> {
     sessions.close(&id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saved_folders_that_cannot_be_read_count_as_none() {
+        assert!(saved_or_none(Err(DbError::BlankProjectName)).is_empty());
+        assert_eq!(saved_or_none(Ok(vec!["/a".into()])), ["/a"]);
+    }
 }

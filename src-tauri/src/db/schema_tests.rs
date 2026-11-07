@@ -351,3 +351,26 @@ fn live_names_are_unique_ignoring_case_but_deleted_names_are_free() {
     insert("0192d4c8-7b3a-7f00-8a1e-3c5d7e9f0b03", "mine", Some(1)).unwrap();
     insert("0192d4c8-7b3a-7f00-8a1e-3c5d7e9f0b04", "Mine", Some(2)).unwrap();
 }
+
+#[test]
+fn a_blank_folder_is_rejected() {
+    let conn = migrated();
+    try_insert_project(&conn, "p", "P").unwrap();
+
+    let insert = |id: &str, name: &str, folder: Option<&str>| {
+        conn.execute(
+            "INSERT INTO projects (id, name, folder, created_at, updated_at) VALUES (?1, ?2, ?3, 0, 0)",
+            rusqlite::params![id, name, folder],
+        )
+    };
+    insert("null", "N", None).unwrap();
+    insert("path", "Q", Some("/work")).unwrap();
+    assert!(insert("blank", "B", Some("")).is_err(), "insert");
+
+    let update = |folder: Option<&str>| {
+        conn.execute("UPDATE projects SET folder = ?1 WHERE id = 'p'", [folder])
+    };
+    update(Some("/work")).unwrap();
+    update(None).unwrap();
+    assert!(update(Some("")).is_err(), "update");
+}

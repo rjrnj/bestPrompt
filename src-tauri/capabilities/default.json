@@ -21,6 +21,7 @@
     "allow-latest-entry-project",
     "allow-list-projects",
     "allow-create-project",
+    "allow-set-project-folder",
     "allow-rename-project",
     "allow-delete-project",
     "allow-claude-status",

@@ -23,6 +23,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/002_history.sql"),
     include_str!("migrations/003_entry_version.sql"),
     include_str!("migrations/004_custom_frameworks.sql"),
+    include_str!("migrations/005_project_folder.sql"),
 ];
 
 /// The schema version of a database that `migrate` would have to change,
@@ -192,6 +193,29 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, "rtf");
         assert_eq!(listed[0].sections.len(), 1);
+    }
+
+    #[test]
+    fn migrating_keeps_existing_projects_with_no_folder() {
+        let mut conn = open_in_memory().unwrap();
+        apply(&mut conn, &MIGRATIONS[..4]).unwrap();
+        assert_eq!(user_version(&conn).unwrap(), 4);
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at) VALUES ('p', 'API', 1, 2)",
+            [],
+        )
+        .unwrap();
+
+        apply(&mut conn, MIGRATIONS).unwrap();
+
+        assert_eq!(user_version(&conn).unwrap(), 5);
+        assert_eq!(
+            count(
+                &conn,
+                "SELECT count(*) FROM projects WHERE id = 'p' AND name = 'API' AND folder IS NULL"
+            ),
+            1
+        );
     }
 
     #[test]

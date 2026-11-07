@@ -55,6 +55,7 @@ const rtf: Framework = {
 const api: Project = {
   id: "0192f000-0000-7000-8000-000000000001",
   name: "api",
+  folder: null,
   createdAt: 1,
   updatedAt: 1,
 };

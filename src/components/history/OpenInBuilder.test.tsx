@@ -51,7 +51,13 @@ const rtf: Framework = {
   updatedAt: 1,
 };
 
-const api: Project = { id: "p-api", name: "api", createdAt: 1, updatedAt: 1 };
+const api: Project = {
+  id: "p-api",
+  name: "api",
+  folder: null,
+  createdAt: 1,
+  updatedAt: 1,
+};
 
 const saved: PromptEntry = {
   id: "e1",

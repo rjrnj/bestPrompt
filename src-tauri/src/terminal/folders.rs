@@ -12,7 +12,9 @@ fn path_key(path: &Path) -> String {
     let text = path.to_string_lossy();
     let key = if cfg!(windows) {
         let plain = text.strip_prefix(r"\\?\").unwrap_or(&text);
-        plain.replace('\\', "/").to_lowercase()
+        // Only ASCII letters fold: a full Unicode fold would equate names
+        // (the Kelvin sign and "k") that a case-sensitive folder keeps apart.
+        plain.replace('\\', "/").to_ascii_lowercase()
     } else {
         text.into_owned()
     };
@@ -201,6 +203,24 @@ mod tests {
         assert_eq!(
             path_key(Path::new(r"c:\DEV\App\")),
             path_key(Path::new(r"C:\dev\app"))
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn only_ascii_letters_are_folded_on_windows() {
+        // The Kelvin sign lowercases to "k" but is a different name on disk.
+        assert_ne!(
+            path_key(Path::new("C:\\x\\\u{212A}")),
+            path_key(Path::new("C:\\x\\k"))
+        );
+        assert_ne!(
+            path_key(Path::new("C:\\x\\\u{C9}")),
+            path_key(Path::new("C:\\x\\\u{E9}"))
+        );
+        assert_eq!(
+            path_key(Path::new(r"C:\Foo")),
+            path_key(Path::new(r"c:\foo"))
         );
     }
 }

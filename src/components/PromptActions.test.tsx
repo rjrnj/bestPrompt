@@ -193,7 +193,7 @@ describe("PromptActions", () => {
   it("saves under the selected project", async () => {
     vi.mocked(savePromptEntry).mockResolvedValue(stored());
     vi.mocked(listProjects).mockResolvedValue([
-      { id: "p-api", name: "api", createdAt: 1, updatedAt: 1 },
+      { id: "p-api", name: "api", folder: null, createdAt: 1, updatedAt: 1 },
     ]);
     vi.mocked(latestEntryProject).mockResolvedValue("p-api");
     const { save, role } = await renderActions();
