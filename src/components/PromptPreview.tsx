@@ -2,7 +2,7 @@ import { useId, type ReactNode } from "react";
 import { useCurrentPrompt } from "../state/useCurrentPrompt";
 
 type Props = {
-  /** Buttons for the header row, beside the title (Copy, Save, Clear). */
+  /** Buttons for the header row, beside the title (Copy, Save, Clear…). */
   actions?: ReactNode;
 };
 
@@ -30,7 +30,9 @@ export function PromptPreview({ actions }: Props) {
         >
           Preview
         </h2>
-        <div className="flex items-center gap-2">{actions}</div>
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+          {actions}
+        </div>
       </div>
       {!hasPrompt ? (
         <p className="px-4 pb-4 text-sm text-slate-500 dark:text-slate-400">

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   currentPlatform,
   keyAction,
+  pasteKeys,
   type KeyAction,
   type Platform,
 } from "./keys";
@@ -92,5 +93,12 @@ describe("currentPlatform", () => {
   it("is linux when the user agent is not Windows", () => {
     // jsdom's user agent names no Windows.
     expect(currentPlatform()).toBe("linux");
+  });
+});
+
+describe("pasteKeys", () => {
+  it("names the keys that paste into the terminal", () => {
+    expect(pasteKeys("windows")).toBe("Ctrl+V");
+    expect(pasteKeys("linux")).toBe("Ctrl+Shift+V");
   });
 });

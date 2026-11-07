@@ -1,27 +1,40 @@
+import { useId, useState } from "react";
+import { hasOwn } from "../hasOwn";
 import { useAppActions, useAppDispatch, useAppState } from "../state/AppState";
-import { currentTitle } from "../state/reducer";
+import { currentTitle, NO_PROJECT_KEY } from "../state/reducer";
 import { useCurrentPrompt } from "../state/useCurrentPrompt";
-import { primaryButton, secondaryButton } from "./styles";
+// Pure: xterm stays out of the main chunk.
+import { currentPlatform, pasteKeys } from "../terminal/keys";
+import { fieldHelp, primaryButton, secondaryButton } from "./styles";
 
 /** The Show Claude Code button's id, so Hide can hand it the focus. */
 export const SHOW_DRAWER_ID = "show-claude-code";
 
 /**
  * Copy, Save and Clear for the selected framework's draft. Copy and Save
- * are offered only when the preview shows a prompt, and not while a save is
- * running; Clear whenever the draft or the title has any text, whitespace
- * included. Show Claude Code brings back the hidden drawer.
+ * are offered only when the preview shows a prompt, and not while a save or
+ * a send is running; Clear whenever the draft or the title has any text,
+ * whitespace included. Send to Claude Code shows once Claude Code is found,
+ * and is offered as Copy is, except while the project's session is running.
+ * Show Claude Code brings back the hidden drawer.
  * Renders nothing until a framework is selected.
  */
 export function PromptActions() {
   const state = useAppState();
   const dispatch = useAppDispatch();
-  const { copy, save } = useAppActions();
+  const { copy, save, send } = useAppActions();
   const current = useCurrentPrompt();
+  const [sending, setSending] = useState(false);
+  const hintId = useId();
   if (current === null) return null;
   const { framework, draft, prompt, hasPrompt } = current;
 
-  const canSave = hasPrompt && !state.saving;
+  // Copy and Save wait for a send too, which saves as it starts.
+  const canSave = hasPrompt && !state.saving && !sending;
+  const key = state.selectedProjectId ?? NO_PROJECT_KEY;
+  const running =
+    hasOwn(state.sessions, key) && state.sessions[key].state === "running";
+  const canSend = canSave && !running;
   const title = currentTitle(state);
   const canClear =
     title !== "" || Object.values(draft).some((value) => value !== "");
@@ -57,16 +70,29 @@ export function PromptActions() {
       >
         Save
       </button>
-      <button
-        type="button"
-        className={secondaryButton}
-        aria-disabled={!canClear}
-        onClick={() => {
-          if (canClear) dispatch({ type: "clearDraft" });
-        }}
-      >
-        Clear
-      </button>
+      {state.claude.status === "found" && (
+        <>
+          <button
+            type="button"
+            className={secondaryButton}
+            aria-disabled={!canSend}
+            aria-describedby={running ? hintId : undefined}
+            onClick={() => {
+              if (!canSend) return;
+              setSending(true);
+              void send(entry).finally(() => setSending(false));
+            }}
+          >
+            Send to Claude Code
+          </button>
+          {running && (
+            <span id={hintId} className={fieldHelp}>
+              Claude Code is already running. Paste into it with{" "}
+              {pasteKeys(currentPlatform())}.
+            </span>
+          )}
+        </>
+      )}
       {!state.drawer.open && (
         <button
           type="button"
@@ -77,6 +103,16 @@ export function PromptActions() {
           Show Claude Code
         </button>
       )}
+      <button
+        type="button"
+        className={secondaryButton}
+        aria-disabled={!canClear}
+        onClick={() => {
+          if (canClear) dispatch({ type: "clearDraft" });
+        }}
+      >
+        Clear
+      </button>
     </>
   );
 }

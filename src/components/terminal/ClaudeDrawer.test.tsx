@@ -18,10 +18,12 @@ import {
   listFrameworks,
   listProjects,
   pickFolder,
+  savePromptEntry,
   setProjectFolder,
 } from "../../api";
 import type { Framework } from "../../bindings/Framework";
 import type { Project } from "../../bindings/Project";
+import type { PromptEntry } from "../../bindings/PromptEntry";
 import type { SessionEvent } from "../../bindings/SessionEvent";
 import {
   disposeTerminal,
@@ -40,6 +42,7 @@ vi.mock("../../api", async (importOriginal) => ({
   pickFolder: vi.fn(),
   setProjectFolder: vi.fn(),
   closeSession: vi.fn(),
+  savePromptEntry: vi.fn(),
 }));
 vi.mock("../../clipboard", () => ({ writeText: vi.fn() }));
 // No real xterm: jsdom can't lay one out. The view shows which session it
@@ -520,6 +523,9 @@ describe("ClaudeDrawer", () => {
     expect(
       within(drawer()).queryByRole("button", { name: "Start Claude Code" }),
     ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Send to Claude Code" }),
+    ).toBeNull();
   });
 
   it("a_start_in_a_missing_folder_offers_choose_folder", async () => {
@@ -984,5 +990,28 @@ describe("ClaudeDrawer", () => {
     // The drawer keeps its share and no sideways scrolling comes from it.
     expect(drawer()).toHaveClass("flex-none", "min-w-0");
     expect(drawer().parentElement).toBe(above.parentElement);
+  });
+
+  it("a_send_into_a_missing_folder_opens_the_drawer_to_choose_another", async () => {
+    vi.stubGlobal("innerHeight", 600);
+    const gone = project("p-gone", "gone", "/home/me/gone");
+    vi.mocked(savePromptEntry).mockResolvedValue({} as PromptEntry);
+    vi.mocked(startTerminalSession).mockRejectedValueOnce(
+      new ApiError("invalid", "That folder no longer exists."),
+    );
+    const user = await renderApp([gone], gone.id);
+    await user.type(screen.getByRole("textbox", { name: "Task" }), "a task");
+    expect(screen.queryByRole("region", { name: "Claude Code" })).toBeNull();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Send to Claude Code" }),
+    );
+
+    expect(
+      await screen.findByText("That folder no longer exists."),
+    ).toBeInTheDocument();
+    expect(
+      within(drawer()).getByRole("button", { name: "Choose folder…" }),
+    ).toBeInTheDocument();
   });
 });

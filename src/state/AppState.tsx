@@ -42,6 +42,7 @@ import type { SessionEvent } from "../bindings/SessionEvent";
 import type { StartedSession } from "../bindings/StartedSession";
 import { writeText } from "../clipboard";
 import { hasOwn } from "../hasOwn";
+import { currentPlatform, pasteKeys } from "../terminal/keys";
 import {
   initialStateFor,
   listedProjects,
@@ -78,6 +79,14 @@ export type AppActions = {
   copy: (entry: NewPromptEntry) => Promise<void>;
   /** Saves the entry without copying, unless already saved. */
   save: (entry: NewPromptEntry) => Promise<void>;
+  /**
+   * Saves the entry unless already saved, then starts Claude Code for its
+   * project with the prompt in Claude's input box. A prompt that can't be
+   * passed is copied instead, as is one whose session turns out to be
+   * running or starting by the time the save is done. Does nothing while
+   * the project's session is running: nothing is ever typed into a session.
+   */
+  send: (entry: NewPromptEntry) => Promise<void>;
   /** Creates a project and selects it. False, after a toast, when it fails. */
   createProject: (name: string, folder: string | null) => Promise<boolean>;
   /** Renames a project. False, after a toast, when it fails. */
@@ -454,12 +463,19 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       }
       id = started.id;
       lastFolders.current.set(key, folder);
-      dispatch({ type: "sessionStarted", key, id, folder });
-      dispatch({ type: "drawerToggled", open: true });
+      // Rendered at once, so `latest` has the session, and any exit that
+      // came early, before the key is free again: an action waiting
+      // meanwhile, such as a send whose save has just finished, then sees
+      // it instead of starting over it, and a send sees whether its
+      // session is still running.
       const exit = earlyExit as { code: number | null } | null;
-      if (exit !== null) {
-        dispatch({ type: "sessionExited", key, id, code: exit.code });
-      }
+      flushSync(() => {
+        dispatch({ type: "sessionStarted", key, id, folder });
+        dispatch({ type: "drawerToggled", open: true });
+        if (exit !== null) {
+          dispatch({ type: "sessionExited", key, id, code: exit.code });
+        }
+      });
       return started;
     },
     [discard, endSession, sessionOf],
@@ -712,11 +728,94 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [persist],
   );
 
+  /** Copies `prompt` and toasts `copied`, or why it couldn't be copied. */
+  const copyPrompt = useCallback(async (prompt: string, copied: string) => {
+    try {
+      await writeText(prompt);
+    } catch (error) {
+      dispatch(
+        toast("error", `Couldn't copy to the clipboard: ${messageOf(error)}`),
+      );
+      return;
+    }
+    dispatch(toast("info", copied));
+  }, []);
+
+  const send = useCallback(
+    async (entry: NewPromptEntry) => {
+      if (busy.current) return;
+      const key = entry.projectId ?? NO_PROJECT_KEY;
+      // Starting would end the running session and its conversation.
+      if (sessionOf(key)?.state === "running") return;
+      busy.current = true;
+      try {
+        // A failed save doesn't stop the send; it is reported after it.
+        const result = await persist(entry);
+        // Checked again after the save, with no await before the start,
+        // which claims the key at once: a session that started, or began
+        // starting, meanwhile is never replaced.
+        let started: StartedSession | null = null;
+        const keys = pasteKeys(currentPlatform());
+        if (sessionOf(key)?.state === "running") {
+          await copyPrompt(
+            entry.renderedPrompt,
+            `Claude Code is already running, so your prompt is copied. Paste it into Claude with ${keys}.`,
+          );
+        } else if (busyKeys.current.has(key)) {
+          await copyPrompt(
+            entry.renderedPrompt,
+            `Claude Code is already starting, so your prompt is copied. Paste it into Claude with ${keys} once it's ready.`,
+          );
+        } else {
+          started = await startSession(key, { prompt: entry.renderedPrompt });
+        }
+        if (started?.prefilled === true) {
+          const session = sessionOf(key);
+          if (session?.id !== started.id || session.state !== "running") {
+            // It ended at once, taking the prompt with it.
+            await copyPrompt(
+              entry.renderedPrompt,
+              "Claude Code ended before your prompt could run, so it's copied.",
+            );
+          } else {
+            // The drawer is open by now, but it shows the selected project:
+            // after a switch, the terminal isn't there to focus.
+            const { terminalFor } = await terminals();
+            const selected = latest.current.selectedProjectId ?? NO_PROJECT_KEY;
+            if (selected === key) terminalFor(started.id)?.focus();
+            dispatch(
+              toast(
+                "info",
+                "Sent to Claude Code. Answer any questions it asks, then press Enter to run your prompt.",
+              ),
+            );
+          }
+        } else if (started !== null) {
+          // Too long, or a form Claude can't be handed: it started without
+          // the prompt, which goes on the clipboard for pasting.
+          await copyPrompt(
+            entry.renderedPrompt,
+            `Claude Code couldn't take this prompt directly, so it's copied. Paste it into Claude with ${keys}.`,
+          );
+        }
+        if (typeof result === "object") {
+          dispatch(
+            toast("error", `Couldn't save to History: ${result.failed}`),
+          );
+        }
+      } finally {
+        busy.current = false;
+      }
+    },
+    [copyPrompt, persist, sessionOf, startSession],
+  );
+
   const actions = useMemo<AppActions>(
     () => ({
       loadFrameworks,
       copy,
       save,
+      send,
       createProject,
       renameProject,
       setProjectFolder,
@@ -736,6 +835,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       loadFrameworks,
       copy,
       save,
+      send,
       createProject,
       renameProject,
       setProjectFolder,
