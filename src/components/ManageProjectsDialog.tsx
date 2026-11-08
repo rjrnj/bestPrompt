@@ -2,6 +2,7 @@ import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useRef, useState } from "react";
 import type { Project } from "../bindings/Project";
+import { hasOwn } from "../hasOwn";
 import { useAppActions, useAppState } from "../state/AppState";
 import { FolderText } from "./FolderText";
 import { TextFieldDialog } from "./TextFieldDialog";
@@ -82,6 +83,9 @@ function ProjectList() {
 function ProjectRow({ project }: { project: Project }) {
   const { renameProject, deleteProject, setProjectFolder, pickFolder } =
     useAppActions();
+  const { sessions } = useAppState();
+  const hasSession =
+    hasOwn(sessions, project.id) && sessions[project.id].state === "running";
   const folderButton = useRef<HTMLButtonElement>(null);
   const [renaming, setRenaming] = useState(false);
 
@@ -194,6 +198,7 @@ function ProjectRow({ project }: { project: Project }) {
               </AlertDialog.Title>
               <AlertDialog.Description className={dialogDescription}>
                 Its prompts move to No project. No prompts are deleted.
+                {hasSession && " Its Claude Code session will end."}
               </AlertDialog.Description>
               <div className={dialogButtons}>
                 <AlertDialog.Cancel asChild>

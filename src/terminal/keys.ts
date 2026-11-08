@@ -36,6 +36,11 @@ export function keyAction(
   return "pass";
 }
 
+/** The keys that paste into the terminal, as the user is told them. */
+export function pasteKeys(platform: Platform): string {
+  return platform === "windows" ? "Ctrl+V" : "Ctrl+Shift+V";
+}
+
 export function currentPlatform(): Platform {
   return navigator.userAgent.includes("Windows") ? "windows" : "linux";
 }

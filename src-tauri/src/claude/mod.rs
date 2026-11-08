@@ -5,7 +5,8 @@ mod env;
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Condvar, Mutex, PoisonError};
+use std::time::Duration;
 
 use serde::Serialize;
 use ts_rs::TS;
@@ -113,6 +114,10 @@ fn extra_dirs(home: Option<&Path>) -> Vec<PathBuf> {
     dirs
 }
 
+/// How long a command waits for startup detection before going on with
+/// whatever is there, so a login shell that never answers can't hang it.
+const DETECTION_WAIT: Duration = Duration::from_secs(30);
+
 /// Managed state: what detection found and the environment sessions start
 /// from.
 pub struct ClaudeState {
@@ -120,29 +125,89 @@ pub struct ClaudeState {
     base_env: Mutex<Env>,
     /// The app's home folder, if it could be found.
     home: Option<PathBuf>,
+    /// Whether startup detection has finished, with its signal.
+    detected: Mutex<bool>,
+    detected_signal: Condvar,
 }
 
 impl ClaudeState {
-    /// Starts with the app's own environment and nothing detected.
+    /// Starts with the app's own environment and nothing detected. Commands
+    /// that need the result wait until `init` has run.
     pub fn new(home: Option<PathBuf>) -> Self {
-        Self::from_parts(None, std::env::vars_os().collect(), home)
+        Self::with_detected(None, std::env::vars_os().collect(), home, false)
     }
 
     /// State with everything set up front and no detection, for tests.
     pub fn from_parts(exe: Option<ClaudeExe>, base_env: Env, home: Option<PathBuf>) -> Self {
+        Self::with_detected(exe, base_env, home, true)
+    }
+
+    fn with_detected(
+        exe: Option<ClaudeExe>,
+        base_env: Env,
+        home: Option<PathBuf>,
+        detected: bool,
+    ) -> Self {
         Self {
             exe: Mutex::new(exe),
             base_env: Mutex::new(base_env),
             home,
+            detected: Mutex::new(detected),
+            detected_signal: Condvar::new(),
         }
     }
 
     /// Reads the base environment (seconds on Linux) and detects the CLI
-    /// with it. Meant for a background thread at startup.
+    /// with it, then lets waiting commands go on. Meant for a background
+    /// thread at startup.
     pub fn init(&self) {
-        let env = env::base_env();
+        self.init_with(env::base_env);
+    }
+
+    /// `init`, with `read_env` reading the base environment.
+    fn init_with(&self, read_env: impl FnOnce() -> Env) {
+        /// Marks detection done when dropped, so a panic while detecting
+        /// still lets waiting commands go on rather than each wait out the
+        /// bound.
+        struct Finished<'a>(&'a ClaudeState);
+        impl Drop for Finished<'_> {
+            fn drop(&mut self) {
+                self.0.detection_finished();
+            }
+        }
+
+        let _finished = Finished(self);
+        let env = read_env();
         *self.base_env.lock().unwrap_or_else(PoisonError::into_inner) = env;
         self.detect();
+    }
+
+    /// Marks startup detection as done and wakes everything waiting on it.
+    fn detection_finished(&self) {
+        *self.detected.lock().unwrap_or_else(PoisonError::into_inner) = true;
+        self.detected_signal.notify_all();
+    }
+
+    /// Blocks until startup detection has finished, or for at most
+    /// `DETECTION_WAIT`, after which it goes on with whatever is there.
+    pub fn wait_until_detected(&self) {
+        if !self.wait_for_detection(DETECTION_WAIT) {
+            log::warn!(
+                "Claude Code detection is still running after {} s; going on without it",
+                DETECTION_WAIT.as_secs()
+            );
+        }
+    }
+
+    /// Blocks until startup detection has finished or `limit` has passed.
+    /// True if it finished.
+    fn wait_for_detection(&self, limit: Duration) -> bool {
+        let detected = self.detected.lock().unwrap_or_else(PoisonError::into_inner);
+        let (detected, _) = self
+            .detected_signal
+            .wait_timeout_while(detected, limit, |done| !*done)
+            .unwrap_or_else(PoisonError::into_inner);
+        *detected
     }
 
     /// The environment sessions start from.
@@ -337,6 +402,59 @@ mod tests {
             None
         );
         assert_eq!(find(&[bin], Some(".EXE;.CMD"), &[], &[]), None);
+    }
+
+    #[test]
+    fn status_waits_for_detection_to_finish() {
+        let state = std::sync::Arc::new(ClaudeState::new(None));
+        let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let detector = {
+            let (state, finished) = (state.clone(), finished.clone());
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                state.detect();
+                finished.store(true, std::sync::atomic::Ordering::SeqCst);
+                state.detection_finished();
+            })
+        };
+
+        state.wait_until_detected();
+
+        assert!(finished.load(std::sync::atomic::Ordering::SeqCst));
+        detector.join().unwrap();
+    }
+
+    #[test]
+    fn a_state_from_parts_does_not_wait() {
+        let state = ClaudeState::from_parts(None, Vec::new(), None);
+        let started = std::time::Instant::now();
+
+        state.wait_until_detected();
+
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_panic_during_detection_still_ends_the_wait() {
+        let state = std::sync::Arc::new(ClaudeState::new(None));
+        let detector = {
+            let state = state.clone();
+            std::thread::spawn(move || state.init_with(|| panic!("the shell blew up")))
+        };
+
+        assert!(detector.join().is_err());
+        assert!(state.wait_for_detection(std::time::Duration::ZERO));
+    }
+
+    #[test]
+    fn the_wait_gives_up_after_its_bound() {
+        let state = ClaudeState::new(None);
+        let started = std::time::Instant::now();
+
+        let detected = state.wait_for_detection(std::time::Duration::from_millis(100));
+
+        assert!(!detected);
+        assert!(started.elapsed() >= std::time::Duration::from_millis(100));
     }
 
     #[test]

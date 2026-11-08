@@ -12,6 +12,9 @@ type Props = {
   frameworks: ReactNode;
 };
 
+/** The id of the app's tablist, where the selected view's tab is. */
+export const VIEWS_TABLIST_ID = "app-views";
+
 const trigger =
   "rounded px-3 py-1 text-sm font-medium text-slate-600 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 data-[state=active]:bg-sky-100 data-[state=active]:text-sky-900 dark:text-slate-400 dark:hover:text-slate-100 dark:data-[state=active]:bg-sky-900 dark:data-[state=active]:text-sky-100";
 
@@ -57,6 +60,7 @@ export function AppTabs({ builderTools, builder, history, frameworks }: Props) {
         </h1>
         <Tabs.List
           ref={tabList}
+          id={VIEWS_TABLIST_ID}
           aria-label="Views"
           className="flex gap-0.5 rounded-md border border-slate-300 p-0.5 dark:border-slate-700"
         >

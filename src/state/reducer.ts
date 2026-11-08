@@ -10,6 +10,17 @@ import { renderTemplate, TemplateSyntaxError } from "../template";
 
 export type Toast = { id: number; kind: "info" | "error"; message: string };
 
+/** A Claude Code session; its terminal lives outside React state. */
+export type Session = {
+  id: string;
+  folder: string;
+  state: "running" | "exited";
+  code: number | null;
+};
+
+/** The key of No project's session; projects use their id. */
+export const NO_PROJECT_KEY = "";
+
 export type State = {
   frameworks:
     | { status: "loading" }
@@ -67,6 +78,22 @@ export type State = {
   saving: boolean;
   toasts: Toast[];
   nextToastId: number;
+  /** Whether Claude Code was found; unknown until the first answer. */
+  claude: { status: "unknown" | "found" | "missing" };
+  /** One session per project id, or `NO_PROJECT_KEY` for No project. */
+  sessions: Record<string, Session>;
+  /**
+   * Keys whose last start failed because the folder no longer exists, so
+   * the drawer offers to choose another, until a session starts or the
+   * project's folder changes.
+   */
+  missingFolders: string[];
+  /**
+   * The Claude Code drawer under the Builder. `height` is the share of the
+   * Builder area it was last given (null for the default); `maximized`
+   * fills the area and keeps `height` to restore.
+   */
+  drawer: { open: boolean; height: number | null; maximized: boolean };
 };
 
 export type Action =
@@ -97,7 +124,15 @@ export type Action =
   | { type: "saveFailed"; message: string }
   | { type: "entryDeleted"; frameworkId: string | null; renderedPrompt: string }
   | { type: "toastAdded"; kind: Toast["kind"]; message: string }
-  | { type: "toastDismissed"; id: number };
+  | { type: "toastDismissed"; id: number }
+  | { type: "claudeDetected"; found: boolean }
+  | { type: "sessionStarted"; key: string; id: string; folder: string }
+  | { type: "sessionExited"; key: string; id: string; code: number | null }
+  | { type: "sessionClosed"; key: string }
+  | { type: "sessionFolderMissing"; key: string }
+  | { type: "drawerToggled"; open?: boolean }
+  | { type: "drawerResized"; height: number }
+  | { type: "drawerMaximizeToggled" };
 
 /** The most toasts shown at once; adding another drops the oldest. */
 export const MAX_TOASTS = 3;
@@ -119,7 +154,22 @@ export const initialState: State = {
   saving: false,
   toasts: [],
   nextToastId: 1,
+  claude: { status: "unknown" },
+  sessions: {},
+  missingFolders: [],
+  drawer: { open: true, height: null, maximized: false },
 };
+
+/**
+ * The starting state for a window `windowHeight` pixels tall: the drawer
+ * starts hidden in a short window, where it would leave the form no room.
+ */
+export function initialStateFor(windowHeight: number): State {
+  return {
+    ...initialState,
+    drawer: { ...initialState.drawer, open: windowHeight >= 700 },
+  };
+}
 
 export function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -276,17 +326,23 @@ export function reducer(state: State, action: Action): State {
         selectedProjectId: action.project.id,
         projectChosen: true,
       };
-    case "projectUpdated":
-      return withListedProjects(state, (projects) =>
-        sortProjects(
-          projects.map((p) =>
-            p.id === action.project.id ? action.project : p,
-          ),
-        ),
+    case "projectUpdated": {
+      const { id, folder } = action.project;
+      const before = listedProjects(state).find((p) => p.id === id);
+      const updated = withListedProjects(state, (projects) =>
+        sortProjects(projects.map((p) => (p.id === id ? action.project : p))),
       );
+      // A new folder replaces the one that had gone.
+      return before?.folder === folder || !state.missingFolders.includes(id)
+        ? updated
+        : {
+            ...updated,
+            missingFolders: state.missingFolders.filter((k) => k !== id),
+          };
+    }
     case "projectDeleted":
       return {
-        ...withListedProjects(state, (projects) =>
+        ...withListedProjects(withoutSession(state, action.id), (projects) =>
           projects.filter((p) => p.id !== action.id),
         ),
         deletedProjects:
@@ -376,7 +432,73 @@ export function reducer(state: State, action: Action): State {
         ...state,
         toasts: state.toasts.filter((t) => t.id !== action.id),
       };
+    case "claudeDetected":
+      return {
+        ...state,
+        claude: { status: action.found ? "found" : "missing" },
+      };
+    case "sessionStarted":
+      return {
+        ...state,
+        sessions: {
+          ...state.sessions,
+          [action.key]: {
+            id: action.id,
+            folder: action.folder,
+            state: "running",
+            code: null,
+          },
+        },
+        missingFolders: state.missingFolders.filter((k) => k !== action.key),
+      };
+    case "sessionExited": {
+      // A late exit from a session already replaced must not mark the new one.
+      if (!hasOwn(state.sessions, action.key)) return state;
+      const session = state.sessions[action.key];
+      if (session.id !== action.id) return state;
+      return {
+        ...state,
+        sessions: {
+          ...state.sessions,
+          [action.key]: { ...session, state: "exited", code: action.code },
+        },
+      };
+    }
+    case "sessionClosed":
+      return withoutSession(state, action.key);
+    case "sessionFolderMissing":
+      return state.missingFolders.includes(action.key)
+        ? state
+        : { ...state, missingFolders: [...state.missingFolders, action.key] };
+    case "drawerToggled":
+      return {
+        ...state,
+        drawer: { ...state.drawer, open: action.open ?? !state.drawer.open },
+      };
+    case "drawerResized":
+      return {
+        ...state,
+        drawer: { ...state.drawer, height: action.height, maximized: false },
+      };
+    case "drawerMaximizeToggled":
+      return {
+        ...state,
+        drawer: { ...state.drawer, maximized: !state.drawer.maximized },
+      };
   }
+}
+
+/** `state` without the session, or missing-folder note, of `key`. */
+function withoutSession(state: State, key: string): State {
+  const missingFolders = state.missingFolders.filter((k) => k !== key);
+  if (!hasOwn(state.sessions, key)) {
+    return missingFolders.length === state.missingFolders.length
+      ? state
+      : { ...state, missingFolders };
+  }
+  const sessions = { ...state.sessions };
+  delete sessions[key];
+  return { ...state, sessions, missingFolders };
 }
 
 function loadedProjects(state: State): Project[] {

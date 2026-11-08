@@ -10,6 +10,7 @@ import {
   hasAnyDraftText,
   hasDraftFor,
   initialState,
+  initialStateFor,
   isBlank,
   listedProjects,
   liveFrameworks,
@@ -1552,5 +1553,158 @@ describe("framework changes", () => {
 
     expect(state.editingFramework).toEqual(editing);
     expect(initialState.editingFramework).toBeNull();
+  });
+});
+
+describe("Claude Code", () => {
+  it("records whether Claude Code was found", () => {
+    expect(initialState.claude.status).toBe("unknown");
+
+    expect(
+      reducer(initialState, { type: "claudeDetected", found: true }).claude,
+    ).toEqual({ status: "found" });
+    expect(
+      reducer(initialState, { type: "claudeDetected", found: false }).claude,
+    ).toEqual({ status: "missing" });
+  });
+
+  it("sessions_are_kept_per_project", () => {
+    const state = run([
+      { type: "sessionStarted", key: "p-api", id: "s1", folder: "/api" },
+      { type: "sessionStarted", key: "", id: "s2", folder: "/tmp" },
+    ]);
+
+    expect(state.sessions).toEqual({
+      "p-api": { id: "s1", folder: "/api", state: "running", code: null },
+      "": { id: "s2", folder: "/tmp", state: "running", code: null },
+    });
+
+    const closed = reducer(state, { type: "sessionClosed", key: "p-api" });
+    expect(closed.sessions).toEqual({ "": state.sessions[""] });
+  });
+
+  it("a_deleted_projects_session_is_dropped", () => {
+    const state = run(
+      [
+        { type: "sessionStarted", key: "p-api", id: "s1", folder: "/api" },
+        { type: "sessionStarted", key: "p-web", id: "s2", folder: "/web" },
+        { type: "projectDeleted", id: "p-api" },
+      ],
+      withProjects,
+    );
+
+    expect(Object.keys(state.sessions)).toEqual(["p-web"]);
+  });
+
+  it("exit_marks_the_session_exited", () => {
+    const state = run([
+      { type: "sessionStarted", key: "p-api", id: "s1", folder: "/api" },
+      { type: "sessionExited", key: "p-api", id: "s1", code: 3 },
+    ]);
+
+    expect(state.sessions["p-api"]).toEqual({
+      id: "s1",
+      folder: "/api",
+      state: "exited",
+      code: 3,
+    });
+  });
+
+  it("a late exit from an old session is ignored", () => {
+    const state = run([
+      { type: "sessionStarted", key: "p-api", id: "s1", folder: "/api" },
+      { type: "sessionClosed", key: "p-api" },
+      { type: "sessionStarted", key: "p-api", id: "s2", folder: "/api" },
+      { type: "sessionExited", key: "p-api", id: "s1", code: 0 },
+    ]);
+
+    expect(state.sessions["p-api"].state).toBe("running");
+    const none = run([{ type: "sessionExited", key: "", id: "s9", code: 0 }]);
+    expect(none.sessions).toEqual({});
+  });
+
+  it("remembers a start that failed on a missing folder until the next start", () => {
+    const failed = run([{ type: "sessionFolderMissing", key: "p-api" }]);
+    expect(failed.missingFolders).toEqual(["p-api"]);
+
+    const started = reducer(failed, {
+      type: "sessionStarted",
+      key: "p-api",
+      id: "s1",
+      folder: "/new",
+    });
+    expect(started.missingFolders).toEqual([]);
+  });
+
+  it("a_new_folder_on_the_project_forgets_the_missing_one", () => {
+    const missing = run(
+      [
+        { type: "sessionFolderMissing", key: "p-api" },
+        { type: "sessionFolderMissing", key: "p-web" },
+      ],
+      withProjects,
+    );
+
+    // A rename keeps the note: the folder is still the one that has gone.
+    const renamed = reducer(missing, {
+      type: "projectUpdated",
+      project: { ...api, name: "api2" },
+    });
+    expect(renamed.missingFolders).toEqual(["p-api", "p-web"]);
+
+    const moved = reducer(missing, {
+      type: "projectUpdated",
+      project: { ...api, folder: "/home/me/moved" },
+    });
+    expect(moved.missingFolders).toEqual(["p-web"]);
+
+    const deleted = reducer(missing, { type: "projectDeleted", id: "p-web" });
+    expect(deleted.missingFolders).toEqual(["p-api"]);
+  });
+});
+
+describe("the drawer", () => {
+  it("is open at first, at the default height", () => {
+    expect(initialState.drawer).toEqual({
+      open: true,
+      height: null,
+      maximized: false,
+    });
+    expect(initialStateFor(699).drawer.open).toBe(false);
+    expect(initialStateFor(700).drawer.open).toBe(true);
+  });
+
+  it("toggles, or opens and hides as asked", () => {
+    const hidden = run([{ type: "drawerToggled" }]);
+    expect(hidden.drawer.open).toBe(false);
+    expect(reducer(hidden, { type: "drawerToggled" }).drawer.open).toBe(true);
+    expect(
+      reducer(hidden, { type: "drawerToggled", open: false }).drawer.open,
+    ).toBe(false);
+    expect(
+      reducer(initialState, { type: "drawerToggled", open: true }).drawer.open,
+    ).toBe(true);
+  });
+
+  it("resizing sets the height and ends maximized", () => {
+    const state = run([
+      { type: "drawerMaximizeToggled" },
+      { type: "drawerResized", height: 0.6 },
+    ]);
+
+    expect(state.drawer).toEqual({ open: true, height: 0.6, maximized: false });
+  });
+
+  it("maximize keeps the height to restore", () => {
+    const resized = run([{ type: "drawerResized", height: 0.3 }]);
+    const maximized = reducer(resized, { type: "drawerMaximizeToggled" });
+    expect(maximized.drawer).toEqual({
+      open: true,
+      height: 0.3,
+      maximized: true,
+    });
+
+    const restored = reducer(maximized, { type: "drawerMaximizeToggled" });
+    expect(restored.drawer).toEqual(resized.drawer);
   });
 });

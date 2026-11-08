@@ -56,19 +56,12 @@ function colourScheme(): MediaQueryList | undefined {
  * Starts a session in `folder` and the terminal that shows it, with `prompt`
  * for Claude's input box if there is one; `prefilled` in the result says
  * whether it could be passed. The terminal is made first, because the
- * session's output can arrive before its id does. `onTrace` is dev-only: it
- * sees every chunk of output before the terminal.
+ * session's output can arrive before its id does.
  */
 export async function startTerminalSession(
   folder: string,
   onEvent: (e: SessionEvent) => void,
-  {
-    prompt,
-    onTrace,
-  }: {
-    prompt?: string;
-    onTrace?: (bytes: Uint8Array) => void;
-  } = {},
+  { prompt }: { prompt?: string } = {},
 ): Promise<StartedSession> {
   const media = colourScheme();
   const terminal = new Terminal({
@@ -165,7 +158,6 @@ export async function startTerminalSession(
       prompt ?? null,
       (bytes) => {
         if (disposed) return;
-        onTrace?.(bytes);
         terminal.write(bytes);
       },
       (event) => {
