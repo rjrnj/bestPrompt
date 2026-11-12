@@ -10,6 +10,7 @@ import {
   useMemo,
   useReducer,
   useRef,
+  useState,
   type Context,
   type Dispatch,
   type ReactNode,
@@ -36,6 +37,7 @@ import {
   setSetting,
   updateFramework,
 } from "../api";
+import type { FolderPurpose } from "../bindings/FolderPurpose";
 import type { Framework } from "../bindings/Framework";
 import type { FrameworkInput } from "../bindings/FrameworkInput";
 import type { NewPromptEntry } from "../bindings/NewPromptEntry";
@@ -97,8 +99,11 @@ export type AppActions = {
   renameProject: (id: string, name: string) => Promise<boolean>;
   /** Sets or, with null, clears a project's folder. False, after a toast, when it fails. */
   setProjectFolder: (id: string, folder: string | null) => Promise<boolean>;
-  /** Asks for a folder. Null when cancelled or, after a toast, when it fails. */
-  pickFolder: () => Promise<string | null>;
+  /**
+   * Asks for a folder, straight away; the default purpose is a project's
+   * folder. Null when cancelled or, after a toast, when it fails.
+   */
+  pickFolder: (purpose?: FolderPurpose) => Promise<string | null>;
   /** Deletes a project. False, after a toast, when it fails. */
   deleteProject: (id: string) => Promise<boolean>;
   /**
@@ -155,6 +160,19 @@ export type AppActions = {
 const StateContext = createContext<State | null>(null);
 const DispatchContext = createContext<Dispatch<Action> | null>(null);
 const ActionsContext = createContext<AppActions | null>(null);
+
+/** What the folder explainer dialog needs; see `useFolderExplainer`. */
+export type FolderExplainer = {
+  open: boolean;
+  /**
+   * Answers the question: true to go on to the chooser, false to cancel.
+   * Does nothing while the dialog isn't open.
+   */
+  answer: (choose: boolean) => void;
+  /** What had the focus when the dialog opened, to give it back. */
+  opener: { current: Element | null };
+};
+const FolderExplainerContext = createContext<FolderExplainer | null>(null);
 
 // api.ts rejects with an ApiError, so the fallback only matters if that
 // contract breaks; it keeps the failure path from ever throwing itself.
@@ -258,14 +276,53 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const pickFolder = useCallback(async (): Promise<string | null> => {
-    try {
-      return await pickFolderCommand();
-    } catch (error) {
-      dispatch(toast("error", messageOf(error)));
-      return null;
-    }
+  const pickFolder = useCallback(
+    async (purpose: FolderPurpose = "project"): Promise<string | null> => {
+      try {
+        return await pickFolderCommand(purpose);
+      } catch (error) {
+        dispatch(toast("error", messageOf(error)));
+        return null;
+      }
+    },
+    [],
+  );
+
+  // The explainer's state is the view's, not the reducer's: whether it is
+  // open, and the question being asked, which later requests share.
+  const [folderExplainerOpen, setFolderExplainerOpen] = useState(false);
+  const explainerOpener = useRef<Element | null>(null);
+  // `pick` is the folder the answer leads to, so that everyone who joins the
+  // question while it is open gets it from the one chooser.
+  const folderQuestion = useRef<{
+    pick: Promise<string | null>;
+    resolve: (choose: boolean) => void;
+  } | null>(null);
+
+  const answerFolderExplainer = useCallback((choose: boolean) => {
+    const question = folderQuestion.current;
+    if (question === null) return;
+    folderQuestion.current = null;
+    setFolderExplainerOpen(false);
+    question.resolve(choose);
   }, []);
+
+  /**
+   * Explains the folder, then opens Claude's chooser. Null if declined.
+   * A request made while the explainer is open shares its answer and pick.
+   */
+  const pickFolderForClaude = useCallback((): Promise<string | null> => {
+    if (folderQuestion.current !== null) return folderQuestion.current.pick;
+    let resolve!: (choose: boolean) => void;
+    const answer = new Promise<boolean>((r) => (resolve = r));
+    const pick = answer.then((choose) =>
+      choose ? pickFolder("claude") : null,
+    );
+    folderQuestion.current = { pick, resolve };
+    explainerOpener.current = document.activeElement;
+    setFolderExplainerOpen(true);
+    return pick;
+  }, [pickFolder]);
 
   const createProject = useCallback(
     (name: string, folder: string | null) =>
@@ -392,19 +449,19 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (key === NO_PROJECT_KEY) {
         const last = lastFolders.current.get(key);
         if (!choose && last !== undefined) return last;
-        return pickFolder();
+        return pickFolderForClaude();
       }
       const project = listedProjects(latest.current).find((p) => p.id === key);
       if (!choose && project !== undefined && project.folder !== null) {
         return project.folder;
       }
-      const picked = await pickFolder();
+      const picked = await pickFolderForClaude();
       // Cancelled, or closed or deleted while the chooser was open: there
       // is nothing to save it on.
       if (picked === null || cancelledKeys.current.has(key)) return null;
       return (await setProjectFolder(key, picked)) ? picked : null;
     },
-    [pickFolder, setProjectFolder],
+    [pickFolderForClaude, setProjectFolder],
   );
 
   /**
@@ -890,10 +947,23 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     ],
   );
 
+  const folderExplainer = useMemo(
+    () => ({
+      open: folderExplainerOpen,
+      answer: answerFolderExplainer,
+      opener: explainerOpener,
+    }),
+    [folderExplainerOpen, answerFolderExplainer],
+  );
+
   return (
     <StateContext value={state}>
       <DispatchContext value={dispatch}>
-        <ActionsContext value={actions}>{children}</ActionsContext>
+        <ActionsContext value={actions}>
+          <FolderExplainerContext value={folderExplainer}>
+            {children}
+          </FolderExplainerContext>
+        </ActionsContext>
       </DispatchContext>
     </StateContext>
   );
@@ -917,4 +987,9 @@ export function useAppDispatch(): Dispatch<Action> {
 
 export function useAppActions(): AppActions {
   return useRequired(ActionsContext, "useAppActions");
+}
+
+/** The folder explainer's state; only its dialog needs it. */
+export function useFolderExplainer(): FolderExplainer {
+  return useRequired(FolderExplainerContext, "useFolderExplainer");
 }

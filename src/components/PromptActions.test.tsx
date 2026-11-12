@@ -40,6 +40,7 @@ import {
 } from "../terminal/terminals";
 import { PromptActions } from "./PromptActions";
 import { PromptForm } from "./PromptForm";
+import { FolderExplainerDialog } from "./terminal/FolderExplainerDialog";
 import { Toaster } from "./Toaster";
 
 // Only the commands are mocked; ApiError stays the real class.
@@ -115,6 +116,7 @@ async function renderActions(framework: Framework = rtf) {
     <AppStateProvider>
       <PromptForm />
       <PromptActions />
+      <FolderExplainerDialog />
       <Toaster />
       <StateSpy />
     </AppStateProvider>,
@@ -364,6 +366,17 @@ async function renderSend(
   return send;
 }
 
+/** Answers the explainer before Claude's folder chooser with Choose folder. */
+async function chooseInExplainer() {
+  await userEvent.click(
+    within(
+      await screen.findByRole("alertdialog", {
+        name: "Choose a folder for Claude Code",
+      }),
+    ).getByRole("button", { name: "Choose folder…" }),
+  );
+}
+
 const PROMPT = "# Role\na reviewer";
 
 /** The entry Send makes from that prompt under `api`. */
@@ -525,14 +538,22 @@ describe("Send to Claude Code", () => {
     expect(writeText).not.toHaveBeenCalled();
   });
 
-  it("send_without_a_folder_asks_first", async () => {
+  it("send_without_a_folder_explains_first", async () => {
     const bare = project("p-bare", null);
     vi.mocked(pickFolder).mockResolvedValueOnce(null);
     const send = await renderSend([bare], bare.id);
 
-    // A cancelled pick starts nothing.
+    // Nothing is chosen before the explainer is answered.
     await userEvent.click(send);
-    await vi.waitFor(() => expect(pickFolder).toHaveBeenCalledTimes(1));
+    await screen.findByRole("alertdialog", {
+      name: "Choose a folder for Claude Code",
+    });
+    expect(pickFolder).not.toHaveBeenCalled();
+    // A cancelled pick starts nothing.
+    await chooseInExplainer();
+    await vi.waitFor(() =>
+      expect(pickFolder).toHaveBeenCalledExactlyOnceWith("claude"),
+    );
     await vi.waitFor(() => expectOn(send));
     expect(startTerminalSession).not.toHaveBeenCalled();
     expect(setProjectFolder).not.toHaveBeenCalled();
@@ -544,6 +565,7 @@ describe("Send to Claude Code", () => {
     });
     startsWith({ id: "s1", prefilled: true });
     await userEvent.click(send);
+    await chooseInExplainer();
 
     await vi.waitFor(() =>
       expect(startTerminalSession).toHaveBeenCalledExactlyOnceWith(
@@ -816,6 +838,7 @@ describe("Send to Claude Code", () => {
 
     // A cancelled pick: nothing starts, and only the save is reported.
     await userEvent.click(send);
+    await chooseInExplainer();
 
     await vi.waitFor(() =>
       expect(toastTexts()).toEqual(["Couldn't save to History: disk full"]),

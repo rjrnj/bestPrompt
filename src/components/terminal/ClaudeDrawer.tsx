@@ -475,7 +475,7 @@ function Body({
     );
   }
   return (
-    <Note text="No Claude Code session for this project.">
+    <Note text="Claude Code is Anthropic's coding assistant. Start it here in a project's folder, and Send puts your prompt straight into it.">
       <ActionButton
         busy={busy}
         onClick={action(() => startSession(sessionKey))}

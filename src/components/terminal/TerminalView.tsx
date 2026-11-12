@@ -49,8 +49,9 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
   if (!terminal) return null;
   return (
     // The padding is out here: FitAddon measures the box xterm opens in, and
-    // that size includes any padding the box has.
-    <div className="h-full w-full bg-white p-2 dark:bg-slate-900">
+    // that size includes any padding the box has. It shares the terminal's
+    // always-dark background, so no light edge shows around it.
+    <div className="h-full w-full bg-slate-900 p-2">
       <div ref={container} className="h-full w-full" />
     </div>
   );

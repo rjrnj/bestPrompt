@@ -26,17 +26,10 @@ type Entry = {
 
 const entries = new Map<string, Entry>();
 
-// The app's own surfaces: white and slate-900 for the text on it, then
-// slate-900 and slate-100 in the dark theme.
-const lightTheme: ITheme = {
-  background: "#ffffff",
-  foreground: "#0f172a",
-  cursor: "#0f172a",
-  cursorAccent: "#ffffff",
-  selectionBackground: "#bae6fd",
-  selectionForeground: "#0f172a",
-};
-const darkTheme: ITheme = {
+// Always dark, in either app theme: Claude Code's default colours assume a
+// dark background, and are hard to read on a light one. The colours are
+// slate-900 and slate-100.
+const terminalTheme: ITheme = {
   background: "#0f172a",
   foreground: "#f1f5f9",
   cursor: "#f1f5f9",
@@ -44,13 +37,6 @@ const darkTheme: ITheme = {
   selectionBackground: "#0c4a6e",
   selectionForeground: "#f1f5f9",
 };
-
-/** jsdom has no matchMedia; the terminal is light there. */
-function colourScheme(): MediaQueryList | undefined {
-  return typeof window.matchMedia === "function"
-    ? window.matchMedia("(prefers-color-scheme: dark)")
-    : undefined;
-}
 
 /**
  * Starts a session in `folder` and the terminal that shows it, with `prompt`
@@ -63,21 +49,15 @@ export async function startTerminalSession(
   onEvent: (e: SessionEvent) => void,
   { prompt }: { prompt?: string } = {},
 ): Promise<StartedSession> {
-  const media = colourScheme();
   const terminal = new Terminal({
     scrollback: 5000,
     fontFamily: 'ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace',
     fontSize: 13,
     cursorBlink: true,
-    theme: media?.matches ? darkTheme : lightTheme,
+    theme: terminalTheme,
   });
   const fit = new FitAddon();
   terminal.loadAddon(fit);
-
-  const onScheme = (e: { matches: boolean }) => {
-    terminal.options.theme = e.matches ? darkTheme : lightTheme;
-  };
-  media?.addEventListener("change", onScheme);
 
   // Writes made before the session id is known wait here.
   let id: string | null = null;
@@ -145,7 +125,6 @@ export async function startTerminalSession(
   let disposed = false;
   const dispose = () => {
     disposed = true;
-    media?.removeEventListener("change", onScheme);
     subscriptions.forEach((s) => s.dispose());
     terminal.dispose();
   };

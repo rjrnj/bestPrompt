@@ -7,6 +7,7 @@ import type { ClaudeStatus } from "./bindings/ClaudeStatus";
 import type { DbErrorKind } from "./bindings/DbError";
 import type { EntryCursor } from "./bindings/EntryCursor";
 import type { EntryQuery } from "./bindings/EntryQuery";
+import type { FolderPurpose } from "./bindings/FolderPurpose";
 import type { Framework } from "./bindings/Framework";
 import type { FrameworkInput } from "./bindings/FrameworkInput";
 import type { NewPromptEntry } from "./bindings/NewPromptEntry";
@@ -193,8 +194,9 @@ export function detectClaude(): Promise<ClaudeStatus> {
   return call("detect_claude");
 }
 
-export function pickFolder(): Promise<string | null> {
-  return call("pick_folder");
+/** Asks for a folder; `purpose` decides how the chooser is titled. */
+export function pickFolder(purpose: FolderPurpose): Promise<string | null> {
+  return call("pick_folder", { purpose });
 }
 
 /**

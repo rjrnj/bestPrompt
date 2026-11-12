@@ -9,11 +9,12 @@
 use std::sync::{Mutex, PoisonError};
 
 use rusqlite::Connection;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Builder, Manager, Runtime, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
+use ts_rs::TS;
 
 use crate::claude::{ClaudeState, ClaudeStatus};
 use crate::db::DbError;
@@ -250,19 +251,42 @@ fn detect_claude(claude: State<'_, ClaudeState>) -> ClaudeStatus {
     claude.detect()
 }
 
+/// What a chosen folder is for, which decides how the chooser is titled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum FolderPurpose {
+    /// The folder Claude Code works in.
+    Claude,
+    /// A project's folder.
+    Project,
+}
+
+/// The chooser's title for `purpose`; `None` keeps the system's default.
+fn chooser_title(purpose: FolderPurpose) -> Option<&'static str> {
+    match purpose {
+        FolderPurpose::Claude => Some("Choose a folder for Claude Code"),
+        FolderPurpose::Project => None,
+    }
+}
+
 /// Asks the user for a folder and remembers it as one a session may start
 /// in. `None` if they cancelled. The dialog stays open as long as the user
 /// likes, so it waits on a blocking thread, not an async worker. The
 /// calling window owns the dialog, so it can't be used until the dialog
 /// closes.
 #[tauri::command]
-async fn pick_folder<R: Runtime>(window: tauri::WebviewWindow<R>) -> Option<String> {
+async fn pick_folder<R: Runtime>(
+    window: tauri::WebviewWindow<R>,
+    purpose: FolderPurpose,
+) -> Option<String> {
     tauri::async_runtime::spawn_blocking(move || {
         let app = window.app_handle();
-        let path = app
-            .dialog()
-            .file()
-            .set_parent(&window)
+        let mut dialog = app.dialog().file().set_parent(&window);
+        if let Some(title) = chooser_title(purpose) {
+            dialog = dialog.set_title(title);
+        }
+        let path = dialog
             .blocking_pick_folder()?
             .into_path()
             .map_err(|error| log::warn!("the picked folder isn't a path: {error}"))
@@ -378,6 +402,15 @@ fn set_setting(db: State<'_, Db>, setting: Setting) -> Result<(), DbError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pick_folder_titles_the_claude_chooser() {
+        assert_eq!(
+            chooser_title(FolderPurpose::Claude),
+            Some("Choose a folder for Claude Code")
+        );
+        assert_eq!(chooser_title(FolderPurpose::Project), None);
+    }
 
     #[test]
     fn saved_folders_that_cannot_be_read_count_as_none() {

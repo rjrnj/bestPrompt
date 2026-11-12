@@ -1,3 +1,4 @@
+import { Terminal } from "@xterm/xterm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
@@ -42,26 +43,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.resetAllMocks();
 });
-
-/** A matchMedia fake whose dark/light answer can be flipped. */
-function fakeColourScheme(dark: boolean) {
-  let matches = dark;
-  const listeners = new Set<(e: { matches: boolean }) => void>();
-  vi.stubGlobal("matchMedia", (query: string) => ({
-    get matches() {
-      return matches;
-    },
-    media: query,
-    addEventListener: (_: string, l: (e: { matches: boolean }) => void) =>
-      listeners.add(l),
-    removeEventListener: (_: string, l: (e: { matches: boolean }) => void) =>
-      listeners.delete(l),
-  }));
-  return (next: boolean) => {
-    matches = next;
-    listeners.forEach((l) => l({ matches: next }));
-  };
-}
 
 describe("the terminal registry", () => {
   it("the_prompt_is_passed_on_and_whether_it_was_prefilled_comes_back", async () => {
@@ -109,20 +90,24 @@ describe("the terminal registry", () => {
     disposeTerminal("s1");
   });
 
-  it("the_theme_follows_the_colour_scheme", async () => {
-    const setDark = fakeColourScheme(true);
-    vi.mocked(startSession).mockResolvedValue(session("s2"));
+  it.each([true, false])(
+    "the_terminal_is_dark_in_both_themes (system prefers dark: %s)",
+    async (dark) => {
+      vi.stubGlobal("matchMedia", (query: string) => ({
+        matches: dark,
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      }));
+      vi.mocked(startSession).mockResolvedValue(session("s2"));
 
-    await startTerminalSession("/work", noEvents);
-    const terminal = terminalFor("s2")!;
-    const dark = terminal.options.theme;
-    setDark(false);
-    const light = terminal.options.theme;
+      await startTerminalSession("/work", noEvents);
 
-    expect(dark?.background).not.toBe(light?.background);
-    expect(light?.background).toBe("#ffffff");
-    disposeTerminal("s2");
-  });
+      // Claude Code's default colours assume a dark background.
+      expect(terminalFor("s2")!.options.theme?.background).toBe("#0f172a");
+      disposeTerminal("s2");
+    },
+  );
 
   it("typing_before_the_id_is_known_is_sent_once_it_is", async () => {
     let resolve!: (started: StartedSession) => void;
@@ -189,20 +174,15 @@ describe("the terminal registry", () => {
     disposeTerminal("s11");
   });
 
-  it("a_failed_start_disposes_the_terminal", async () => {
-    const listening = new Set<unknown>();
-    vi.stubGlobal("matchMedia", () => ({
-      matches: false,
-      addEventListener: (_: string, l: unknown) => listening.add(l),
-      removeEventListener: (_: string, l: unknown) => listening.delete(l),
-    }));
+  it("a_failed_start_throws_its_error_and_disposes_its_terminal", async () => {
     vi.mocked(startSession).mockRejectedValue(new Error("no claude"));
+    const dispose = vi.spyOn(Terminal.prototype, "dispose");
 
     await expect(startTerminalSession("/work", noEvents)).rejects.toThrow(
       "no claude",
     );
-
-    expect(listening.size).toBe(0);
+    expect(dispose).toHaveBeenCalledTimes(1);
+    dispose.mockRestore();
   });
 
   it("output_after_dispose_is_dropped", async () => {

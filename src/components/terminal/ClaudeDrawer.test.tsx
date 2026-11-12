@@ -13,6 +13,7 @@ import {
   ApiError,
   claudeStatus,
   closeSession,
+  createProject,
   detectClaude,
   latestEntryProject,
   listFrameworks,
@@ -42,6 +43,7 @@ vi.mock("../../api", async (importOriginal) => ({
   pickFolder: vi.fn(),
   setProjectFolder: vi.fn(),
   closeSession: vi.fn(),
+  createProject: vi.fn(),
   savePromptEntry: vi.fn(),
 }));
 vi.mock("../../clipboard", () => ({ writeText: vi.fn() }));
@@ -129,6 +131,21 @@ async function renderApp(
   return user;
 }
 
+const EMPTY_TEXT =
+  "Claude Code is Anthropic's coding assistant. Start it here in a project's folder, and Send puts your prompt straight into it.";
+const EXPLAINER = "Choose a folder for Claude Code";
+
+/** The explainer that comes before Claude's folder chooser. */
+async function explainer() {
+  return within(await screen.findByRole("alertdialog", { name: EXPLAINER }));
+}
+
+async function chooseInExplainer(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(
+    (await explainer()).getByRole("button", { name: "Choose folder…" }),
+  );
+}
+
 function drawer() {
   return screen.getByRole("region", { name: "Claude Code" });
 }
@@ -194,7 +211,8 @@ describe("ClaudeDrawer", () => {
 
     // A cancelled pick starts nothing and says nothing.
     await start(user);
-    expect(pickFolder).toHaveBeenCalledTimes(1);
+    await chooseInExplainer(user);
+    await waitFor(() => expect(pickFolder).toHaveBeenCalledTimes(1));
     expect(startTerminalSession).not.toHaveBeenCalled();
     expect(screen.queryByRole("region", { name: /notifications/i })).toBeNull();
 
@@ -205,6 +223,7 @@ describe("ClaudeDrawer", () => {
     });
     startsWith("s1");
     await start(user);
+    await chooseInExplainer(user);
 
     expect(setProjectFolder).toHaveBeenCalledWith(bare.id, "/picked");
     expect(startTerminalSession).toHaveBeenCalledWith(
@@ -217,12 +236,187 @@ describe("ClaudeDrawer", () => {
     );
   });
 
+  it("the_empty_drawer_says_what_claude_code_is", async () => {
+    await renderApp();
+
+    expect(within(drawer()).getByText(EMPTY_TEXT)).toBeInTheDocument();
+    expect(
+      within(drawer()).getByRole("button", { name: "Start Claude Code" }),
+    ).toBeInTheDocument();
+  });
+
+  it("starting_without_a_folder_explains_before_choosing", async () => {
+    const bare = project("p-bare", "bare", null);
+    vi.mocked(pickFolder).mockResolvedValue("/picked");
+    vi.mocked(setProjectFolder).mockResolvedValue({
+      ...bare,
+      folder: "/picked",
+    });
+    startsWith("s1", "s2");
+    const user = await renderApp([bare], bare.id);
+
+    await start(user);
+
+    const dialog = await explainer();
+    expect(
+      dialog.getByText(
+        "Claude Code works inside one folder, usually your project's. It can read and change files there. Choose the folder you want it to work in.",
+      ),
+    ).toBeInTheDocument();
+    expect(pickFolder).not.toHaveBeenCalled();
+    await user.click(dialog.getByRole("button", { name: "Choose folder…" }));
+
+    await waitFor(() =>
+      expect(pickFolder).toHaveBeenCalledExactlyOnceWith("claude"),
+    );
+    expect(setProjectFolder).toHaveBeenCalledWith(bare.id, "/picked");
+    expect(await within(drawer()).findByTestId("terminal")).toHaveTextContent(
+      "s1",
+    );
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("no_project_explains_before_choosing_too", async () => {
+    vi.mocked(pickFolder).mockResolvedValue("/tmp/scratch");
+    startsWith("s1");
+    const user = await renderApp([api], null);
+
+    await start(user);
+    await chooseInExplainer(user);
+
+    await waitFor(() => expect(pickFolder).toHaveBeenCalledWith("claude"));
+    expect(await within(drawer()).findByTestId("terminal")).toHaveTextContent(
+      "s1",
+    );
+  });
+
+  it("the_drawers_choose_folder_explains_first", async () => {
+    const gone = project("p-gone", "gone", "/home/me/gone");
+    vi.mocked(startTerminalSession).mockRejectedValueOnce(
+      new ApiError("invalid", "That folder no longer exists."),
+    );
+    const user = await renderApp([gone], gone.id);
+    await start(user);
+
+    await user.click(
+      await within(drawer()).findByRole("button", { name: "Choose folder…" }),
+    );
+
+    expect(await explainer()).toBeDefined();
+    expect(pickFolder).not.toHaveBeenCalled();
+  });
+
+  it("cancelling_the_explainer_starts_nothing", async () => {
+    const bare = project("p-bare", "bare", null);
+    const user = await renderApp([bare], bare.id);
+
+    // Cancel, then Escape.
+    await start(user);
+    await user.click(
+      (await explainer()).getByRole("button", { name: "Cancel" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await start(user);
+    await explainer();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+
+    expect(pickFolder).not.toHaveBeenCalled();
+    expect(startTerminalSession).not.toHaveBeenCalled();
+    expect(screen.queryByRole("region", { name: /notifications/i })).toBeNull();
+    // The button is available again.
+    expect(
+      within(drawer()).getByRole("button", { name: "Start Claude Code" }),
+    ).not.toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("closing_the_explainer_returns_the_focus_to_what_had_it", async () => {
+    const bare = project("p-bare", "bare", null);
+    const user = await renderApp([bare], bare.id);
+    const startButton = await within(drawer()).findByRole("button", {
+      name: "Start Claude Code",
+    });
+
+    // Cancel, then Escape.
+    await user.click(startButton);
+    await user.click(
+      (await explainer()).getByRole("button", { name: "Cancel" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(startButton).toHaveFocus();
+
+    startButton.blur();
+    await user.click(startButton);
+    await explainer();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(startButton).toHaveFocus();
+  });
+
+  it("a_cancelled_chooser_after_the_explainer_returns_the_focus", async () => {
+    const bare = project("p-bare", "bare", null);
+    vi.mocked(pickFolder).mockResolvedValue(null);
+    const user = await renderApp([bare], bare.id);
+    const startButton = await within(drawer()).findByRole("button", {
+      name: "Start Claude Code",
+    });
+
+    await user.click(startButton);
+    await user.click(
+      (await explainer()).getByRole("button", { name: "Choose folder…" }),
+    );
+    await waitFor(() => expect(pickFolder).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+
+    expect(startTerminalSession).not.toHaveBeenCalled();
+    expect(startButton).toHaveFocus();
+  });
+
+  it("project_dialogs_open_the_chooser_without_the_explainer", async () => {
+    vi.mocked(pickFolder).mockResolvedValue("/home/me/docs");
+    vi.mocked(createProject).mockResolvedValue(
+      project("p-docs", "Docs", "/home/me/docs"),
+    );
+    vi.mocked(setProjectFolder).mockResolvedValue({
+      ...api,
+      folder: "/home/me/docs",
+    });
+    const user = await renderApp();
+
+    await user.click(screen.getByRole("combobox", { name: "Project" }));
+    await user.click(
+      await screen.findByRole("option", { name: "New project…" }),
+    );
+    const created = await screen.findByRole("dialog", { name: "New project" });
+    await user.click(
+      within(created).getByRole("button", { name: "Choose folder…" }),
+    );
+    await waitFor(() => expect(pickFolder).toHaveBeenLastCalledWith("project"));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await user.click(within(created).getByRole("button", { name: "Cancel" }));
+
+    await user.click(screen.getByRole("combobox", { name: "Project" }));
+    await user.click(
+      await screen.findByRole("option", { name: "Manage projects…" }),
+    );
+    const manage = await screen.findByRole("dialog", {
+      name: "Manage projects",
+    });
+    await user.click(
+      within(manage).getByRole("button", { name: "Folder… for api" }),
+    );
+    await waitFor(() => expect(pickFolder).toHaveBeenCalledTimes(2));
+    expect(pickFolder).toHaveBeenLastCalledWith("project");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
   it("no_project_uses_a_picked_folder_for_this_session_only", async () => {
     vi.mocked(pickFolder).mockResolvedValue("/tmp/scratch");
     startsWith("s1", "s2");
     const user = await renderApp([api], null);
 
     await start(user);
+    await chooseInExplainer(user);
 
     expect(startTerminalSession).toHaveBeenCalledWith(
       "/tmp/scratch",
@@ -259,9 +453,7 @@ describe("ClaudeDrawer", () => {
 
     await selectProject(user, "web");
     expect(within(drawer()).queryByTestId("terminal")).toBeNull();
-    expect(drawer()).toHaveTextContent(
-      "No Claude Code session for this project.",
-    );
+    expect(drawer()).toHaveTextContent(EMPTY_TEXT);
     await start(user);
     expect(await within(drawer()).findByTestId("terminal")).toHaveTextContent(
       "s2",
@@ -332,11 +524,7 @@ describe("ClaudeDrawer", () => {
       }),
     );
 
-    await waitFor(() =>
-      expect(drawer()).toHaveTextContent(
-        "No Claude Code session for this project.",
-      ),
-    );
+    await waitFor(() => expect(drawer()).toHaveTextContent(EMPTY_TEXT));
     expect(closeSession).toHaveBeenCalledWith("s1");
     expect(disposeTerminal).toHaveBeenCalledWith("s1");
     expect(within(drawer()).queryByTestId("terminal")).toBeNull();
@@ -450,6 +638,7 @@ describe("ClaudeDrawer", () => {
         name: "Restart",
       }),
     );
+    await chooseInExplainer(user);
 
     await waitFor(() => expect(pickFolder).toHaveBeenCalledTimes(1));
     // The pick was cancelled: the running session is left alone.
@@ -554,6 +743,7 @@ describe("ClaudeDrawer", () => {
     });
     startsWith("s1");
     await user.click(choose);
+    await chooseInExplainer(user);
 
     expect(setProjectFolder).toHaveBeenCalledWith(gone.id, "/home/me/moved");
     expect(await within(drawer()).findByTestId("terminal")).toHaveTextContent(
@@ -616,9 +806,7 @@ describe("ClaudeDrawer", () => {
     ).toBeInTheDocument();
     await user.click(within(manage).getByRole("button", { name: "Done" }));
 
-    expect(drawer()).toHaveTextContent(
-      "No Claude Code session for this project.",
-    );
+    expect(drawer()).toHaveTextContent(EMPTY_TEXT);
     startsWith("s1");
     await start(user);
     expect(await within(drawer()).findByTestId("terminal")).toHaveTextContent(
