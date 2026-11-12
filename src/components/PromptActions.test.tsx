@@ -315,8 +315,8 @@ describe("PromptActions", () => {
 });
 
 const SEND = "Send to Claude Code";
-const SENT =
-  "Sent to Claude Code. Answer any questions it asks, then press Enter to run your prompt.";
+const SENT_LINE = "Sent to Claude Code.";
+const PASTE_HINT = "Claude Code is already running. Paste into it with Ctrl+V.";
 const ALREADY_RUNNING =
   "Claude Code is already running, so your prompt is copied. Paste it into Claude with Ctrl+V.";
 
@@ -440,7 +440,8 @@ describe("Send to Claude Code", () => {
       expect.any(Function),
       { prompt: PROMPT },
     );
-    await vi.waitFor(() => expect(toastTexts()).toEqual([SENT]));
+    await vi.waitFor(() => expect(focus.s1).toHaveBeenCalled());
+    expect(toastTexts()).toEqual([]);
     expect(appState.drawer.open).toBe(true);
     expect(
       screen.queryByRole("button", { name: "Show Claude Code" }),
@@ -512,11 +513,13 @@ describe("Send to Claude Code", () => {
     act(() => appDispatch({ type: "projectSelected", id: web.id }));
     await act(async () => finish({ id: "s1", prefilled: true }));
 
-    await vi.waitFor(() => expect(toastTexts()).toEqual([SENT]));
-    expect(appState.sessions[api.id]).toMatchObject({
-      id: "s1",
-      state: "running",
-    });
+    await vi.waitFor(() =>
+      expect(appState.sessions[api.id]).toMatchObject({
+        id: "s1",
+        state: "running",
+      }),
+    );
+    expect(toastTexts()).toEqual([]);
     expect(appState.selectedProjectId).toBe(web.id);
     expect(focus.s1).toBeUndefined();
     expect(writeText).not.toHaveBeenCalled();
@@ -561,32 +564,66 @@ describe("Send to Claude Code", () => {
   });
 
   it("send_is_unavailable_while_a_session_runs_and_says_to_paste", async () => {
-    startsWith({ id: "s1", prefilled: true });
+    startsWith({ id: "s1", prefilled: false });
     const send = await renderSend();
     expect(screen.queryByText(/already running/)).toBeNull();
     expect(send).not.toHaveAttribute("aria-describedby");
 
-    await userEvent.click(send);
+    // A session started with Start, so nothing was sent to it.
+    await act(() => appActions.startSession(api.id));
     await vi.waitFor(() => expectOff(send));
     await userEvent.click(send);
 
     expect(startTerminalSession).toHaveBeenCalledTimes(1);
-    expect(savePromptEntry).toHaveBeenCalledTimes(1);
-    const hint = screen.getByText(
-      "Claude Code is already running. Paste into it with Ctrl+V.",
-    );
+    expect(savePromptEntry).not.toHaveBeenCalled();
+    const hint = screen.getByText(PASTE_HINT);
     expect(send).toHaveAttribute("aria-describedby", hint.id);
-    expect(send).toHaveAccessibleDescription(
-      "Claude Code is already running. Paste into it with Ctrl+V.",
-    );
+    expect(send).toHaveAccessibleDescription(PASTE_HINT);
   });
 
-  it("send_is_unavailable_while_a_session_runs_and_says_to_paste on Linux", async () => {
-    vi.mocked(currentPlatform).mockReturnValue("linux");
+  it("a_prefilled_send_says_sent_beside_the_button", async () => {
     startsWith({ id: "s1", prefilled: true });
     const send = await renderSend();
 
     await userEvent.click(send);
+
+    const line = await screen.findByText(SENT_LINE);
+    expectOff(send);
+    expect(send).toHaveAttribute("aria-describedby", line.id);
+    expect(send).toHaveAccessibleDescription(SENT_LINE);
+    expect(screen.queryByText(/already running/)).toBeNull();
+  });
+
+  it("editing_the_prompt_brings_back_the_paste_hint", async () => {
+    startsWith({ id: "s1", prefilled: true });
+    const send = await renderSend();
+    await userEvent.click(send);
+    await screen.findByText(SENT_LINE);
+
+    await userEvent.type(screen.getByRole("textbox", { name: "Role" }), "s");
+
+    expect(screen.queryByText(SENT_LINE)).toBeNull();
+    const hint = screen.getByText(PASTE_HINT);
+    expect(send).toHaveAttribute("aria-describedby", hint.id);
+  });
+
+  it("a_copied_send_keeps_the_paste_hint", async () => {
+    startsWith({ id: "s1", prefilled: false });
+    const send = await renderSend();
+
+    await userEvent.click(send);
+
+    const hint = await screen.findByText(PASTE_HINT);
+    expect(screen.queryByText(SENT_LINE)).toBeNull();
+    expect(send).toHaveAttribute("aria-describedby", hint.id);
+  });
+
+  it("send_is_unavailable_while_a_session_runs_and_says_to_paste on Linux", async () => {
+    vi.mocked(currentPlatform).mockReturnValue("linux");
+    startsWith({ id: "s1", prefilled: false });
+    const send = await renderSend();
+
+    await act(() => appActions.startSession(api.id));
 
     expect(
       await screen.findByText(
@@ -740,10 +777,7 @@ describe("Send to Claude Code", () => {
     await userEvent.click(send);
 
     await vi.waitFor(() =>
-      expect(toastTexts()).toEqual([
-        SENT,
-        "Couldn't save to History: disk full",
-      ]),
+      expect(toastTexts()).toEqual(["Couldn't save to History: disk full"]),
     );
     expect(startTerminalSession).toHaveBeenCalledWith(
       "/home/me/api",
@@ -768,7 +802,8 @@ describe("Send to Claude Code", () => {
 
     expect(savePromptEntry).toHaveBeenCalledTimes(1);
     expect(startTerminalSession).toHaveBeenCalledTimes(1);
-    await vi.waitFor(() => expect(toastTexts()).toEqual([SENT]));
+    await vi.waitFor(() => expect(appState.sessions[api.id]).toBeDefined());
+    expect(toastTexts()).toEqual([]);
   });
 
   it("a_failed_save_with_no_start_still_says_so", async () => {
@@ -946,7 +981,7 @@ describe("Send to Claude Code", () => {
 
     expect(savePromptEntry).toHaveBeenCalledTimes(1);
     expect(startTerminalSession).toHaveBeenCalledTimes(1);
-    expect(toastTexts()).toEqual([SENT]);
+    expect(toastTexts()).toEqual([]);
   });
 
   it("send_does_nothing_while_the_session_runs_even_without_the_button", async () => {

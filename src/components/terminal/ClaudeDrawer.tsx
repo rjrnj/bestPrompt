@@ -36,6 +36,7 @@ import {
 } from "../styles";
 import { drawerShare, heightFor, minShare, steppedShare } from "./drawerHeight";
 import { SessionTerminal } from "./SessionTerminal";
+import { WaitingNote } from "./WaitingNote";
 
 const smallButton =
   "rounded-md border border-slate-400 bg-white px-2 py-0.5 text-xs font-medium text-slate-900 not-aria-disabled:hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:not-aria-disabled:hover:bg-slate-700";
@@ -173,6 +174,7 @@ export function ClaudeDrawer({ area }: { area: HTMLElement | null }) {
           </>
         )}
       </div>
+      <WaitingNote />
       <div ref={body} className="min-h-0 flex-1">
         <Body
           sessionKey={key}

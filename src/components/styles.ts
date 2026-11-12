@@ -28,6 +28,12 @@ export const linkButton =
 export const textInput =
   "block w-full rounded-md border border-slate-400 bg-white px-3 py-1.5 text-sm text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100";
 
+/** The bar under the drawer's header that says a prompt is waiting. */
+export const noteBar =
+  "flex items-start gap-2 border-b border-sky-200 bg-sky-50 px-3 py-1 text-sm text-sky-950 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-100";
+export const noteCloseButton =
+  "flex-none rounded p-1 text-sky-900 hover:bg-sky-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:text-sky-100 dark:hover:bg-sky-900";
+
 // Dialogs sit below the toasts (z-50), so a failure toasted while a dialog
 // is open is not dimmed by its overlay. Dialogs are portalled outside the
 // app's root, so the panel sets its own colours.

@@ -509,7 +509,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       // session is still running.
       const exit = earlyExit as { code: number | null } | null;
       flushSync(() => {
-        dispatch({ type: "sessionStarted", key, id, folder });
+        // Only a prompt Claude took as a prefill is waiting in the session.
+        const sent = started.prefilled ? prompt : undefined;
+        dispatch({ type: "sessionStarted", key, id, folder, sent });
         dispatch({ type: "drawerToggled", open: true });
         if (exit !== null) {
           dispatch({ type: "sessionExited", key, id, code: exit.code });
@@ -822,12 +824,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             const { terminalFor } = await terminals();
             const selected = latest.current.selectedProjectId ?? NO_PROJECT_KEY;
             if (selected === key) terminalFor(started.id)?.focus();
-            dispatch(
-              toast(
-                "info",
-                "Sent to Claude Code. Answer any questions it asks, then press Enter to run your prompt.",
-              ),
-            );
           }
         } else if (started !== null) {
           // Too long, or a form Claude can't be handed: it started without

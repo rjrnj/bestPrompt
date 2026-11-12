@@ -18,6 +18,10 @@ export type Session = {
   folder: string;
   state: "running" | "exited";
   code: number | null;
+  /** The rendered prompt prefilled into this session, if one was. */
+  sent: string | null;
+  /** Whether the note that the prompt is waiting is showing. */
+  note: boolean;
 };
 
 /** The key of No project's session; projects use their id. */
@@ -144,7 +148,15 @@ export type Action =
   | { type: "toastAdded"; kind: Toast["kind"]; message: string }
   | { type: "toastDismissed"; id: number }
   | { type: "claudeDetected"; found: boolean }
-  | { type: "sessionStarted"; key: string; id: string; folder: string }
+  | {
+      type: "sessionStarted";
+      key: string;
+      id: string;
+      folder: string;
+      /** The prompt prefilled into the session, which shows its note. */
+      sent?: string;
+    }
+  | { type: "waitingNoteClosed"; key: string; id: string }
   | { type: "sessionExited"; key: string; id: string; code: number | null }
   | { type: "sessionClosed"; key: string }
   | { type: "sessionFolderMissing"; key: string }
@@ -469,6 +481,8 @@ export function reducer(state: State, action: Action): State {
             folder: action.folder,
             state: "running",
             code: null,
+            sent: action.sent ?? null,
+            note: action.sent !== undefined,
           },
         },
         missingFolders: state.missingFolders.filter((k) => k !== action.key),
@@ -482,7 +496,24 @@ export function reducer(state: State, action: Action): State {
         ...state,
         sessions: {
           ...state.sessions,
-          [action.key]: { ...session, state: "exited", code: action.code },
+          [action.key]: {
+            ...session,
+            state: "exited",
+            code: action.code,
+            note: false,
+          },
+        },
+      };
+    }
+    case "waitingNoteClosed": {
+      if (!hasOwn(state.sessions, action.key)) return state;
+      const session = state.sessions[action.key];
+      if (session.id !== action.id) return state;
+      return {
+        ...state,
+        sessions: {
+          ...state.sessions,
+          [action.key]: { ...session, note: false },
         },
       };
     }

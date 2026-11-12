@@ -58,7 +58,7 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(screen.getByRole("status")).toHaveTextContent("Loading frameworks");
+    expect(screen.getByText("Loading frameworks…")).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
       "bestPrompt",
     );
@@ -72,7 +72,7 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent("no db");
-    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByText("Loading frameworks…")).toBeNull();
     expect(screen.queryByRole("combobox")).toBeNull();
   });
 
@@ -91,7 +91,7 @@ describe("App", () => {
     expect(screen.getByRole("region", { name: "Preview" })).toHaveTextContent(
       "Fill in a section to see the prompt.",
     );
-    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByText("Loading frameworks…")).toBeNull();
   });
 
   it("hides the Builder's pickers on the History tab", async () => {
