@@ -60,6 +60,7 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
         delete_project,
         claude_status,
         detect_claude,
+        open_help,
         pick_folder,
         start_session,
         write_session,
@@ -243,12 +244,34 @@ fn claude_status(claude: State<'_, ClaudeState>) -> ClaudeStatus {
     claude.status()
 }
 
-/// Looks for the CLI again, once startup detection has read the
-/// environment it searches.
+/// Looks for the CLI again, once startup detection has finished, with a
+/// freshly read environment.
 #[tauri::command(async)]
 fn detect_claude(claude: State<'_, ClaudeState>) -> ClaudeStatus {
     claude.wait_until_detected();
-    claude.detect()
+    claude.redetect()
+}
+
+/// A help page the app can open in the browser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum HelpPage {
+    /// How to install Claude Code.
+    ClaudeSetup,
+}
+
+/// Where `page` lives. The webview names a page, never an address.
+fn help_url(page: HelpPage) -> &'static str {
+    match page {
+        HelpPage::ClaudeSetup => "https://code.claude.com/docs/en/setup",
+    }
+}
+
+/// Opens a help page in the default browser.
+#[tauri::command(async)]
+fn open_help(page: HelpPage) -> Result<(), String> {
+    tauri_plugin_opener::open_url(help_url(page), None::<&str>).map_err(|error| error.to_string())
 }
 
 /// What a chosen folder is for, which decides how the chooser is titled.
@@ -410,6 +433,14 @@ mod tests {
             Some("Choose a folder for Claude Code")
         );
         assert_eq!(chooser_title(FolderPurpose::Project), None);
+    }
+
+    #[test]
+    fn open_help_maps_only_known_pages() {
+        assert_eq!(
+            help_url(HelpPage::ClaudeSetup),
+            "https://code.claude.com/docs/en/setup"
+        );
     }
 
     #[test]

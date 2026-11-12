@@ -18,6 +18,7 @@ import {
   latestEntryProject,
   listFrameworks,
   listProjects,
+  openHelp,
   pickFolder,
   savePromptEntry,
   setProjectFolder,
@@ -26,6 +27,8 @@ import type { Framework } from "../../bindings/Framework";
 import type { Project } from "../../bindings/Project";
 import type { PromptEntry } from "../../bindings/PromptEntry";
 import type { SessionEvent } from "../../bindings/SessionEvent";
+import { writeText } from "../../clipboard";
+import { currentPlatform } from "../../terminal/keys";
 import {
   disposeTerminal,
   startTerminalSession,
@@ -40,6 +43,7 @@ vi.mock("../../api", async (importOriginal) => ({
   listPromptEntries: vi.fn().mockResolvedValue([]),
   claudeStatus: vi.fn(),
   detectClaude: vi.fn(),
+  openHelp: vi.fn(),
   pickFolder: vi.fn(),
   setProjectFolder: vi.fn(),
   closeSession: vi.fn(),
@@ -47,6 +51,10 @@ vi.mock("../../api", async (importOriginal) => ({
   savePromptEntry: vi.fn(),
 }));
 vi.mock("../../clipboard", () => ({ writeText: vi.fn() }));
+vi.mock("../../terminal/keys", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../terminal/keys")>()),
+  currentPlatform: vi.fn(),
+}));
 // No real xterm: jsdom can't lay one out. The view shows which session it
 // was given instead.
 vi.mock("../../terminal/terminals", () => ({
@@ -171,6 +179,7 @@ async function selectProject(
 beforeEach(() => {
   exits = {};
   view.broken = false;
+  vi.mocked(currentPlatform).mockReturnValue("windows");
   vi.mocked(listFrameworks).mockResolvedValue([rtf]);
   vi.mocked(claudeStatus).mockResolvedValue({
     found: true,
@@ -181,6 +190,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.resetAllMocks();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -698,6 +708,269 @@ describe("ClaudeDrawer", () => {
       }),
     ).toBeInTheDocument();
     expect(drawer()).not.toHaveTextContent("wasn't found");
+  });
+
+  it("missing_claude_shows_the_install_command_for_this_system", async () => {
+    vi.mocked(claudeStatus).mockResolvedValue({ found: false, path: null });
+    await renderApp();
+
+    expect(await within(drawer()).findByText("In PowerShell:")).toBeVisible();
+    expect(
+      within(drawer()).getByText("irm https://claude.ai/install.ps1 | iex"),
+    ).toBeVisible();
+  });
+
+  it("missing_claude_shows_the_install_command_for_linux", async () => {
+    vi.mocked(currentPlatform).mockReturnValue("linux");
+    vi.mocked(claudeStatus).mockResolvedValue({ found: false, path: null });
+    await renderApp();
+
+    expect(await within(drawer()).findByText("In Terminal:")).toBeVisible();
+    expect(
+      within(drawer()).getByText(
+        "curl -fsSL https://claude.ai/install.sh | bash",
+      ),
+    ).toBeVisible();
+  });
+
+  it("copying_the_install_command", async () => {
+    vi.mocked(claudeStatus).mockResolvedValue({ found: false, path: null });
+    vi.mocked(writeText).mockResolvedValue();
+    const user = await renderApp();
+
+    await user.click(
+      await within(drawer()).findByRole("button", {
+        name: "Copy install command",
+      }),
+    );
+
+    expect(writeText).toHaveBeenCalledWith(
+      "irm https://claude.ai/install.ps1 | iex",
+    );
+    expect(await screen.findByText("Copied.")).toBeInTheDocument();
+  });
+
+  it("a_failed_copy_of_the_install_command_says_why", async () => {
+    vi.mocked(claudeStatus).mockResolvedValue({ found: false, path: null });
+    vi.mocked(writeText).mockRejectedValue(new Error("no clipboard"));
+    const user = await renderApp();
+
+    await user.click(
+      await within(drawer()).findByRole("button", {
+        name: "Copy install command",
+      }),
+    );
+
+    expect(
+      await screen.findByText("Couldn't copy to the clipboard: no clipboard"),
+    ).toBeInTheDocument();
+  });
+
+  it("the_install_link_opens_the_setup_page", async () => {
+    vi.mocked(claudeStatus).mockResolvedValue({ found: false, path: null });
+    vi.mocked(openHelp).mockResolvedValue();
+    const user = await renderApp();
+
+    await user.click(
+      await within(drawer()).findByRole("button", {
+        name: "How to install Claude Code",
+      }),
+    );
+
+    expect(openHelp).toHaveBeenCalledWith("claudeSetup");
+  });
+
+  it("a_failed_install_link_toasts_the_error", async () => {
+    vi.mocked(claudeStatus).mockResolvedValue({ found: false, path: null });
+    vi.mocked(openHelp).mockRejectedValue(new Error("no browser"));
+    const user = await renderApp();
+
+    await user.click(
+      await within(drawer()).findByRole("button", {
+        name: "How to install Claude Code",
+      }),
+    );
+
+    expect(await screen.findByText("no browser")).toBeInTheDocument();
+  });
+
+  it("look_again_shows_looking_then_still_not_found_with_the_time", async () => {
+    vi.mocked(claudeStatus).mockResolvedValue({ found: false, path: null });
+    const user = await renderApp();
+    let answer: (status: { found: boolean; path: null }) => void = () => {};
+    vi.mocked(detectClaude).mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    const again = await within(drawer()).findByRole("button", {
+      name: "Look again",
+    });
+    expect(drawer()).not.toHaveTextContent("Still not found");
+
+    await user.click(again);
+
+    const looking = within(drawer()).getByRole("button", { name: "Looking…" });
+    expect(looking).toHaveAttribute("aria-disabled", "true");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 0, 2, 15, 7));
+    await act(async () => answer({ found: false, path: null }));
+
+    const time = new Date(2026, 0, 2, 15, 7).toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    await waitFor(() =>
+      expect(drawer()).toHaveTextContent(
+        `Still not found. Last checked at ${time}.`,
+      ),
+    );
+    expect(
+      within(drawer()).getByRole("button", { name: "Look again" }),
+    ).not.toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("look_again_twice_shows_one_check_and_the_last_answer", async () => {
+    vi.mocked(claudeStatus).mockResolvedValue({ found: false, path: null });
+    const user = await renderApp();
+    let answer: (status: { found: boolean; path: null }) => void = () => {};
+    vi.mocked(detectClaude).mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+
+    await user.click(
+      await within(drawer()).findByRole("button", { name: "Look again" }),
+    );
+    await user.click(
+      within(drawer()).getByRole("button", { name: "Looking…" }),
+    );
+    await act(async () => answer({ found: false, path: null }));
+
+    expect(detectClaude).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(drawer()).toHaveTextContent("Still not found. Last checked at"),
+    );
+  });
+
+  it("look_again_that_finds_claude_shows_start", async () => {
+    vi.mocked(claudeStatus).mockResolvedValue({ found: false, path: null });
+    vi.mocked(detectClaude).mockResolvedValueOnce({ found: false, path: null });
+    const user = await renderApp();
+    await user.click(
+      await within(drawer()).findByRole("button", { name: "Look again" }),
+    );
+    await within(drawer()).findByText(/Still not found/);
+
+    vi.mocked(detectClaude).mockResolvedValueOnce({
+      found: true,
+      path: "/bin/claude",
+    });
+    await user.click(
+      within(drawer()).getByRole("button", { name: "Look again" }),
+    );
+
+    expect(
+      await within(drawer()).findByRole("button", {
+        name: "Start Claude Code",
+      }),
+    ).toBeInTheDocument();
+    expect(drawer()).not.toHaveTextContent("Still not found");
+  });
+
+  it("look_again_that_finds_claude_moves_the_focus_to_start", async () => {
+    vi.mocked(claudeStatus).mockResolvedValue({ found: false, path: null });
+    vi.mocked(detectClaude).mockResolvedValue({
+      found: true,
+      path: "/bin/claude",
+    });
+    const user = await renderApp();
+    await user.click(
+      await within(drawer()).findByRole("button", { name: "Look again" }),
+    );
+
+    const startButton = await within(drawer()).findByRole("button", {
+      name: "Start Claude Code",
+    });
+    expect(startButton).toHaveFocus();
+  });
+
+  it("a_look_again_that_misses_keeps_the_focus_on_its_button", async () => {
+    vi.mocked(claudeStatus).mockResolvedValue({ found: false, path: null });
+    vi.mocked(detectClaude).mockResolvedValueOnce({ found: false, path: null });
+    const user = await renderApp();
+    const again = await within(drawer()).findByRole("button", {
+      name: "Look again",
+    });
+    await user.click(again);
+    await within(drawer()).findByText(/Still not found/);
+    expect(again).toHaveFocus();
+  });
+
+  it("the_still_not_found_line_is_a_status_that_is_empty_until_answered", async () => {
+    vi.mocked(claudeStatus).mockResolvedValue({ found: false, path: null });
+    vi.mocked(detectClaude).mockResolvedValue({ found: false, path: null });
+    const user = await renderApp();
+    const again = await within(drawer()).findByRole("button", {
+      name: "Look again",
+    });
+    const status = within(drawer()).getByRole("status");
+    expect(status).toBeEmptyDOMElement();
+
+    await user.click(again);
+
+    await waitFor(() =>
+      expect(status).toHaveTextContent("Still not found. Last checked at"),
+    );
+    // The same element, so a screen reader hears the change.
+    expect(within(drawer()).getByRole("status")).toBe(status);
+  });
+
+  it("look_again_shows_looking_for_at_least_400ms", async () => {
+    vi.mocked(claudeStatus).mockResolvedValue({ found: false, path: null });
+    vi.mocked(detectClaude).mockResolvedValue({ found: false, path: null });
+    await renderApp();
+    const again = await within(drawer()).findByRole("button", {
+      name: "Look again",
+    });
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(again);
+      await act(async () => vi.advanceTimersByTime(399));
+      // Answered long ago, yet still looking, and a second press is ignored.
+      expect(
+        within(drawer()).getByRole("button", { name: "Looking…" }),
+      ).toBeInTheDocument();
+      fireEvent.click(
+        within(drawer()).getByRole("button", { name: "Looking…" }),
+      );
+      expect(detectClaude).toHaveBeenCalledTimes(1);
+
+      await act(async () => vi.advanceTimersByTime(1));
+      expect(
+        within(drawer()).getByRole("button", { name: "Look again" }),
+      ).toBeInTheDocument();
+      expect(drawer()).toHaveTextContent("Still not found");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a_failed_look_again_toasts_and_stops_looking", async () => {
+    vi.mocked(claudeStatus).mockResolvedValue({ found: false, path: null });
+    vi.mocked(detectClaude).mockRejectedValue(new Error("detect failed"));
+    const user = await renderApp();
+
+    await user.click(
+      await within(drawer()).findByRole("button", { name: "Look again" }),
+    );
+
+    expect(await screen.findByText("detect failed")).toBeInTheDocument();
+    expect(
+      within(drawer()).getByRole("button", { name: "Look again" }),
+    ).toBeInTheDocument();
   });
 
   it("while_detecting_neither_missing_nor_send_shows", async () => {

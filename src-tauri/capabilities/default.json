@@ -26,6 +26,7 @@
     "allow-delete-project",
     "allow-claude-status",
     "allow-detect-claude",
+    "allow-open-help",
     "allow-pick-folder",
     "allow-start-session",
     "allow-write-session",

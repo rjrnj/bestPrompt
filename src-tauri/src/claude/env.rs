@@ -60,14 +60,20 @@ pub fn shell_env_for_sessions(mut env: Env, runtime_dir: Option<OsString>) -> En
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const RESOLVING_VAR: &str = "BESTPROMPT_RESOLVING_ENV";
 
-/// The environment sessions start from: the login shell's on Linux, the
-/// app's own everywhere else or when the shell can't be read.
-pub fn base_env() -> Env {
+/// The environment sessions start from, read now: the login shell's on
+/// Linux, the app's own everywhere else. None when the login shell can't
+/// be read.
+pub fn read_base_env() -> Option<Env> {
     #[cfg(target_os = "linux")]
-    if let Some(env) = linux::login_shell_env() {
-        return env;
-    }
-    std::env::vars_os().collect()
+    return linux::login_shell_env();
+    #[cfg(not(target_os = "linux"))]
+    Some(std::env::vars_os().collect())
+}
+
+/// `read_base_env`, falling back to the app's own environment when the
+/// login shell can't be read.
+pub fn base_env() -> Env {
+    read_base_env().unwrap_or_else(|| std::env::vars_os().collect())
 }
 
 /// Reads the login shell's output until both markers have arrived, or the

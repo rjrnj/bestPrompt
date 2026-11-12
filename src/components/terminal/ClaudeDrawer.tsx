@@ -15,12 +15,15 @@ import {
   useAppActions,
   useAppDispatch,
   useAppState,
+  useLookAgain,
 } from "../../state/AppState";
 import {
   listedProjects,
   NO_PROJECT_KEY,
   type Session,
 } from "../../state/reducer";
+import { installCommand } from "../../terminal/install";
+import { currentPlatform } from "../../terminal/keys";
 import { VIEWS_TABLIST_ID } from "../AppTabs";
 import { FolderText } from "../FolderText";
 import { SHOW_DRAWER_ID } from "../PromptActions";
@@ -31,6 +34,7 @@ import {
   dialogOverlay,
   dialogPanel,
   dialogTitle,
+  linkButton,
   primaryButton,
   secondaryButton,
 } from "../styles";
@@ -80,6 +84,19 @@ export function ClaudeDrawer({ area }: { area: HTMLElement | null }) {
   useEffect(() => {
     focusAfterClose.current = null;
   }, [key]);
+  // A Look again the user pressed that finds Claude Code: its button goes,
+  // and the Start button that replaces it takes the focus.
+  const onLookAgain = useCallback(
+    (lookedKey: string, looking: Promise<boolean>) => {
+      focusAfterClose.current = lookedKey;
+      void looking.then((found) => {
+        if (!found && focusAfterClose.current === lookedKey) {
+          focusAfterClose.current = null;
+        }
+      });
+    },
+    [],
+  );
   const { busyKeys, runFor } = useBusyKeys();
   const header = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
@@ -181,6 +198,7 @@ export function ClaudeDrawer({ area }: { area: HTMLElement | null }) {
           session={session}
           status={claude.status}
           takeFocus={takeFocus}
+          onLookAgain={onLookAgain}
           busy={busyKeys.has(key)}
           runFor={runFor}
         />
@@ -391,6 +409,7 @@ function Body({
   session,
   status,
   takeFocus,
+  onLookAgain,
   busy,
   runFor,
 }: {
@@ -399,6 +418,8 @@ function Body({
   status: "unknown" | "found" | "missing";
   /** True once when `key`'s button appearing now should take the focus. */
   takeFocus: (key: string) => boolean;
+  /** Told of each Look again pressed, with whether it found Claude Code. */
+  onLookAgain: (key: string, looking: Promise<boolean>) => void;
   /** Whether an action for this key is under way. */
   busy: boolean;
   runFor: (key: string, action: () => Promise<unknown>) => void;
@@ -406,6 +427,7 @@ function Body({
   const state = useAppState();
   const { startSession, chooseFolderAndStart, restartSession, lookAgain } =
     useAppActions();
+  const { lookingAgain, lastCheckedAt } = useLookAgain();
   const missingFolder = state.missingFolders.includes(sessionKey);
   const action = (run: () => Promise<unknown>) => () => runFor(sessionKey, run);
   const takeOwnFocus = useCallback(
@@ -450,15 +472,29 @@ function Body({
   }
   if (status === "missing") {
     return (
-      <Note text="Claude Code wasn't found. Install it, then Look again.">
-        <ActionButton
-          busy={busy}
-          onClick={action(lookAgain)}
-          takeFocus={takeOwnFocus}
-        >
-          Look again
-        </ActionButton>
-      </Note>
+      <div className="flex h-full min-w-0 flex-col gap-2 overflow-y-auto p-3">
+        <div>
+          <p className={message}>
+            Claude Code wasn&apos;t found. Install it, then Look again.
+          </p>
+          {/* Always there, so that the first answer is announced. */}
+          <p role="status" className={message}>
+            {lastCheckedAt !== null &&
+              `Still not found. Last checked at ${lastCheckedAt}.`}
+          </p>
+        </div>
+        <InstallCommand />
+        <div className="flex flex-wrap items-center gap-3">
+          <HelpLink />
+          <ActionButton
+            busy={lookingAgain}
+            onClick={() => onLookAgain(sessionKey, lookAgain())}
+            takeFocus={takeOwnFocus}
+          >
+            {lookingAgain ? "Looking…" : "Look again"}
+          </ActionButton>
+        </div>
+      </div>
     );
   }
   if (missingFolder) {
@@ -484,6 +520,43 @@ function Body({
         Start Claude Code
       </ActionButton>
     </Note>
+  );
+}
+
+/** The command that installs Claude Code in this system, to copy. */
+function InstallCommand() {
+  const { copyInstallCommand } = useAppActions();
+  const { shell, command } = installCommand(currentPlatform());
+  return (
+    <div className="flex flex-col gap-1">
+      <p className={message}>In {shell}:</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <code className="min-w-0 rounded-md bg-slate-100 px-2 py-1 font-mono text-xs break-all text-slate-900 dark:bg-slate-800 dark:text-slate-100">
+          {command}
+        </code>
+        <button
+          type="button"
+          className={smallButton}
+          aria-label="Copy install command"
+          onClick={() => void copyInstallCommand(command)}
+        >
+          Copy
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function HelpLink() {
+  const { openHelp } = useAppActions();
+  return (
+    <button
+      type="button"
+      className={linkButton}
+      onClick={() => void openHelp("claudeSetup")}
+    >
+      How to install Claude Code
+    </button>
   );
 }
 

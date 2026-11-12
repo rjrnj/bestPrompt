@@ -218,6 +218,22 @@ fn the_webview_may_not_read_the_clipboard() {
     assert!(!text.contains("not found"), "{error}");
 }
 
+/// The page opens from Rust at a fixed address. Granting the opener plugin
+/// would let the page open any address, so none of its permissions may be
+/// in the capability.
+#[test]
+fn open_help_is_granted_and_opener_is_not() {
+    let capability = include_str!("../capabilities/default.json");
+
+    let granted: Vec<&str> = quoted(capability).collect();
+
+    assert!(granted.contains(&"allow-open-help"));
+    assert!(
+        !granted.iter().any(|name| name.starts_with("opener:")),
+        "{granted:?}"
+    );
+}
+
 #[test]
 fn the_webview_can_get_one_framework_by_id() {
     let window = main_window();

@@ -10,6 +10,7 @@ import type { EntryQuery } from "./bindings/EntryQuery";
 import type { FolderPurpose } from "./bindings/FolderPurpose";
 import type { Framework } from "./bindings/Framework";
 import type { FrameworkInput } from "./bindings/FrameworkInput";
+import type { HelpPage } from "./bindings/HelpPage";
 import type { NewPromptEntry } from "./bindings/NewPromptEntry";
 import type { Project } from "./bindings/Project";
 import type { PromptEntry } from "./bindings/PromptEntry";
@@ -192,6 +193,11 @@ export function claudeStatus(): Promise<ClaudeStatus> {
 
 export function detectClaude(): Promise<ClaudeStatus> {
   return call("detect_claude");
+}
+
+/** Opens a help page in the default browser. */
+export function openHelp(page: HelpPage): Promise<void> {
+  return call("open_help", { page });
 }
 
 /** Asks for a folder; `purpose` decides how the chooser is titled. */

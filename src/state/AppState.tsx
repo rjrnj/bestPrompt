@@ -29,6 +29,7 @@ import {
   latestEntryProject,
   listFrameworks,
   listProjects,
+  openHelp as openHelpPage,
   pickFolder as pickFolderCommand,
   renameProject as renameProjectCommand,
   restoreFramework as restoreFrameworkCommand,
@@ -40,6 +41,7 @@ import {
 import type { FolderPurpose } from "../bindings/FolderPurpose";
 import type { Framework } from "../bindings/Framework";
 import type { FrameworkInput } from "../bindings/FrameworkInput";
+import type { HelpPage } from "../bindings/HelpPage";
 import type { NewPromptEntry } from "../bindings/NewPromptEntry";
 import type { Project } from "../bindings/Project";
 import type { SessionEvent } from "../bindings/SessionEvent";
@@ -128,8 +130,17 @@ export type AppActions = {
    * toast and keeps the new value for this run.
    */
   saveSetting: (setting: Setting) => Promise<void>;
-  /** Looks for Claude Code again. */
-  lookAgain: () => Promise<void>;
+  /**
+   * Looks for Claude Code again, re-reading the environment. Ignored while
+   * a look is under way, and takes at least `MIN_LOOK_MS` so the look can
+   * be seen. True when Claude Code was found; false when it wasn't, when
+   * the look failed (after a toast) or when it was ignored.
+   */
+  lookAgain: () => Promise<boolean>;
+  /** Puts the install command on the clipboard and toasts the result. */
+  copyInstallCommand: (command: string) => Promise<void>;
+  /** Opens a help page in the browser; toasts if that fails. */
+  openHelp: (page: HelpPage) => Promise<void>;
   /**
    * Starts Claude Code for `key` (a project id, or `NO_PROJECT_KEY`) and
    * opens the drawer. It runs in the project's folder; No project reuses
@@ -157,7 +168,19 @@ export type AppActions = {
   restartSession: (key: string) => Promise<StartedSession | null>;
 };
 
+/** How long a Look again shows as looking at least, in milliseconds. */
+const MIN_LOOK_MS = 400;
+
+/** What the missing-Claude view shows of its Look again; see `useLookAgain`. */
+export type LookAgainState = {
+  /** Whether a Look again is under way. */
+  lookingAgain: boolean;
+  /** When the last Look again found Claude Code still missing, as text. */
+  lastCheckedAt: string | null;
+};
+
 const StateContext = createContext<State | null>(null);
+const LookAgainContext = createContext<LookAgainState | null>(null);
 const DispatchContext = createContext<Dispatch<Action> | null>(null);
 const ActionsContext = createContext<AppActions | null>(null);
 
@@ -292,6 +315,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   // open, and the question being asked, which later requests share.
   const [folderExplainerOpen, setFolderExplainerOpen] = useState(false);
   const explainerOpener = useRef<Element | null>(null);
+  const [lookingAgain, setLookingAgain] = useState(false);
+  const [lastCheckedAt, setLastCheckedAt] = useState<string | null>(null);
   // `pick` is the folder the answer leads to, so that everyone who joins the
   // question while it is open gets it from the one chooser.
   const folderQuestion = useRef<{
@@ -399,10 +424,48 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  const lookingRef = useRef(false);
   const lookAgain = useCallback(async () => {
+    if (lookingRef.current) return false;
+    lookingRef.current = true;
+    setLookingAgain(true);
+    const shown = new Promise((resolve) => setTimeout(resolve, MIN_LOOK_MS));
+    let found = false;
     try {
-      const status = await detectClaude();
-      dispatch({ type: "claudeDetected", found: status.found });
+      const status = await detectClaude().finally(() => shown);
+      found = status.found;
+      setLastCheckedAt(
+        found
+          ? null
+          : new Date().toLocaleTimeString([], {
+              hour: "numeric",
+              minute: "2-digit",
+            }),
+      );
+      dispatch({ type: "claudeDetected", found });
+    } catch (error) {
+      dispatch(toast("error", messageOf(error)));
+    } finally {
+      lookingRef.current = false;
+      setLookingAgain(false);
+    }
+    return found;
+  }, []);
+
+  const copyInstallCommand = useCallback(async (command: string) => {
+    try {
+      await writeText(command);
+      dispatch(toast("info", "Copied."));
+    } catch (error) {
+      dispatch(
+        toast("error", `Couldn't copy to the clipboard: ${messageOf(error)}`),
+      );
+    }
+  }, []);
+
+  const openHelp = useCallback(async (page: HelpPage) => {
+    try {
+      await openHelpPage(page);
     } catch (error) {
       dispatch(toast("error", messageOf(error)));
     }
@@ -919,6 +982,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       restoreFramework,
       saveSetting,
       lookAgain,
+      copyInstallCommand,
+      openHelp,
       startSession,
       chooseFolderAndStart,
       closeSession,
@@ -940,6 +1005,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       restoreFramework,
       saveSetting,
       lookAgain,
+      copyInstallCommand,
+      openHelp,
       startSession,
       chooseFolderAndStart,
       closeSession,
@@ -947,6 +1014,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     ],
   );
 
+  const lookAgainState = useMemo(
+    () => ({ lookingAgain, lastCheckedAt }),
+    [lookingAgain, lastCheckedAt],
+  );
   const folderExplainer = useMemo(
     () => ({
       open: folderExplainerOpen,
@@ -960,9 +1031,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     <StateContext value={state}>
       <DispatchContext value={dispatch}>
         <ActionsContext value={actions}>
-          <FolderExplainerContext value={folderExplainer}>
-            {children}
-          </FolderExplainerContext>
+          <LookAgainContext value={lookAgainState}>
+            <FolderExplainerContext value={folderExplainer}>
+              {children}
+            </FolderExplainerContext>
+          </LookAgainContext>
         </ActionsContext>
       </DispatchContext>
     </StateContext>
@@ -987,6 +1060,11 @@ export function useAppDispatch(): Dispatch<Action> {
 
 export function useAppActions(): AppActions {
   return useRequired(ActionsContext, "useAppActions");
+}
+
+/** Whether a Look again is under way and its last answer; only the missing-Claude view needs it. */
+export function useLookAgain(): LookAgainState {
+  return useRequired(LookAgainContext, "useLookAgain");
 }
 
 /** The folder explainer's state; only its dialog needs it. */
