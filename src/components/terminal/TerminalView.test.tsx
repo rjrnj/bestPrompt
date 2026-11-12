@@ -52,6 +52,18 @@ describe("TerminalView", () => {
     expect(again.container.querySelector(".xterm")).toBe(terminal.element);
   });
 
+  it("clips whatever xterm lays out past the box it is opened in", async () => {
+    vi.mocked(startSession).mockResolvedValue(v1);
+    await startTerminalSession("/work", () => {});
+
+    const { container } = render(<TerminalView sessionId="v1" />);
+
+    // xterm's hidden input is absolutely positioned at the cursor row and can
+    // reach past the box, so something around xterm must clip it.
+    const xterm = container.querySelector(".xterm")!;
+    expect(xterm.closest(".overflow-hidden")).not.toBeNull();
+  });
+
   it("a_session_that_has_ended_is_not_resized", async () => {
     let onEvent!: (e: SessionEvent) => void;
     vi.mocked(startSession).mockImplementation(

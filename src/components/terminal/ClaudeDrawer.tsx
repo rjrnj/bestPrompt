@@ -192,7 +192,7 @@ export function ClaudeDrawer({ area }: { area: HTMLElement | null }) {
         )}
       </div>
       <WaitingNote />
-      <div ref={body} className="min-h-0 flex-1">
+      <div ref={body} className="min-h-0 flex-1 overflow-hidden">
         <Body
           sessionKey={key}
           session={session}
@@ -441,7 +441,7 @@ function Body({
     // session's last screen stays above the note.
     return (
       <div className="flex h-full flex-col">
-        <div className="min-h-0 flex-1">
+        <div className="min-h-0 flex-1 overflow-hidden">
           <SessionTerminal key={session.id} sessionId={session.id} />
         </div>
         {session.state === "exited" && (
