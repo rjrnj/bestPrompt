@@ -24,6 +24,7 @@ import {
   deleteFramework as deleteFrameworkCommand,
   deleteProject as deleteProjectCommand,
   detectClaude,
+  getSettings,
   latestEntryProject,
   listFrameworks,
   listProjects,
@@ -32,6 +33,7 @@ import {
   restoreFramework as restoreFrameworkCommand,
   savePromptEntry,
   setProjectFolder as setProjectFolderCommand,
+  setSetting,
   updateFramework,
 } from "../api";
 import type { Framework } from "../bindings/Framework";
@@ -39,11 +41,13 @@ import type { FrameworkInput } from "../bindings/FrameworkInput";
 import type { NewPromptEntry } from "../bindings/NewPromptEntry";
 import type { Project } from "../bindings/Project";
 import type { SessionEvent } from "../bindings/SessionEvent";
+import type { Setting } from "../bindings/Setting";
 import type { StartedSession } from "../bindings/StartedSession";
 import { writeText } from "../clipboard";
 import { hasOwn } from "../hasOwn";
 import { currentPlatform, pasteKeys } from "../terminal/keys";
 import {
+  DEFAULT_SETTINGS,
   initialStateFor,
   listedProjects,
   NO_PROJECT_KEY,
@@ -114,6 +118,11 @@ export type AppActions = {
   pruneDeletedFrameworks: () => void;
   /** Restores a deleted framework. Null, after a toast, when it fails. */
   restoreFramework: (id: string) => Promise<Framework | null>;
+  /**
+   * Changes a setting at once and saves it. If saving fails, says so in a
+   * toast and keeps the new value for this run.
+   */
+  saveSetting: (setting: Setting) => Promise<void>;
   /** Looks for Claude Code again. */
   lookAgain: () => Promise<void>;
   /**
@@ -284,6 +293,36 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       })),
     [projectAction],
   );
+
+  // The settings load without blocking anything; if they can't be read, the
+  // defaults stand in.
+  useEffect(() => {
+    let current = true;
+    getSettings().then(
+      (settings) => {
+        if (current) dispatch({ type: "settingsLoaded", settings });
+      },
+      () => {
+        if (current) {
+          dispatch({ type: "settingsLoaded", settings: DEFAULT_SETTINGS });
+        }
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, []);
+
+  const saveSetting = useCallback(async (setting: Setting) => {
+    dispatch({ type: "settingChanged", setting });
+    try {
+      await setSetting(setting);
+    } catch (error) {
+      dispatch(
+        toast("error", `Couldn't save the setting: ${messageOf(error)}`),
+      );
+    }
+  }, []);
 
   // The backend answers once its startup detection is done. A failed call
   // can only be the bridge itself; it counts as not found, which offers
@@ -825,6 +864,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       deleteFramework,
       pruneDeletedFrameworks,
       restoreFramework,
+      saveSetting,
       lookAgain,
       startSession,
       chooseFolderAndStart,
@@ -845,6 +885,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       deleteFramework,
       pruneDeletedFrameworks,
       restoreFramework,
+      saveSetting,
       lookAgain,
       startSession,
       chooseFolderAndStart,

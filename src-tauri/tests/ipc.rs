@@ -870,3 +870,28 @@ fn the_webview_can_read_the_claude_status() {
     let path = PathBuf::from(status["path"].as_str().unwrap());
     assert!(path.ends_with(format!("fake_claude{}", std::env::consts::EXE_SUFFIX)));
 }
+
+#[test]
+fn get_and_set_settings_over_ipc() {
+    // Each window gets its own fresh in-memory database, so these are the
+    // defaults.
+    let window = main_window();
+
+    let before = invoke(&window, "get_settings", json!({})).unwrap();
+    invoke(
+        &window,
+        "set_setting",
+        json!({ "setting": { "theme": "dark" } }),
+    )
+    .unwrap();
+    invoke(
+        &window,
+        "set_setting",
+        json!({ "setting": { "sendHintSeen": true } }),
+    )
+    .unwrap();
+    let after = invoke(&window, "get_settings", json!({})).unwrap();
+
+    assert_eq!(before, json!({ "theme": "system", "sendHintSeen": false }));
+    assert_eq!(after, json!({ "theme": "dark", "sendHintSeen": true }));
+}

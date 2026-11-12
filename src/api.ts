@@ -14,6 +14,8 @@ import type { Project } from "./bindings/Project";
 import type { PromptEntry } from "./bindings/PromptEntry";
 import type { SessionErrorKind } from "./bindings/SessionError";
 import type { SessionEvent } from "./bindings/SessionEvent";
+import type { Setting } from "./bindings/Setting";
+import type { Settings } from "./bindings/Settings";
 import type { StartedSession } from "./bindings/StartedSession";
 
 /** A command that failed, with the `kind` the backend reported. */
@@ -244,4 +246,12 @@ export function pasteClipboard(id: string): Promise<void> {
 
 export function closeSession(id: string): Promise<void> {
   return call("close_session", { id });
+}
+
+export function getSettings(): Promise<Settings> {
+  return call("get_settings");
+}
+
+export function setSetting(setting: Setting): Promise<void> {
+  return call("set_setting", { setting });
 }

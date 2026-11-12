@@ -1708,3 +1708,59 @@ describe("the drawer", () => {
     expect(restored.drawer).toEqual(resized.drawer);
   });
 });
+
+describe("settings", () => {
+  it("start unloaded", () => {
+    expect(initialState.settings).toBeNull();
+  });
+
+  it("are held once loaded", () => {
+    const settings = { theme: "dark", sendHintSeen: true } as const;
+
+    expect(
+      reducer(initialState, { type: "settingsLoaded", settings }).settings,
+    ).toEqual(settings);
+  });
+
+  it("change one field at a time", () => {
+    const loaded = reducer(initialState, {
+      type: "settingsLoaded",
+      settings: { theme: "light", sendHintSeen: false },
+    });
+
+    const themed = reducer(loaded, {
+      type: "settingChanged",
+      setting: { theme: "dark" },
+    });
+    const seen = reducer(themed, {
+      type: "settingChanged",
+      setting: { sendHintSeen: true },
+    });
+
+    expect(themed.settings).toEqual({ theme: "dark", sendHintSeen: false });
+    expect(seen.settings).toEqual({ theme: "dark", sendHintSeen: true });
+  });
+
+  it("a change before they load starts from the defaults", () => {
+    const next = reducer(initialState, {
+      type: "settingChanged",
+      setting: { theme: "dark" },
+    });
+
+    expect(next.settings).toEqual({ theme: "dark", sendHintSeen: false });
+  });
+
+  it("a change made before they load survives the load", () => {
+    const changed = reducer(initialState, {
+      type: "settingChanged",
+      setting: { theme: "dark" },
+    });
+
+    const loaded = reducer(changed, {
+      type: "settingsLoaded",
+      settings: { theme: "light", sendHintSeen: true },
+    });
+
+    expect(loaded.settings).toEqual({ theme: "dark", sendHintSeen: true });
+  });
+});

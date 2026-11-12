@@ -5,6 +5,8 @@
 import type { Framework } from "../bindings/Framework";
 import type { Project } from "../bindings/Project";
 import type { PromptEntry } from "../bindings/PromptEntry";
+import type { Setting } from "../bindings/Setting";
+import type { Settings } from "../bindings/Settings";
 import { hasOwn } from "../hasOwn";
 import { renderTemplate, TemplateSyntaxError } from "../template";
 
@@ -20,6 +22,15 @@ export type Session = {
 
 /** The key of No project's session; projects use their id. */
 export const NO_PROJECT_KEY = "";
+
+/**
+ * What each setting is until the user changes it; matches the backend's
+ * defaults.
+ */
+export const DEFAULT_SETTINGS: Settings = {
+  theme: "system",
+  sendHintSeen: false,
+};
 
 export type State = {
   frameworks:
@@ -94,6 +105,13 @@ export type State = {
    * fills the area and keeps `height` to restore.
    */
   drawer: { open: boolean; height: number | null; maximized: boolean };
+  /** The app settings; null until loaded. */
+  settings: Settings | null;
+  /**
+   * The settings changed during this run, so a load that finishes later
+   * doesn't put a stored value over a choice made since.
+   */
+  changedSettings: (keyof Settings)[];
 };
 
 export type Action =
@@ -132,7 +150,9 @@ export type Action =
   | { type: "sessionFolderMissing"; key: string }
   | { type: "drawerToggled"; open?: boolean }
   | { type: "drawerResized"; height: number }
-  | { type: "drawerMaximizeToggled" };
+  | { type: "drawerMaximizeToggled" }
+  | { type: "settingsLoaded"; settings: Settings }
+  | { type: "settingChanged"; setting: Setting };
 
 /** The most toasts shown at once; adding another drops the oldest. */
 export const MAX_TOASTS = 3;
@@ -158,6 +178,8 @@ export const initialState: State = {
   sessions: {},
   missingFolders: [],
   drawer: { open: true, height: null, maximized: false },
+  settings: null,
+  changedSettings: [],
 };
 
 /**
@@ -479,6 +501,28 @@ export function reducer(state: State, action: Action): State {
       return {
         ...state,
         drawer: { ...state.drawer, height: action.height, maximized: false },
+      };
+    case "settingsLoaded": {
+      const held = state.settings ?? DEFAULT_SETTINGS;
+      const settings = { ...action.settings };
+      for (const field of state.changedSettings) {
+        Object.assign(settings, { [field]: held[field] });
+      }
+      return { ...state, settings };
+    }
+    case "settingChanged":
+      return {
+        ...state,
+        settings: {
+          ...(state.settings ?? DEFAULT_SETTINGS),
+          ...action.setting,
+        },
+        changedSettings: [
+          ...new Set([
+            ...state.changedSettings,
+            ...(Object.keys(action.setting) as (keyof Settings)[]),
+          ]),
+        ],
       };
     case "drawerMaximizeToggled":
       return {

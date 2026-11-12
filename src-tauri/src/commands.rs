@@ -20,6 +20,7 @@ use crate::db::DbError;
 use crate::db::entries::{self, EntryCursor, EntryQuery, NewPromptEntry, PromptEntry};
 use crate::db::frameworks::{self, Framework, FrameworkInput};
 use crate::db::projects::{self, Project};
+use crate::db::settings::{self, Setting, Settings};
 use crate::terminal::folders::{PickedFolders, allowed_folder};
 use crate::terminal::{SessionError, SessionEvent, Sessions, StartedSession};
 
@@ -64,6 +65,8 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
         resize_session,
         paste_clipboard,
         close_session,
+        get_settings,
+        set_setting,
     ])
 }
 
@@ -360,6 +363,16 @@ fn paste_clipboard<R: Runtime>(
 #[tauri::command(async)]
 fn close_session(sessions: State<'_, Sessions>, id: String) -> Result<(), SessionError> {
     sessions.close(&id)
+}
+
+#[tauri::command(async)]
+fn get_settings(db: State<'_, Db>) -> Result<Settings, DbError> {
+    db.with(|conn| settings::get_settings(conn))
+}
+
+#[tauri::command(async)]
+fn set_setting(db: State<'_, Db>, setting: Setting) -> Result<(), DbError> {
+    db.with(|conn| settings::set_setting(conn, &setting))
 }
 
 #[cfg(test)]
