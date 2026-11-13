@@ -234,6 +234,25 @@ fn open_help_is_granted_and_opener_is_not() {
     );
 }
 
+/// The close warning destroys the window itself and the theme choice sets
+/// the title bar. Without the first, a window whose close is held for the
+/// warning could never close; neither is in `core:default`.
+#[test]
+fn the_window_may_be_themed_and_closed() {
+    let capability = include_str!("../capabilities/default.json");
+
+    let granted: Vec<&str> = quoted(capability).collect();
+
+    assert!(
+        granted.contains(&"core:window:allow-destroy"),
+        "{granted:?}"
+    );
+    assert!(
+        granted.contains(&"core:window:allow-set-theme"),
+        "{granted:?}"
+    );
+}
+
 #[test]
 fn the_webview_can_get_one_framework_by_id() {
     let window = main_window();

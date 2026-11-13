@@ -42,7 +42,8 @@ export const dialogOverlay =
 export const dialogPanel =
   "fixed top-1/2 left-1/2 z-40 flex max-h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 flex-col gap-4 overflow-y-auto rounded-lg border border-slate-200 bg-white p-5 text-slate-900 shadow-xl focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100";
 export const dialogTitle = "text-base font-semibold";
-export const dialogDescription = "text-sm text-slate-600 dark:text-slate-400";
+export const dialogDescription =
+  "text-sm wrap-break-word text-slate-600 dark:text-slate-400";
 export const dialogButtons = "flex flex-wrap justify-end gap-2";
 
 export const selectLabel =

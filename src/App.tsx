@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { AppTabs } from "./components/AppTabs";
+import { CloseWarningDialog } from "./components/CloseWarningDialog";
 import { FrameworkPicker } from "./components/FrameworkPicker";
 import { FrameworksView } from "./components/frameworks/FrameworksView";
 import { HistoryView } from "./components/history/HistoryView";
@@ -26,6 +27,7 @@ function App() {
       </HistoryProvider>
       <ThemeSync />
       <FolderExplainerDialog />
+      <CloseWarningDialog />
       <NoteAnnouncer />
       <Toaster />
     </AppStateProvider>

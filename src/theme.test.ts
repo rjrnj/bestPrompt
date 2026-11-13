@@ -1,12 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import source from "../public/theme-init.js?raw";
 import { osScheme } from "./test/osScheme";
+import { windowMock } from "./test/tauriWindow";
 import { applyTheme, resetWindowThemeForTests, THEME_CACHE_KEY } from "./theme";
 
-const setTheme = vi.fn();
-vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ setTheme }),
-}));
+const { setTheme } = windowMock;
 
 const html = document.documentElement;
 

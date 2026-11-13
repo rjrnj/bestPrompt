@@ -196,6 +196,11 @@ export type FolderExplainer = {
 };
 const FolderExplainerContext = createContext<FolderExplainer | null>(null);
 
+/** Reads the keys whose start or restart is under way; see `useStartingKeys`. */
+const StartingKeysContext = createContext<(() => ReadonlySet<string>) | null>(
+  null,
+);
+
 // api.ts rejects with an ApiError, so the fallback only matters if that
 // contract breaks; it keeps the failure path from ever throwing itself.
 function messageOf(error: unknown): string {
@@ -499,6 +504,28 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  // Keys whose start or restart is under way, from taking the key until it
+  // settles: the chooser, the spawn and the explainer all fall inside. A
+  // close is not a start. Nothing renders from them, so they live in a ref
+  // that changes the moment a key is marked or unmarked, and a close request
+  // that arrives in that same instant still sees them.
+  const startingKeys = useRef<ReadonlySet<string>>(new Set());
+  const getStartingKeys = useCallback(() => startingKeys.current, []);
+  /** Runs `run` with `key` marked as starting until it settles. */
+  const starting = useCallback(
+    async <T,>(key: string, run: () => Promise<T>): Promise<T> => {
+      startingKeys.current = new Set(startingKeys.current).add(key);
+      try {
+        return await run();
+      } finally {
+        const next = new Set(startingKeys.current);
+        next.delete(key);
+        startingKeys.current = next;
+      }
+    },
+    [],
+  );
+
   /**
    * The folder to start `key`'s session in: the saved or last one unless
    * `choose`, else one picked now and, for a project, saved on it. Null
@@ -643,28 +670,30 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     (key: string, options?: { prompt?: string }) =>
       exclusive(
         key,
-        async () => {
-          const folder = await folderFor(key, false);
-          if (folder === null) return null;
-          return launch(key, folder, options?.prompt);
-        },
+        () =>
+          starting(key, async () => {
+            const folder = await folderFor(key, false);
+            if (folder === null) return null;
+            return launch(key, folder, options?.prompt);
+          }),
         null,
       ),
-    [exclusive, folderFor, launch],
+    [exclusive, starting, folderFor, launch],
   );
 
   const chooseFolderAndStart = useCallback(
     (key: string) =>
       exclusive(
         key,
-        async () => {
-          const folder = await folderFor(key, true);
-          if (folder === null) return null;
-          return launch(key, folder, undefined);
-        },
+        () =>
+          starting(key, async () => {
+            const folder = await folderFor(key, true);
+            if (folder === null) return null;
+            return launch(key, folder, undefined);
+          }),
         null,
       ),
-    [exclusive, folderFor, launch],
+    [exclusive, starting, folderFor, launch],
   );
 
   const closeSession = useCallback(
@@ -701,17 +730,18 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     (key: string) =>
       exclusive(
         key,
-        async () => {
-          // Found before the session ends, as a fresh start would find it:
-          // a folder that can't be found, or a cancelled pick, leaves the
-          // session running.
-          const folder = await folderFor(key, false);
-          if (folder === null) return null;
-          return launch(key, folder, undefined);
-        },
+        () =>
+          starting(key, async () => {
+            // Found before the session ends, as a fresh start would find it:
+            // a folder that can't be found, or a cancelled pick, leaves the
+            // session running.
+            const folder = await folderFor(key, false);
+            if (folder === null) return null;
+            return launch(key, folder, undefined);
+          }),
         null,
       ),
-    [exclusive, folderFor, launch],
+    [exclusive, starting, folderFor, launch],
   );
 
   const deleteProject = useCallback(
@@ -1030,7 +1060,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         <ActionsContext value={actions}>
           <LookAgainContext value={lookAgainState}>
             <FolderExplainerContext value={folderExplainer}>
-              {children}
+              <StartingKeysContext value={getStartingKeys}>
+                {children}
+              </StartingKeysContext>
             </FolderExplainerContext>
           </LookAgainContext>
         </ActionsContext>
@@ -1067,4 +1099,13 @@ export function useLookAgain(): LookAgainState {
 /** The folder explainer's state; only its dialog needs it. */
 export function useFolderExplainer(): FolderExplainer {
   return useRequired(FolderExplainerContext, "useFolderExplainer");
+}
+
+/**
+ * Reads the keys whose start or restart is under way, as a close must count
+ * them. A getter, because the answer is current at once and a render would
+ * lag behind it.
+ */
+export function useStartingKeys(): () => ReadonlySet<string> {
+  return useRequired(StartingKeysContext, "useStartingKeys");
 }

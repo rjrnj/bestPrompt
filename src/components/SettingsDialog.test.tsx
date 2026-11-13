@@ -18,12 +18,10 @@ import {
   terminalFor,
 } from "../terminal/terminals";
 import { osScheme } from "../test/osScheme";
+import { windowMock } from "../test/tauriWindow";
 import { resetWindowThemeForTests, THEME_CACHE_KEY } from "../theme";
 
-const setTheme = vi.fn();
-vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ setTheme }),
-}));
+const { setTheme } = windowMock;
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   listFrameworks: vi.fn(),
