@@ -1575,8 +1575,22 @@ describe("Claude Code", () => {
     ]);
 
     expect(state.sessions).toEqual({
-      "p-api": { id: "s1", folder: "/api", state: "running", code: null },
-      "": { id: "s2", folder: "/tmp", state: "running", code: null },
+      "p-api": {
+        id: "s1",
+        folder: "/api",
+        state: "running",
+        code: null,
+        sent: null,
+        note: false,
+      },
+      "": {
+        id: "s2",
+        folder: "/tmp",
+        state: "running",
+        code: null,
+        sent: null,
+        note: false,
+      },
     });
 
     const closed = reducer(state, { type: "sessionClosed", key: "p-api" });
@@ -1607,7 +1621,72 @@ describe("Claude Code", () => {
       folder: "/api",
       state: "exited",
       code: 3,
+      sent: null,
+      note: false,
     });
+  });
+
+  it("the_sent_prompt_and_note_go_with_the_session", () => {
+    const start = (sent?: string) =>
+      reducer(initialState, {
+        type: "sessionStarted",
+        key: "p-api",
+        id: "s1",
+        folder: "/api",
+        sent,
+      });
+
+    expect(start().sessions["p-api"]).toMatchObject({
+      sent: null,
+      note: false,
+    });
+    const sent = start("# Role");
+    expect(sent.sessions["p-api"]).toMatchObject({
+      sent: "# Role",
+      note: true,
+    });
+
+    // A close for a session already replaced, or unknown, changes nothing.
+    expect(
+      reducer(sent, { type: "waitingNoteClosed", key: "p-api", id: "s0" }),
+    ).toBe(sent);
+    expect(
+      reducer(sent, { type: "waitingNoteClosed", key: "", id: "s1" }),
+    ).toBe(sent);
+    const closed = reducer(sent, {
+      type: "waitingNoteClosed",
+      key: "p-api",
+      id: "s1",
+    });
+    expect(closed.sessions["p-api"]).toMatchObject({
+      sent: "# Role",
+      note: false,
+    });
+
+    // Exit hides the note and keeps what was sent.
+    const exited = reducer(sent, {
+      type: "sessionExited",
+      key: "p-api",
+      id: "s1",
+      code: 0,
+    });
+    expect(exited.sessions["p-api"]).toMatchObject({
+      state: "exited",
+      sent: "# Role",
+      note: false,
+    });
+
+    // A new session starts fresh; closing drops it.
+    const fresh = reducer(sent, {
+      type: "sessionStarted",
+      key: "p-api",
+      id: "s2",
+      folder: "/api",
+    });
+    expect(fresh.sessions["p-api"]).toMatchObject({ sent: null, note: false });
+    expect(
+      reducer(sent, { type: "sessionClosed", key: "p-api" }).sessions,
+    ).toEqual({});
   });
 
   it("a late exit from an old session is ignored", () => {
@@ -1706,5 +1785,61 @@ describe("the drawer", () => {
 
     const restored = reducer(maximized, { type: "drawerMaximizeToggled" });
     expect(restored.drawer).toEqual(resized.drawer);
+  });
+});
+
+describe("settings", () => {
+  it("start unloaded", () => {
+    expect(initialState.settings).toBeNull();
+  });
+
+  it("are held once loaded", () => {
+    const settings = { theme: "dark", sendHintSeen: true } as const;
+
+    expect(
+      reducer(initialState, { type: "settingsLoaded", settings }).settings,
+    ).toEqual(settings);
+  });
+
+  it("change one field at a time", () => {
+    const loaded = reducer(initialState, {
+      type: "settingsLoaded",
+      settings: { theme: "light", sendHintSeen: false },
+    });
+
+    const themed = reducer(loaded, {
+      type: "settingChanged",
+      setting: { theme: "dark" },
+    });
+    const seen = reducer(themed, {
+      type: "settingChanged",
+      setting: { sendHintSeen: true },
+    });
+
+    expect(themed.settings).toEqual({ theme: "dark", sendHintSeen: false });
+    expect(seen.settings).toEqual({ theme: "dark", sendHintSeen: true });
+  });
+
+  it("a change before they load starts from the defaults", () => {
+    const next = reducer(initialState, {
+      type: "settingChanged",
+      setting: { theme: "dark" },
+    });
+
+    expect(next.settings).toEqual({ theme: "dark", sendHintSeen: false });
+  });
+
+  it("a change made before they load survives the load", () => {
+    const changed = reducer(initialState, {
+      type: "settingChanged",
+      setting: { theme: "dark" },
+    });
+
+    const loaded = reducer(changed, {
+      type: "settingsLoaded",
+      settings: { theme: "light", sendHintSeen: true },
+    });
+
+    expect(loaded.settings).toEqual({ theme: "dark", sendHintSeen: true });
   });
 });

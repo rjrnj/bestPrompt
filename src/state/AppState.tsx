@@ -10,6 +10,7 @@ import {
   useMemo,
   useReducer,
   useRef,
+  useState,
   type Context,
   type Dispatch,
   type ReactNode,
@@ -24,26 +25,33 @@ import {
   deleteFramework as deleteFrameworkCommand,
   deleteProject as deleteProjectCommand,
   detectClaude,
+  getSettings,
   latestEntryProject,
   listFrameworks,
   listProjects,
+  openHelp as openHelpPage,
   pickFolder as pickFolderCommand,
   renameProject as renameProjectCommand,
   restoreFramework as restoreFrameworkCommand,
   savePromptEntry,
   setProjectFolder as setProjectFolderCommand,
+  setSetting,
   updateFramework,
 } from "../api";
+import type { FolderPurpose } from "../bindings/FolderPurpose";
 import type { Framework } from "../bindings/Framework";
 import type { FrameworkInput } from "../bindings/FrameworkInput";
+import type { HelpPage } from "../bindings/HelpPage";
 import type { NewPromptEntry } from "../bindings/NewPromptEntry";
 import type { Project } from "../bindings/Project";
 import type { SessionEvent } from "../bindings/SessionEvent";
+import type { Setting } from "../bindings/Setting";
 import type { StartedSession } from "../bindings/StartedSession";
 import { writeText } from "../clipboard";
 import { hasOwn } from "../hasOwn";
 import { currentPlatform, pasteKeys } from "../terminal/keys";
 import {
+  DEFAULT_SETTINGS,
   initialStateFor,
   listedProjects,
   NO_PROJECT_KEY,
@@ -93,8 +101,11 @@ export type AppActions = {
   renameProject: (id: string, name: string) => Promise<boolean>;
   /** Sets or, with null, clears a project's folder. False, after a toast, when it fails. */
   setProjectFolder: (id: string, folder: string | null) => Promise<boolean>;
-  /** Asks for a folder. Null when cancelled or, after a toast, when it fails. */
-  pickFolder: () => Promise<string | null>;
+  /**
+   * Asks for a folder, straight away; the default purpose is a project's
+   * folder. Null when cancelled or, after a toast, when it fails.
+   */
+  pickFolder: (purpose?: FolderPurpose) => Promise<string | null>;
   /** Deletes a project. False, after a toast, when it fails. */
   deleteProject: (id: string) => Promise<boolean>;
   /**
@@ -114,8 +125,22 @@ export type AppActions = {
   pruneDeletedFrameworks: () => void;
   /** Restores a deleted framework. Null, after a toast, when it fails. */
   restoreFramework: (id: string) => Promise<Framework | null>;
-  /** Looks for Claude Code again. */
-  lookAgain: () => Promise<void>;
+  /**
+   * Changes a setting at once and saves it. If saving fails, says so in a
+   * toast and keeps the new value for this run.
+   */
+  saveSetting: (setting: Setting) => Promise<void>;
+  /**
+   * Looks for Claude Code again, re-reading the environment. Ignored while
+   * a look is under way, and takes at least `MIN_LOOK_MS` so the look can
+   * be seen. True when Claude Code was found; false when it wasn't, when
+   * the look failed (after a toast) or when it was ignored.
+   */
+  lookAgain: () => Promise<boolean>;
+  /** Puts the install command on the clipboard and toasts the result. */
+  copyInstallCommand: (command: string) => Promise<void>;
+  /** Opens a help page in the browser; toasts if that fails. */
+  openHelp: (page: HelpPage) => Promise<void>;
   /**
    * Starts Claude Code for `key` (a project id, or `NO_PROJECT_KEY`) and
    * opens the drawer. It runs in the project's folder; No project reuses
@@ -143,9 +168,34 @@ export type AppActions = {
   restartSession: (key: string) => Promise<StartedSession | null>;
 };
 
+/** How long a Look again shows as looking at least, in milliseconds. */
+const MIN_LOOK_MS = 400;
+
+/** What the missing-Claude view shows of its Look again; see `useLookAgain`. */
+export type LookAgainState = {
+  /** Whether a Look again is under way. */
+  lookingAgain: boolean;
+  /** When the last Look again found Claude Code still missing, as text. */
+  lastCheckedAt: string | null;
+};
+
 const StateContext = createContext<State | null>(null);
+const LookAgainContext = createContext<LookAgainState | null>(null);
 const DispatchContext = createContext<Dispatch<Action> | null>(null);
 const ActionsContext = createContext<AppActions | null>(null);
+
+/** What the folder explainer dialog needs; see `useFolderExplainer`. */
+export type FolderExplainer = {
+  open: boolean;
+  /**
+   * Answers the question: true to go on to the chooser, false to cancel.
+   * Does nothing while the dialog isn't open.
+   */
+  answer: (choose: boolean) => void;
+  /** What had the focus when the dialog opened, to give it back. */
+  opener: { current: Element | null };
+};
+const FolderExplainerContext = createContext<FolderExplainer | null>(null);
 
 // api.ts rejects with an ApiError, so the fallback only matters if that
 // contract breaks; it keeps the failure path from ever throwing itself.
@@ -249,14 +299,55 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const pickFolder = useCallback(async (): Promise<string | null> => {
-    try {
-      return await pickFolderCommand();
-    } catch (error) {
-      dispatch(toast("error", messageOf(error)));
-      return null;
-    }
+  const pickFolder = useCallback(
+    async (purpose: FolderPurpose = "project"): Promise<string | null> => {
+      try {
+        return await pickFolderCommand(purpose);
+      } catch (error) {
+        dispatch(toast("error", messageOf(error)));
+        return null;
+      }
+    },
+    [],
+  );
+
+  // The explainer's state is the view's, not the reducer's: whether it is
+  // open, and the question being asked, which later requests share.
+  const [folderExplainerOpen, setFolderExplainerOpen] = useState(false);
+  const explainerOpener = useRef<Element | null>(null);
+  const [lookingAgain, setLookingAgain] = useState(false);
+  const [lastCheckedAt, setLastCheckedAt] = useState<string | null>(null);
+  // `pick` is the folder the answer leads to, so that everyone who joins the
+  // question while it is open gets it from the one chooser.
+  const folderQuestion = useRef<{
+    pick: Promise<string | null>;
+    resolve: (choose: boolean) => void;
+  } | null>(null);
+
+  const answerFolderExplainer = useCallback((choose: boolean) => {
+    const question = folderQuestion.current;
+    if (question === null) return;
+    folderQuestion.current = null;
+    setFolderExplainerOpen(false);
+    question.resolve(choose);
   }, []);
+
+  /**
+   * Explains the folder, then opens Claude's chooser. Null if declined.
+   * A request made while the explainer is open shares its answer and pick.
+   */
+  const pickFolderForClaude = useCallback((): Promise<string | null> => {
+    if (folderQuestion.current !== null) return folderQuestion.current.pick;
+    let resolve!: (choose: boolean) => void;
+    const answer = new Promise<boolean>((r) => (resolve = r));
+    const pick = answer.then((choose) =>
+      choose ? pickFolder("claude") : null,
+    );
+    folderQuestion.current = { pick, resolve };
+    explainerOpener.current = document.activeElement;
+    setFolderExplainerOpen(true);
+    return pick;
+  }, [pickFolder]);
 
   const createProject = useCallback(
     (name: string, folder: string | null) =>
@@ -285,6 +376,36 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [projectAction],
   );
 
+  // The settings load without blocking anything; if they can't be read, the
+  // defaults stand in.
+  useEffect(() => {
+    let current = true;
+    getSettings().then(
+      (settings) => {
+        if (current) dispatch({ type: "settingsLoaded", settings });
+      },
+      () => {
+        if (current) {
+          dispatch({ type: "settingsLoaded", settings: DEFAULT_SETTINGS });
+        }
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, []);
+
+  const saveSetting = useCallback(async (setting: Setting) => {
+    dispatch({ type: "settingChanged", setting });
+    try {
+      await setSetting(setting);
+    } catch (error) {
+      dispatch(
+        toast("error", `Couldn't save the setting: ${messageOf(error)}`),
+      );
+    }
+  }, []);
+
   // The backend answers once its startup detection is done. A failed call
   // can only be the bridge itself; it counts as not found, which offers
   // Look again.
@@ -303,10 +424,48 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  const lookingRef = useRef(false);
   const lookAgain = useCallback(async () => {
+    if (lookingRef.current) return false;
+    lookingRef.current = true;
+    setLookingAgain(true);
+    const shown = new Promise((resolve) => setTimeout(resolve, MIN_LOOK_MS));
+    let found = false;
     try {
-      const status = await detectClaude();
-      dispatch({ type: "claudeDetected", found: status.found });
+      const status = await detectClaude().finally(() => shown);
+      found = status.found;
+      setLastCheckedAt(
+        found
+          ? null
+          : new Date().toLocaleTimeString([], {
+              hour: "numeric",
+              minute: "2-digit",
+            }),
+      );
+      dispatch({ type: "claudeDetected", found });
+    } catch (error) {
+      dispatch(toast("error", messageOf(error)));
+    } finally {
+      lookingRef.current = false;
+      setLookingAgain(false);
+    }
+    return found;
+  }, []);
+
+  const copyInstallCommand = useCallback(async (command: string) => {
+    try {
+      await writeText(command);
+      dispatch(toast("info", "Copied."));
+    } catch (error) {
+      dispatch(
+        toast("error", `Couldn't copy to the clipboard: ${messageOf(error)}`),
+      );
+    }
+  }, []);
+
+  const openHelp = useCallback(async (page: HelpPage) => {
+    try {
+      await openHelpPage(page);
     } catch (error) {
       dispatch(toast("error", messageOf(error)));
     }
@@ -353,19 +512,19 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (key === NO_PROJECT_KEY) {
         const last = lastFolders.current.get(key);
         if (!choose && last !== undefined) return last;
-        return pickFolder();
+        return pickFolderForClaude();
       }
       const project = listedProjects(latest.current).find((p) => p.id === key);
       if (!choose && project !== undefined && project.folder !== null) {
         return project.folder;
       }
-      const picked = await pickFolder();
+      const picked = await pickFolderForClaude();
       // Cancelled, or closed or deleted while the chooser was open: there
       // is nothing to save it on.
       if (picked === null || cancelledKeys.current.has(key)) return null;
       return (await setProjectFolder(key, picked)) ? picked : null;
     },
-    [pickFolder, setProjectFolder],
+    [pickFolderForClaude, setProjectFolder],
   );
 
   /**
@@ -470,7 +629,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       // session is still running.
       const exit = earlyExit as { code: number | null } | null;
       flushSync(() => {
-        dispatch({ type: "sessionStarted", key, id, folder });
+        // Only a prompt Claude took as a prefill is waiting in the session.
+        const sent = started.prefilled ? prompt : undefined;
+        dispatch({ type: "sessionStarted", key, id, folder, sent });
         dispatch({ type: "drawerToggled", open: true });
         if (exit !== null) {
           dispatch({ type: "sessionExited", key, id, code: exit.code });
@@ -783,12 +944,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             const { terminalFor } = await terminals();
             const selected = latest.current.selectedProjectId ?? NO_PROJECT_KEY;
             if (selected === key) terminalFor(started.id)?.focus();
-            dispatch(
-              toast(
-                "info",
-                "Sent to Claude Code. Answer any questions it asks, then press Enter to run your prompt.",
-              ),
-            );
           }
         } else if (started !== null) {
           // Too long, or a form Claude can't be handed: it started without
@@ -825,7 +980,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       deleteFramework,
       pruneDeletedFrameworks,
       restoreFramework,
+      saveSetting,
       lookAgain,
+      copyInstallCommand,
+      openHelp,
       startSession,
       chooseFolderAndStart,
       closeSession,
@@ -845,7 +1003,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       deleteFramework,
       pruneDeletedFrameworks,
       restoreFramework,
+      saveSetting,
       lookAgain,
+      copyInstallCommand,
+      openHelp,
       startSession,
       chooseFolderAndStart,
       closeSession,
@@ -853,10 +1014,29 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     ],
   );
 
+  const lookAgainState = useMemo(
+    () => ({ lookingAgain, lastCheckedAt }),
+    [lookingAgain, lastCheckedAt],
+  );
+  const folderExplainer = useMemo(
+    () => ({
+      open: folderExplainerOpen,
+      answer: answerFolderExplainer,
+      opener: explainerOpener,
+    }),
+    [folderExplainerOpen, answerFolderExplainer],
+  );
+
   return (
     <StateContext value={state}>
       <DispatchContext value={dispatch}>
-        <ActionsContext value={actions}>{children}</ActionsContext>
+        <ActionsContext value={actions}>
+          <LookAgainContext value={lookAgainState}>
+            <FolderExplainerContext value={folderExplainer}>
+              {children}
+            </FolderExplainerContext>
+          </LookAgainContext>
+        </ActionsContext>
       </DispatchContext>
     </StateContext>
   );
@@ -880,4 +1060,14 @@ export function useAppDispatch(): Dispatch<Action> {
 
 export function useAppActions(): AppActions {
   return useRequired(ActionsContext, "useAppActions");
+}
+
+/** Whether a Look again is under way and its last answer; only the missing-Claude view needs it. */
+export function useLookAgain(): LookAgainState {
+  return useRequired(LookAgainContext, "useLookAgain");
+}
+
+/** The folder explainer's state; only its dialog needs it. */
+export function useFolderExplainer(): FolderExplainer {
+  return useRequired(FolderExplainerContext, "useFolderExplainer");
 }

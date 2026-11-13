@@ -395,9 +395,11 @@ describe("api", () => {
   it("picks a folder", async () => {
     const calls = answering("/work");
 
-    await expect(pickFolder()).resolves.toBe("/work");
+    await expect(pickFolder("claude")).resolves.toBe("/work");
 
-    expect(calls).toEqual([{ cmd: "pick_folder", args: {} }]);
+    expect(calls).toEqual([
+      { cmd: "pick_folder", args: { purpose: "claude" } },
+    ]);
   });
 
   it("writes, resizes and closes a session", async () => {

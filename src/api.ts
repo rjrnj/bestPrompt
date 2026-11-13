@@ -7,13 +7,17 @@ import type { ClaudeStatus } from "./bindings/ClaudeStatus";
 import type { DbErrorKind } from "./bindings/DbError";
 import type { EntryCursor } from "./bindings/EntryCursor";
 import type { EntryQuery } from "./bindings/EntryQuery";
+import type { FolderPurpose } from "./bindings/FolderPurpose";
 import type { Framework } from "./bindings/Framework";
 import type { FrameworkInput } from "./bindings/FrameworkInput";
+import type { HelpPage } from "./bindings/HelpPage";
 import type { NewPromptEntry } from "./bindings/NewPromptEntry";
 import type { Project } from "./bindings/Project";
 import type { PromptEntry } from "./bindings/PromptEntry";
 import type { SessionErrorKind } from "./bindings/SessionError";
 import type { SessionEvent } from "./bindings/SessionEvent";
+import type { Setting } from "./bindings/Setting";
+import type { Settings } from "./bindings/Settings";
 import type { StartedSession } from "./bindings/StartedSession";
 
 /** A command that failed, with the `kind` the backend reported. */
@@ -191,8 +195,14 @@ export function detectClaude(): Promise<ClaudeStatus> {
   return call("detect_claude");
 }
 
-export function pickFolder(): Promise<string | null> {
-  return call("pick_folder");
+/** Opens a help page in the default browser. */
+export function openHelp(page: HelpPage): Promise<void> {
+  return call("open_help", { page });
+}
+
+/** Asks for a folder; `purpose` decides how the chooser is titled. */
+export function pickFolder(purpose: FolderPurpose): Promise<string | null> {
+  return call("pick_folder", { purpose });
 }
 
 /**
@@ -244,4 +254,12 @@ export function pasteClipboard(id: string): Promise<void> {
 
 export function closeSession(id: string): Promise<void> {
   return call("close_session", { id });
+}
+
+export function getSettings(): Promise<Settings> {
+  return call("get_settings");
+}
+
+export function setSetting(setting: Setting): Promise<void> {
+  return call("set_setting", { setting });
 }

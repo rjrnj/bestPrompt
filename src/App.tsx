@@ -9,6 +9,8 @@ import { PromptActions } from "./components/PromptActions";
 import { PromptForm } from "./components/PromptForm";
 import { PromptPreview } from "./components/PromptPreview";
 import { ClaudeDrawer } from "./components/terminal/ClaudeDrawer";
+import { FolderExplainerDialog } from "./components/terminal/FolderExplainerDialog";
+import { NoteAnnouncer } from "./components/terminal/WaitingNote";
 import { Toaster } from "./components/Toaster";
 import { AppStateProvider, useAppState } from "./state/AppState";
 import { HistoryProvider } from "./state/HistoryState";
@@ -21,6 +23,8 @@ function App() {
       <HistoryProvider>
         <Shell />
       </HistoryProvider>
+      <FolderExplainerDialog />
+      <NoteAnnouncer />
       <Toaster />
     </AppStateProvider>
   );

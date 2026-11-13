@@ -25,6 +25,7 @@ fn migrated_database_has_the_schema() {
         "framework_sections",
         "prompt_entries",
         "projects",
+        "settings",
         "prompt_entries_fts",
     ] {
         assert!(schema_object_exists(&conn, "table", table), "{table}");

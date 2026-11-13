@@ -1,6 +1,7 @@
 import * as Toast from "@radix-ui/react-toast";
 import { useAppDispatch, useAppState } from "../state/AppState";
 import type { Toast as ToastData } from "../state/reducer";
+import { Cross } from "./icons";
 
 // Errors stay up longer: they usually need reading, "Copied" does not.
 const DURATION: Record<ToastData["kind"], number> = {
@@ -58,22 +59,5 @@ export function Toaster() {
           preview underneath; only the toasts themselves catch it. */}
       <Toast.Viewport className="pointer-events-none fixed right-0 bottom-0 z-50 m-0 flex w-96 max-w-full list-none flex-col gap-2 p-4 outline-none" />
     </Toast.Provider>
-  );
-}
-
-function Cross() {
-  return (
-    <svg
-      aria-hidden="true"
-      width="12"
-      height="12"
-      viewBox="0 0 12 12"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-    >
-      <path d="M2 2l8 8M10 2l-8 8" />
-    </svg>
   );
 }

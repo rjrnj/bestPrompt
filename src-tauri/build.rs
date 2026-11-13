@@ -24,12 +24,15 @@ const COMMANDS: &[&str] = &[
     "delete_project",
     "claude_status",
     "detect_claude",
+    "open_help",
     "pick_folder",
     "start_session",
     "write_session",
     "resize_session",
     "paste_clipboard",
     "close_session",
+    "get_settings",
+    "set_setting",
 ];
 
 fn main() {

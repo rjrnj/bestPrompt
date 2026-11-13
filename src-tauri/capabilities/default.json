@@ -26,11 +26,14 @@
     "allow-delete-project",
     "allow-claude-status",
     "allow-detect-claude",
+    "allow-open-help",
     "allow-pick-folder",
     "allow-start-session",
     "allow-write-session",
     "allow-resize-session",
     "allow-paste-clipboard",
-    "allow-close-session"
+    "allow-close-session",
+    "allow-get-settings",
+    "allow-set-setting"
   ]
 }

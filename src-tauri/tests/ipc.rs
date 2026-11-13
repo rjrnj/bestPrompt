@@ -218,6 +218,22 @@ fn the_webview_may_not_read_the_clipboard() {
     assert!(!text.contains("not found"), "{error}");
 }
 
+/// The page opens from Rust at a fixed address. Granting the opener plugin
+/// would let the page open any address, so none of its permissions may be
+/// in the capability.
+#[test]
+fn open_help_is_granted_and_opener_is_not() {
+    let capability = include_str!("../capabilities/default.json");
+
+    let granted: Vec<&str> = quoted(capability).collect();
+
+    assert!(granted.contains(&"allow-open-help"));
+    assert!(
+        !granted.iter().any(|name| name.starts_with("opener:")),
+        "{granted:?}"
+    );
+}
+
 #[test]
 fn the_webview_can_get_one_framework_by_id() {
     let window = main_window();
@@ -869,4 +885,29 @@ fn the_webview_can_read_the_claude_status() {
     assert_eq!(status["found"], true);
     let path = PathBuf::from(status["path"].as_str().unwrap());
     assert!(path.ends_with(format!("fake_claude{}", std::env::consts::EXE_SUFFIX)));
+}
+
+#[test]
+fn get_and_set_settings_over_ipc() {
+    // Each window gets its own fresh in-memory database, so these are the
+    // defaults.
+    let window = main_window();
+
+    let before = invoke(&window, "get_settings", json!({})).unwrap();
+    invoke(
+        &window,
+        "set_setting",
+        json!({ "setting": { "theme": "dark" } }),
+    )
+    .unwrap();
+    invoke(
+        &window,
+        "set_setting",
+        json!({ "setting": { "sendHintSeen": true } }),
+    )
+    .unwrap();
+    let after = invoke(&window, "get_settings", json!({})).unwrap();
+
+    assert_eq!(before, json!({ "theme": "system", "sendHintSeen": false }));
+    assert_eq!(after, json!({ "theme": "dark", "sendHintSeen": true }));
 }

@@ -8,17 +8,20 @@ import {
   createProject,
   deleteFramework,
   deleteProject,
+  getSettings,
   latestEntryProject,
   listFrameworks,
   listProjects,
   renameProject,
   restoreFramework,
   savePromptEntry,
+  setSetting,
   updateFramework,
 } from "../api";
 import type { Framework } from "../bindings/Framework";
 import type { FrameworkInput } from "../bindings/FrameworkInput";
 import type { Project } from "../bindings/Project";
+import type { Settings } from "../bindings/Settings";
 import type { PromptEntry } from "../bindings/PromptEntry";
 import { writeText } from "../clipboard";
 import {
@@ -43,6 +46,8 @@ vi.mock("../api", async (importOriginal) => ({
   renameProject: vi.fn(),
   deleteProject: vi.fn(),
   latestEntryProject: vi.fn(),
+  getSettings: vi.fn(),
+  setSetting: vi.fn(),
 }));
 vi.mock("../clipboard", () => ({ writeText: vi.fn() }));
 
@@ -109,6 +114,8 @@ function Probe() {
           ? state.projects.items.map((p) => p.name).join(",")
           : ""}
       </p>
+      <p>theme: {state.settings?.theme ?? "unloaded"}</p>
+      <p>hint seen: {String(state.settings?.sendHintSeen ?? "unloaded")}</p>
       <p>result: {result}</p>
       <ul aria-label="toasts">
         {state.toasts.map((t) => (
@@ -118,6 +125,9 @@ function Probe() {
         ))}
       </ul>
       <button onClick={() => void loadFrameworks()}>reload</button>
+      <button onClick={() => void actions.saveSetting({ theme: "dark" })}>
+        choose dark
+      </button>
       <button onClick={() => void copy(entry())}>copy</button>
       <button onClick={() => void save(entry())}>save</button>
       <button
@@ -200,8 +210,12 @@ function Probe() {
 /** A promise the test resolves by hand, to order overlapping loads. */
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((r) => (resolve = r));
-  return { promise, resolve };
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 function renderProbe() {
@@ -215,6 +229,10 @@ function renderProbe() {
 beforeEach(() => {
   vi.mocked(listProjects).mockResolvedValue([]);
   vi.mocked(latestEntryProject).mockResolvedValue(null);
+  vi.mocked(getSettings).mockResolvedValue({
+    theme: "system",
+    sendHintSeen: false,
+  });
 });
 
 afterEach(() => {
@@ -974,5 +992,71 @@ describe("AppStateProvider framework actions", () => {
     expect(after).toBe(field);
     expect(after).toHaveFocus();
     expect(after).toHaveValue("hello");
+  });
+});
+
+describe("settings", () => {
+  beforeEach(() => {
+    vi.mocked(listFrameworks).mockResolvedValue([rtf]);
+  });
+
+  it("settings_load_at_startup", async () => {
+    vi.mocked(getSettings).mockResolvedValue({
+      theme: "light",
+      sendHintSeen: true,
+    });
+
+    renderProbe();
+
+    expect(await screen.findByText("theme: light")).toBeInTheDocument();
+    expect(screen.getByText("hint seen: true")).toBeInTheDocument();
+  });
+
+  it("uses the defaults when the settings can't be read", async () => {
+    vi.mocked(getSettings).mockRejectedValue(new Error("no database"));
+
+    renderProbe();
+
+    expect(await screen.findByText("theme: system")).toBeInTheDocument();
+    expect(screen.getByText("hint seen: false")).toBeInTheDocument();
+  });
+
+  it("applies a setting at once and saves it", async () => {
+    const pending = deferred<void>();
+    vi.mocked(setSetting).mockReturnValue(pending.promise);
+    renderProbe();
+    await screen.findByText("theme: system");
+
+    await userEvent.click(screen.getByText("choose dark"));
+
+    expect(screen.getByText("theme: dark")).toBeInTheDocument();
+    expect(setSetting).toHaveBeenCalledWith({ theme: "dark" });
+    pending.resolve();
+  });
+
+  it("a_failed_setting_save_says_so", async () => {
+    vi.mocked(setSetting).mockRejectedValue(new Error("disk full"));
+    renderProbe();
+    await screen.findByText("theme: system");
+
+    await userEvent.click(screen.getByText("choose dark"));
+
+    expect(
+      await screen.findByText("error: Couldn't save the setting: disk full"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("theme: dark")).toBeInTheDocument();
+  });
+
+  it("keeps a value chosen before the settings failed to load", async () => {
+    const load = deferred<Settings>();
+    vi.mocked(getSettings).mockReturnValue(load.promise);
+    vi.mocked(setSetting).mockResolvedValue();
+    renderProbe();
+
+    await userEvent.click(screen.getByText("choose dark"));
+    load.reject(new Error("no database"));
+
+    expect(await screen.findByText("hint seen: false")).toBeInTheDocument();
+    expect(screen.getByText("theme: dark")).toBeInTheDocument();
   });
 });

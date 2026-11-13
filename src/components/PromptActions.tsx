@@ -35,6 +35,8 @@ export function PromptActions() {
   const running =
     hasOwn(state.sessions, key) && state.sessions[key].state === "running";
   const canSend = canSave && !running;
+  // The prompt shown is the one this session was started with.
+  const sentHere = running && state.sessions[key].sent === prompt;
   const title = currentTitle(state);
   const canClear =
     title !== "" || Object.values(draft).some((value) => value !== "");
@@ -87,8 +89,14 @@ export function PromptActions() {
           </button>
           {running && (
             <span id={hintId} className={fieldHelp}>
-              Claude Code is already running. Paste into it with{" "}
-              {pasteKeys(currentPlatform())}.
+              {sentHere ? (
+                "Sent to Claude Code."
+              ) : (
+                <>
+                  Claude Code is already running. Paste into it with{" "}
+                  {pasteKeys(currentPlatform())}.
+                </>
+              )}
             </span>
           )}
         </>

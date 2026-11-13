@@ -10,6 +10,7 @@ pub mod projects;
 #[cfg(test)]
 mod schema_tests;
 pub mod search;
+pub mod settings;
 #[cfg(test)]
 pub(crate) mod test_support;
 

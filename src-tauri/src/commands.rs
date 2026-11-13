@@ -9,17 +9,19 @@
 use std::sync::{Mutex, PoisonError};
 
 use rusqlite::Connection;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Builder, Manager, Runtime, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
+use ts_rs::TS;
 
 use crate::claude::{ClaudeState, ClaudeStatus};
 use crate::db::DbError;
 use crate::db::entries::{self, EntryCursor, EntryQuery, NewPromptEntry, PromptEntry};
 use crate::db::frameworks::{self, Framework, FrameworkInput};
 use crate::db::projects::{self, Project};
+use crate::db::settings::{self, Setting, Settings};
 use crate::terminal::folders::{PickedFolders, allowed_folder};
 use crate::terminal::{SessionError, SessionEvent, Sessions, StartedSession};
 
@@ -58,12 +60,15 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
         delete_project,
         claude_status,
         detect_claude,
+        open_help,
         pick_folder,
         start_session,
         write_session,
         resize_session,
         paste_clipboard,
         close_session,
+        get_settings,
+        set_setting,
     ])
 }
 
@@ -239,12 +244,53 @@ fn claude_status(claude: State<'_, ClaudeState>) -> ClaudeStatus {
     claude.status()
 }
 
-/// Looks for the CLI again, once startup detection has read the
-/// environment it searches.
+/// Looks for the CLI again, once startup detection has finished, with a
+/// freshly read environment.
 #[tauri::command(async)]
 fn detect_claude(claude: State<'_, ClaudeState>) -> ClaudeStatus {
     claude.wait_until_detected();
-    claude.detect()
+    claude.redetect()
+}
+
+/// A help page the app can open in the browser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum HelpPage {
+    /// How to install Claude Code.
+    ClaudeSetup,
+}
+
+/// Where `page` lives. The webview names a page, never an address.
+fn help_url(page: HelpPage) -> &'static str {
+    match page {
+        HelpPage::ClaudeSetup => "https://code.claude.com/docs/en/setup",
+    }
+}
+
+/// Opens a help page in the default browser.
+#[tauri::command(async)]
+fn open_help(page: HelpPage) -> Result<(), String> {
+    tauri_plugin_opener::open_url(help_url(page), None::<&str>).map_err(|error| error.to_string())
+}
+
+/// What a chosen folder is for, which decides how the chooser is titled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum FolderPurpose {
+    /// The folder Claude Code works in.
+    Claude,
+    /// A project's folder.
+    Project,
+}
+
+/// The chooser's title for `purpose`; `None` keeps the system's default.
+fn chooser_title(purpose: FolderPurpose) -> Option<&'static str> {
+    match purpose {
+        FolderPurpose::Claude => Some("Choose a folder for Claude Code"),
+        FolderPurpose::Project => None,
+    }
 }
 
 /// Asks the user for a folder and remembers it as one a session may start
@@ -253,13 +299,17 @@ fn detect_claude(claude: State<'_, ClaudeState>) -> ClaudeStatus {
 /// calling window owns the dialog, so it can't be used until the dialog
 /// closes.
 #[tauri::command]
-async fn pick_folder<R: Runtime>(window: tauri::WebviewWindow<R>) -> Option<String> {
+async fn pick_folder<R: Runtime>(
+    window: tauri::WebviewWindow<R>,
+    purpose: FolderPurpose,
+) -> Option<String> {
     tauri::async_runtime::spawn_blocking(move || {
         let app = window.app_handle();
-        let path = app
-            .dialog()
-            .file()
-            .set_parent(&window)
+        let mut dialog = app.dialog().file().set_parent(&window);
+        if let Some(title) = chooser_title(purpose) {
+            dialog = dialog.set_title(title);
+        }
+        let path = dialog
             .blocking_pick_folder()?
             .into_path()
             .map_err(|error| log::warn!("the picked folder isn't a path: {error}"))
@@ -362,9 +412,36 @@ fn close_session(sessions: State<'_, Sessions>, id: String) -> Result<(), Sessio
     sessions.close(&id)
 }
 
+#[tauri::command(async)]
+fn get_settings(db: State<'_, Db>) -> Result<Settings, DbError> {
+    db.with(|conn| settings::get_settings(conn))
+}
+
+#[tauri::command(async)]
+fn set_setting(db: State<'_, Db>, setting: Setting) -> Result<(), DbError> {
+    db.with(|conn| settings::set_setting(conn, &setting))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pick_folder_titles_the_claude_chooser() {
+        assert_eq!(
+            chooser_title(FolderPurpose::Claude),
+            Some("Choose a folder for Claude Code")
+        );
+        assert_eq!(chooser_title(FolderPurpose::Project), None);
+    }
+
+    #[test]
+    fn open_help_maps_only_known_pages() {
+        assert_eq!(
+            help_url(HelpPage::ClaudeSetup),
+            "https://code.claude.com/docs/en/setup"
+        );
+    }
 
     #[test]
     fn saved_folders_that_cannot_be_read_count_as_none() {

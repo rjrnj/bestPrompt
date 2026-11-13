@@ -18,6 +18,7 @@ import { FOLDER_MAX_CHARS, shortenPath } from "../paths";
 import { AppStateProvider, useAppActions } from "../state/AppState";
 import { disposeTerminal, startTerminalSession } from "../terminal/terminals";
 import { ProjectPicker } from "./ProjectPicker";
+import { FolderExplainerDialog } from "./terminal/FolderExplainerDialog";
 import { Toaster } from "./Toaster";
 
 // Only the commands are mocked; ApiError stays the real class.
@@ -76,14 +77,28 @@ function RestartWebSession() {
   );
 }
 
+/** Goes on from the explainer before Claude's folder chooser. */
+async function chooseInExplainer(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(
+    within(
+      await screen.findByRole("alertdialog", {
+        name: "Choose a folder for Claude Code",
+      }),
+    ).getByRole("button", { name: "Choose folder…" }),
+  );
+}
+
 /**
  * Renders the Builder's picker and opens Manage projects from its list.
  * `closeFirst` starts closing web's session, once started, before that.
+ * `explained` answers the folder explainer that starting without a folder
+ * brings up.
  */
 async function openDialog({
   startFirst = false,
   waitForStart = true,
   closeFirst = false,
+  explained = false,
 } = {}) {
   render(
     <AppStateProvider>
@@ -91,12 +106,15 @@ async function openDialog({
       <StartWebSession />
       <CloseWebSession />
       <RestartWebSession />
+      <FolderExplainerDialog />
       <Toaster />
     </AppStateProvider>,
   );
   const user = userEvent.setup();
   if (startFirst) {
     await user.click(screen.getByRole("button", { name: "Start for web" }));
+    // A project without a folder explains the chooser first.
+    if (explained) await chooseInExplainer(user);
     if (waitForStart) {
       await waitFor(() => expect(startTerminalSession).toHaveBeenCalled());
     }
@@ -626,6 +644,7 @@ describe("ManageProjectsDialog", () => {
     );
     const user = first.user;
     await user.click(screen.getByRole("button", { name: "Restart for web" }));
+    await chooseInExplainer(user);
     await waitFor(() => expect(pickFolder).toHaveBeenCalled());
 
     await user.click(screen.getByRole("combobox", { name: "Project" }));
@@ -675,8 +694,9 @@ describe("ManageProjectsDialog", () => {
     const { user, dialog } = await openDialog({
       startFirst: true,
       waitForStart: false,
+      explained: true,
     });
-    expect(pickFolder).toHaveBeenCalled();
+    await waitFor(() => expect(pickFolder).toHaveBeenCalled());
 
     await user.click(
       within(dialog).getByRole("button", { name: "Delete web" }),

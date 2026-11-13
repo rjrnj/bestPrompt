@@ -177,9 +177,7 @@ impl ClaudeState {
         }
 
         let _finished = Finished(self);
-        let env = read_env();
-        *self.base_env.lock().unwrap_or_else(PoisonError::into_inner) = env;
-        self.detect();
+        self.redetect_with(|| Some(read_env()));
     }
 
     /// Marks startup detection as done and wakes everything waiting on it.
@@ -224,6 +222,23 @@ impl ClaudeState {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+
+    /// Reads the base environment again, so a CLI installed since startup is
+    /// on the `PATH` searched, then detects with it. Sessions started
+    /// afterwards use the new environment. When the environment can't be
+    /// read, the one already held stays.
+    pub fn redetect(&self) -> ClaudeStatus {
+        self.redetect_with(env::read_base_env)
+    }
+
+    /// `redetect`, with `read_env` reading the base environment: None keeps
+    /// the one held now.
+    fn redetect_with(&self, read_env: impl FnOnce() -> Option<Env>) -> ClaudeStatus {
+        if let Some(env) = read_env() {
+            *self.base_env.lock().unwrap_or_else(PoisonError::into_inner) = env;
+        }
+        self.detect()
     }
 
     /// Looks for the CLI again and remembers the result.
@@ -422,6 +437,45 @@ mod tests {
 
         assert!(finished.load(std::sync::atomic::Ordering::SeqCst));
         detector.join().unwrap();
+    }
+
+    #[test]
+    fn redetect_uses_a_fresh_environment() {
+        let dir = tempfile::tempdir().unwrap();
+        let name = if cfg!(windows) {
+            "claude.exe"
+        } else {
+            "claude"
+        };
+        std::fs::write(dir.path().join(name), b"").unwrap();
+        let fresh: Env = vec![("PATH".into(), dir.path().into())];
+        let state = ClaudeState::from_parts(None, vec![("PATH".into(), "".into())], None);
+        assert!(!state.status().found);
+
+        let status = state.redetect_with(|| Some(fresh.clone()));
+
+        assert!(status.found, "{status:?}");
+        assert_eq!(state.base_env(), fresh);
+        assert_eq!(state.status(), status);
+    }
+
+    #[test]
+    fn redetect_keeps_the_environment_it_has_when_none_can_be_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let name = if cfg!(windows) {
+            "claude.exe"
+        } else {
+            "claude"
+        };
+        std::fs::write(dir.path().join(name), b"").unwrap();
+        let held: Env = vec![("PATH".into(), dir.path().into())];
+        let state = ClaudeState::from_parts(None, held.clone(), None);
+
+        let status = state.redetect_with(|| None);
+
+        // Detected with the environment held, which stays for sessions.
+        assert!(status.found, "{status:?}");
+        assert_eq!(state.base_env(), held);
     }
 
     #[test]

@@ -24,6 +24,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/003_entry_version.sql"),
     include_str!("migrations/004_custom_frameworks.sql"),
     include_str!("migrations/005_project_folder.sql"),
+    include_str!("migrations/006_settings.sql"),
 ];
 
 /// The schema version of a database that `migrate` would have to change,
@@ -208,7 +209,7 @@ mod tests {
 
         apply(&mut conn, MIGRATIONS).unwrap();
 
-        assert_eq!(user_version(&conn).unwrap(), 5);
+        assert_eq!(user_version(&conn).unwrap(), 6);
         assert_eq!(
             count(
                 &conn,
