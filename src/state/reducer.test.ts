@@ -1829,6 +1829,31 @@ describe("settings", () => {
     expect(next.settings).toEqual({ theme: "dark", sendHintSeen: false });
   });
 
+  it("know whether they came from storage", () => {
+    const loaded = reducer(initialState, {
+      type: "settingsLoaded",
+      settings: { theme: "dark", sendHintSeen: false },
+    });
+    const failed = reducer(initialState, { type: "settingsLoadFailed" });
+
+    expect(initialState.settingsStored).toBe(false);
+    expect(loaded.settingsStored).toBe(true);
+    expect(failed.settingsStored).toBe(false);
+    expect(failed.settings).toEqual({ theme: "system", sendHintSeen: false });
+  });
+
+  it("a failed load keeps a change made before it", () => {
+    const changed = reducer(initialState, {
+      type: "settingChanged",
+      setting: { theme: "dark" },
+    });
+
+    const failed = reducer(changed, { type: "settingsLoadFailed" });
+
+    expect(failed.settings).toEqual({ theme: "dark", sendHintSeen: false });
+    expect(failed.settingsStored).toBe(false);
+  });
+
   it("a change made before they load survives the load", () => {
     const changed = reducer(initialState, {
       type: "settingChanged",

@@ -4,9 +4,12 @@
    marked at startup by markOverlayScrollbars in scrollbars.ts. */
 @custom-variant overlay-scrollbars (&:where([data-overlay-scrollbars] *));
 
-/* Both themes are styled and the OS setting picks one (Tailwind's `dark:`
-   variant follows prefers-color-scheme). color-scheme makes native controls
-   and scrollbars follow too. An in-app toggle comes later. */
+/* Both themes are styled. `data-theme` on <html> holds the resolved theme
+   ("light" or "dark"), set by public/theme-init.js before the first paint
+   and then by applyTheme in theme.ts; `dark:` follows it. color-scheme is
+   set alongside, so native controls and scrollbars follow too. */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
 :root {
   color-scheme: light dark;
 }

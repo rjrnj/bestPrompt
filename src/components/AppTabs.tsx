@@ -3,6 +3,7 @@ import { useRef, useState, type ReactNode } from "react";
 import { useAppDispatch, useAppState } from "../state/AppState";
 import type { State } from "../state/reducer";
 import { DiscardChangesDialog } from "./frameworks/DiscardChangesDialog";
+import { SettingsDialog } from "./SettingsDialog";
 
 type Props = {
   /** Header controls that belong to the Builder, hidden on the other tabs. */
@@ -24,10 +25,10 @@ function isView(value: string): value is State["view"] {
 
 /**
  * The window: a header with the app name, the Builder | History |
- * Frameworks tabs and, on the Builder, its tools; then the open tab's
- * content. The tab shown is the state's `view`, so opening a saved prompt
- * can switch to the Builder. Leaving Frameworks with unsaved changes asks
- * first. The header has room for the settings that come later.
+ * Frameworks tabs, on the Builder its tools, and the Settings button at the
+ * right end; then the open tab's content. The tab shown is the state's
+ * `view`, so opening a saved prompt can switch to the Builder. Leaving
+ * Frameworks with unsaved changes asks first.
  */
 export function AppTabs({ builderTools, builder, history, frameworks }: Props) {
   const { view, editingFramework } = useAppState();
@@ -54,27 +55,34 @@ export function AppTabs({ builderTools, builder, history, frameworks }: Props) {
       }}
       className="flex h-screen flex-col bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100"
     >
-      <header className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
-        <h1 className="text-lg font-semibold text-sky-700 dark:text-sky-400">
-          bestPrompt
-        </h1>
-        <Tabs.List
-          ref={tabList}
-          id={VIEWS_TABLIST_ID}
-          aria-label="Views"
-          className="flex gap-0.5 rounded-md border border-slate-300 p-0.5 dark:border-slate-700"
-        >
-          <Tabs.Trigger value="builder" className={trigger}>
-            Builder
-          </Tabs.Trigger>
-          <Tabs.Trigger value="history" className={trigger}>
-            History
-          </Tabs.Trigger>
-          <Tabs.Trigger value="frameworks" className={trigger}>
-            Frameworks
-          </Tabs.Trigger>
-        </Tabs.List>
-        {view === "builder" && builderTools}
+      {/* The Settings button sits outside the wrapping row, so it stays in
+          the top-right corner however the rest wraps. */}
+      <header className="flex items-start gap-x-4 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-6 gap-y-2">
+          <h1 className="text-lg font-semibold text-sky-700 dark:text-sky-400">
+            bestPrompt
+          </h1>
+          <Tabs.List
+            ref={tabList}
+            id={VIEWS_TABLIST_ID}
+            aria-label="Views"
+            className="flex gap-0.5 rounded-md border border-slate-300 p-0.5 dark:border-slate-700"
+          >
+            <Tabs.Trigger value="builder" className={trigger}>
+              Builder
+            </Tabs.Trigger>
+            <Tabs.Trigger value="history" className={trigger}>
+              History
+            </Tabs.Trigger>
+            <Tabs.Trigger value="frameworks" className={trigger}>
+              Frameworks
+            </Tabs.Trigger>
+          </Tabs.List>
+          {view === "builder" && builderTools}
+        </div>
+        <div className="mt-0.5 shrink-0">
+          <SettingsDialog />
+        </div>
       </header>
       <main className="min-h-0 flex-1">
         {/* The Builder stays mounted while History shows, so coming back

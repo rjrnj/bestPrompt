@@ -51,7 +51,6 @@ import { writeText } from "../clipboard";
 import { hasOwn } from "../hasOwn";
 import { currentPlatform, pasteKeys } from "../terminal/keys";
 import {
-  DEFAULT_SETTINGS,
   initialStateFor,
   listedProjects,
   NO_PROJECT_KEY,
@@ -385,9 +384,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         if (current) dispatch({ type: "settingsLoaded", settings });
       },
       () => {
-        if (current) {
-          dispatch({ type: "settingsLoaded", settings: DEFAULT_SETTINGS });
-        }
+        if (current) dispatch({ type: "settingsLoadFailed" });
       },
     );
     return () => {

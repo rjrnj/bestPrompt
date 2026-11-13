@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AppTabs } from "./components/AppTabs";
 import { FrameworkPicker } from "./components/FrameworkPicker";
 import { FrameworksView } from "./components/frameworks/FrameworksView";
@@ -14,6 +14,7 @@ import { NoteAnnouncer } from "./components/terminal/WaitingNote";
 import { Toaster } from "./components/Toaster";
 import { AppStateProvider, useAppState } from "./state/AppState";
 import { HistoryProvider } from "./state/HistoryState";
+import { applyTheme } from "./theme";
 
 function App() {
   return (
@@ -23,11 +24,27 @@ function App() {
       <HistoryProvider>
         <Shell />
       </HistoryProvider>
+      <ThemeSync />
       <FolderExplainerDialog />
       <NoteAnnouncer />
       <Toaster />
     </AppStateProvider>
   );
+}
+
+/**
+ * Applies the saved theme once the settings load, and again whenever it
+ * changes. Until then, and if they can't be read, the first-paint script's
+ * choice stands, unless the user picks one.
+ */
+function ThemeSync() {
+  const { settings, settingsStored, changedSettings } = useAppState();
+  const theme = settings?.theme;
+  const known = settingsStored || changedSettings.includes("theme");
+  useEffect(() => {
+    if (theme !== undefined && known) applyTheme(theme);
+  }, [theme, known]);
+  return null;
 }
 
 /**

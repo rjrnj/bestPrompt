@@ -15,6 +15,10 @@ export default defineConfig([
     extends: [reactHooks.configs.flat.recommended],
   },
   {
+    files: ["public/*.js"],
+    languageOptions: { globals: globals.browser, sourceType: "script" },
+  },
+  {
     files: ["*.{js,ts}"],
     languageOptions: { globals: globals.node },
   },

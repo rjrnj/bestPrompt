@@ -56,3 +56,10 @@ export const selectContent =
 export const selectItem =
   "relative flex cursor-default items-center rounded py-1.5 pr-2 pl-7 text-sm wrap-break-word text-slate-900 outline-none select-none data-highlighted:bg-sky-100 data-highlighted:text-sky-900 dark:text-slate-100 dark:data-highlighted:bg-sky-900 dark:data-highlighted:text-sky-100";
 export const selectSeparator = "my-1 h-px bg-slate-200 dark:bg-slate-700";
+
+export const radioLegend =
+  "mb-1 text-sm font-medium text-slate-700 dark:text-slate-300";
+export const radioLabel =
+  "flex cursor-pointer items-center gap-2 text-sm text-slate-900 dark:text-slate-100";
+export const radioInput =
+  "size-4 accent-sky-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:accent-sky-400";
