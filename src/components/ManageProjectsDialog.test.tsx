@@ -217,6 +217,24 @@ describe("ManageProjectsDialog", () => {
     );
   });
 
+  it("a_deleted_projects_row_hands_the_focus_to_done", async () => {
+    vi.mocked(deleteProject).mockResolvedValue();
+    const { user, dialog } = await openDialog();
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Delete web" }),
+    );
+    const confirm = await screen.findByRole("alertdialog");
+    await user.click(within(confirm).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(names(dialog)).toEqual(["api"]));
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole("button", { name: "Done" }),
+      ).toHaveFocus(),
+    );
+  });
+
   it("keeps the rename dialog open on a duplicate name", async () => {
     vi.mocked(renameProject).mockRejectedValue(
       new ApiError("invalid", "A project named “web” already exists."),

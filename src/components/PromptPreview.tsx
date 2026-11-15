@@ -1,6 +1,12 @@
 import { useId, type ReactNode } from "react";
 import { useCurrentPrompt } from "../state/useCurrentPrompt";
 
+/**
+ * The empty preview's line, which says why Copy, Save and Send are
+ * unavailable.
+ */
+export const EMPTY_PREVIEW_ID = "preview-empty";
+
 type Props = {
   /** Buttons for the header row, beside the title (Copy, Save, Clear…). */
   actions?: ReactNode;
@@ -35,7 +41,10 @@ export function PromptPreview({ actions }: Props) {
         </div>
       </div>
       {!hasPrompt ? (
-        <p className="px-4 pb-4 text-sm text-slate-500 dark:text-slate-400">
+        <p
+          id={EMPTY_PREVIEW_ID}
+          className="px-4 pb-4 text-sm text-slate-500 dark:text-slate-400"
+        >
           Fill in a section to see the prompt.
         </p>
       ) : (

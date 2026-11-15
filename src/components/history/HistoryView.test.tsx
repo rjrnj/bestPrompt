@@ -336,7 +336,7 @@ describe("HistoryView list pane", () => {
     expect(screen.queryByText("No prompts match.")).not.toBeInTheDocument();
     await user.type(box, "zzz");
 
-    expect(await screen.findByText("No prompts match.")).toBeInTheDocument();
+    expect(await screen.findByText("No prompts match.")).toBeVisible();
     await waitFor(() => expect(lastQuery()?.search).toBe("zzz"));
     await user.click(
       screen.getByRole("button", { name: "Clear search and filters" }),
@@ -344,6 +344,30 @@ describe("HistoryView list pane", () => {
 
     expect(box).toHaveValue("");
     await waitFor(() => expect(lastQuery()?.search).toBeNull());
+  });
+
+  it("no_results_are_announced_politely", async () => {
+    vi.mocked(listPromptEntries).mockImplementation((query) =>
+      Promise.resolve(query.search === null ? [entry("a")] : []),
+    );
+    renderView();
+    const user = userEvent.setup();
+    const box = await screen.findByRole("searchbox", {
+      name: "Search prompts",
+    });
+    await screen.findByRole("button", { name: /task a/ });
+    // There before it has anything to say, so that what it says is read.
+    const status = screen.getByRole("status");
+    expect(status).toBeEmptyDOMElement();
+
+    await user.type(box, "zzz");
+
+    await waitFor(() => expect(status).toHaveTextContent("No prompts match."));
+    // The one line is the announcement: reading on doesn't say it twice.
+    expect(screen.getAllByText("No prompts match.")).toHaveLength(1);
+    expect(status).not.toHaveClass("sr-only");
+    await user.clear(box);
+    await waitFor(() => expect(status).toBeEmptyDOMElement());
   });
 
   it("rows_are_reachable_and_selectable_by_keyboard", async () => {

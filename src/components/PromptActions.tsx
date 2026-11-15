@@ -5,6 +5,7 @@ import { currentTitle, NO_PROJECT_KEY } from "../state/reducer";
 import { useCurrentPrompt } from "../state/useCurrentPrompt";
 // Pure: xterm stays out of the main chunk.
 import { currentPlatform, pasteKeys } from "../terminal/keys";
+import { EMPTY_PREVIEW_ID } from "./PromptPreview";
 import { fieldHelp, primaryButton, secondaryButton } from "./styles";
 
 /** The Show Claude Code button's id, so Hide can hand it the focus. */
@@ -38,6 +39,12 @@ export function PromptActions() {
   // The prompt shown is the one this session was started with.
   const sentHere = running && state.sessions[key].sent === prompt;
   const title = currentTitle(state);
+  // Without a prompt the preview says why there is nothing to copy, save or
+  // send; while saving or sending there is no reason worth reading.
+  const why = hasPrompt ? null : EMPTY_PREVIEW_ID;
+  const sendWhy =
+    [why, running ? hintId : null].filter((id) => id !== null).join(" ") ||
+    undefined;
   const canClear =
     title !== "" || Object.values(draft).some((value) => value !== "");
   // The rendered prompt goes in verbatim: the duplicate check compares it
@@ -56,6 +63,7 @@ export function PromptActions() {
         type="button"
         className={primaryButton}
         aria-disabled={!canSave}
+        aria-describedby={why ?? undefined}
         onClick={() => {
           if (canSave) void copy(entry);
         }}
@@ -66,6 +74,7 @@ export function PromptActions() {
         type="button"
         className={secondaryButton}
         aria-disabled={!canSave}
+        aria-describedby={why ?? undefined}
         onClick={() => {
           if (canSave) void save(entry);
         }}
@@ -78,7 +87,7 @@ export function PromptActions() {
             type="button"
             className={secondaryButton}
             aria-disabled={!canSend}
-            aria-describedby={running ? hintId : undefined}
+            aria-describedby={sendWhy}
             onClick={() => {
               if (!canSend) return;
               setSending(true);

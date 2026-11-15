@@ -57,7 +57,7 @@ export function EntryDetail() {
       <p
         ref={hint}
         tabIndex={-1}
-        className="text-sm text-slate-600 focus:outline-none dark:text-slate-400"
+        className="text-sm text-slate-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-500 dark:text-slate-400"
       >
         Select a prompt to read it.
       </p>

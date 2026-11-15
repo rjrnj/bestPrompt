@@ -1,6 +1,6 @@
 import { HistoryFilters } from "./HistoryFilters";
 import { EntryDetail } from "./EntryDetail";
-import { HistoryList } from "./HistoryList";
+import { HistoryList, NoMatchStatus } from "./HistoryList";
 
 /**
  * The History tab's content: the list pane on the left, 300 px wide, then a
@@ -14,6 +14,7 @@ export function HistoryView() {
         className="flex w-75 shrink-0 flex-col gap-4 overflow-y-auto p-4"
       >
         <HistoryFilters />
+        <NoMatchStatus />
         <HistoryList />
       </section>
       <div className="w-px shrink-0 bg-slate-200 dark:bg-slate-800" />

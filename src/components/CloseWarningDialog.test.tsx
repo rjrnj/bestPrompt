@@ -219,6 +219,24 @@ describe("the close warning", () => {
     expect(await quitDialog()).toBeInTheDocument();
   });
 
+  it("closing_the_warning_returns_focus_to_where_it_was", async () => {
+    const user = await renderApp();
+    const task = screen.getByRole("textbox", { name: "Task" });
+    await user.type(task, "hello");
+
+    await requestClose();
+    await quitDialog();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(task).toHaveFocus();
+
+    await requestClose();
+    await user.click(
+      within(await quitDialog()).getByRole("button", { name: "Cancel" }),
+    );
+    expect(task).toHaveFocus();
+  });
+
   it("a_failed_quit_toasts_and_leaves_the_dialog_closed", async () => {
     windowMock.destroy.mockRejectedValue(new Error("No window to close"));
     vi.mocked(pickFolder).mockReturnValue(new Promise(() => {}));

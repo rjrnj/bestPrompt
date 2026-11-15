@@ -325,7 +325,7 @@ function ResizeHandle({
       aria-valuemin={Math.round(minShare(areaHeight) * 100)}
       aria-valuemax={100}
       tabIndex={0}
-      className="h-1.5 flex-none cursor-row-resize touch-none bg-slate-200 hover:bg-sky-300 focus-visible:bg-sky-400 focus-visible:outline-none dark:bg-slate-800 dark:hover:bg-sky-700 dark:focus-visible:bg-sky-500"
+      className="h-1.5 flex-none cursor-row-resize touch-none bg-slate-200 hover:bg-sky-300 focus-visible:bg-sky-600 focus-visible:outline-none dark:bg-slate-800 dark:hover:bg-sky-700 dark:focus-visible:bg-sky-500"
       onPointerDown={(event) => {
         if (event.button !== 0) return;
         event.preventDefault();

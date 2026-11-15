@@ -15,7 +15,7 @@ export function LoadErrorPanel({ message }: { message: string }) {
       <p className="mt-2 text-sm">{message}</p>
       <button
         type="button"
-        className="mt-4 rounded-md bg-red-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500 dark:bg-red-600 dark:hover:bg-red-500"
+        className="mt-4 rounded-md bg-red-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500 dark:bg-red-600 dark:hover:bg-red-700"
         onClick={() => void loadFrameworks()}
       >
         Retry

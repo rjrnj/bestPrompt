@@ -1,6 +1,6 @@
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import * as Dialog from "@radix-ui/react-dialog";
-import { useRef, useState } from "react";
+import { useRef, useState, type RefObject } from "react";
 import type { Project } from "../bindings/Project";
 import { hasOwn } from "../hasOwn";
 import { useAppActions, useAppState } from "../state/AppState";
@@ -29,6 +29,7 @@ export function ManageProjectsDialog({
   onOpenChange,
   onCloseAutoFocus,
 }: Props) {
+  const done = useRef<HTMLButtonElement>(null);
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
@@ -41,10 +42,10 @@ export function ManageProjectsDialog({
           <Dialog.Description className={dialogDescription}>
             Renaming or deleting a project keeps its prompts.
           </Dialog.Description>
-          <ProjectList />
+          <ProjectList done={done} />
           <div className={dialogButtons}>
             <Dialog.Close asChild>
-              <button type="button" className={secondaryButton}>
+              <button ref={done} type="button" className={secondaryButton}>
                 Done
               </button>
             </Dialog.Close>
@@ -55,7 +56,8 @@ export function ManageProjectsDialog({
   );
 }
 
-function ProjectList() {
+/** `done` is the dialog's Done button, which a deleted row hands the focus. */
+function ProjectList({ done }: { done: RefObject<HTMLButtonElement | null> }) {
   const { projects } = useAppState();
   const message = "text-sm text-slate-600 dark:text-slate-400";
   if (projects.status === "loading") {
@@ -74,13 +76,19 @@ function ProjectList() {
   return (
     <ul className="divide-y divide-slate-200 border-y border-slate-200 dark:divide-slate-700 dark:border-slate-700">
       {projects.items.map((project) => (
-        <ProjectRow key={project.id} project={project} />
+        <ProjectRow key={project.id} project={project} done={done} />
       ))}
     </ul>
   );
 }
 
-function ProjectRow({ project }: { project: Project }) {
+function ProjectRow({
+  project,
+  done,
+}: {
+  project: Project;
+  done: RefObject<HTMLButtonElement | null>;
+}) {
   const { renameProject, deleteProject, setProjectFolder, pickFolder } =
     useAppActions();
   const { sessions } = useAppState();
@@ -210,7 +218,13 @@ function ProjectRow({ project }: { project: Project }) {
                   <button
                     type="button"
                     className={dangerButton}
-                    onClick={() => void deleteProject(project.id)}
+                    onClick={() =>
+                      // The row goes with the project, and the focus with
+                      // it; Done takes it rather than the dialog itself.
+                      void deleteProject(project.id).then((deleted) => {
+                        if (deleted) done.current?.focus();
+                      })
+                    }
                   >
                     Delete
                   </button>
