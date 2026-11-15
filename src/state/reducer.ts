@@ -112,6 +112,11 @@ export type State = {
   /** The app settings; null until loaded. */
   settings: Settings | null;
   /**
+   * The settings were read from storage. False while loading, and when the
+   * load failed and the defaults stand in.
+   */
+  settingsStored: boolean;
+  /**
    * The settings changed during this run, so a load that finishes later
    * doesn't put a stored value over a choice made since.
    */
@@ -164,6 +169,7 @@ export type Action =
   | { type: "drawerResized"; height: number }
   | { type: "drawerMaximizeToggled" }
   | { type: "settingsLoaded"; settings: Settings }
+  | { type: "settingsLoadFailed" }
   | { type: "settingChanged"; setting: Setting };
 
 /** The most toasts shown at once; adding another drops the oldest. */
@@ -191,6 +197,7 @@ export const initialState: State = {
   missingFolders: [],
   drawer: { open: true, height: null, maximized: false },
   settings: null,
+  settingsStored: false,
   changedSettings: [],
 };
 
@@ -539,8 +546,10 @@ export function reducer(state: State, action: Action): State {
       for (const field of state.changedSettings) {
         Object.assign(settings, { [field]: held[field] });
       }
-      return { ...state, settings };
+      return { ...state, settings, settingsStored: true };
     }
+    case "settingsLoadFailed":
+      return { ...state, settings: state.settings ?? DEFAULT_SETTINGS };
     case "settingChanged":
       return {
         ...state,

@@ -2,9 +2,18 @@
 // cleanup (automatic only when Vitest globals are on, which they are not).
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
-import { afterEach } from "vitest";
+import { afterEach, beforeEach, vi } from "vitest";
+import { resetWindowMock } from "./tauriWindow";
 
 afterEach(cleanup);
+
+// There is no Tauri window under jsdom. Every file gets the mock in
+// tauriWindow.ts, which a file may import to drive or inspect it.
+vi.mock("@tauri-apps/api/window", async () => {
+  const { windowModule } = await import("./tauriWindow");
+  return windowModule;
+});
+beforeEach(resetWindowMock);
 
 // jsdom lacks what Radix Select uses to open and position its list: pointer
 // capture, scrollIntoView and ResizeObserver, and what xterm.js needs to open
