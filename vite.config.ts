@@ -12,6 +12,9 @@ export default defineConfig(() => ({
     // TODO: upgrade Node to >=24.15 (update .nvmrc and engines in package.json),
     // then bump jsdom to the latest major (30.x needs it; 29.x is pinned by engine-strict).
     environment: "jsdom",
+    // Vitest empties CSS imports, raw ones too; the contrast test reads
+    // Tailwind's theme file as text, so that one file is let through.
+    css: { include: [/tailwindcss\/theme\.css/] },
     setupFiles: ["./src/test/setup.ts"],
   },
 

@@ -22,7 +22,7 @@ export function HistoryView() {
         // Focusable because it scrolls on its own: WebKitGTK does not make
         // scrollable containers keyboard-reachable the way WebView2 does.
         tabIndex={0}
-        className="min-w-0 flex-1 overflow-y-auto p-6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-500"
+        className="min-w-0 flex-1 overflow-y-auto p-6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-500"
       >
         <EntryDetail />
       </section>

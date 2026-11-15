@@ -19,7 +19,7 @@ type Props = {
 const heading =
   "px-3 pb-1 text-xs font-semibold tracking-wide text-slate-600 uppercase dark:text-slate-400";
 const row =
-  "flex w-full min-w-0 items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm text-slate-900 hover:bg-slate-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-500 aria-pressed:bg-sky-100 dark:text-slate-100 dark:hover:bg-slate-800 dark:aria-pressed:bg-sky-900";
+  "flex w-full min-w-0 items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm text-slate-900 hover:bg-slate-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-500 aria-pressed:bg-sky-100 dark:text-slate-100 dark:hover:bg-slate-800 dark:aria-pressed:bg-sky-900";
 
 /** New framework, then the built-ins (each with a lock) and the user's own. */
 export function FrameworkList({

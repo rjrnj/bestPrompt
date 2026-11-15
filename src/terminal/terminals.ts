@@ -15,7 +15,7 @@ import {
 import type { SessionEvent } from "../bindings/SessionEvent";
 import type { StartedSession } from "../bindings/StartedSession";
 import { writeText } from "../clipboard";
-import { currentPlatform, keyAction } from "./keys";
+import { currentPlatform, F6_HINT_ID, keyAction } from "./keys";
 
 type Entry = {
   terminal: Terminal;
@@ -116,10 +116,23 @@ export async function startTerminalSession(
         e.preventDefault();
         send("\n");
         return false;
+      case "leave":
+        // Neither xterm nor Claude gets it; the event goes on to the
+        // window, which moves the focus.
+        return false;
       case "pass":
         return true;
     }
   });
+
+  // The input only exists once the terminal opens; it is described by the
+  // drawer's F6 hint, so a screen reader says how to leave when focus
+  // enters.
+  const open = terminal.open.bind(terminal);
+  terminal.open = (parent) => {
+    open(parent);
+    terminal.textarea?.setAttribute("aria-describedby", F6_HINT_ID);
+  };
 
   // Output that arrives after the terminal is gone is dropped.
   let disposed = false;

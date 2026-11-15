@@ -15,6 +15,7 @@ import { NoteAnnouncer } from "./components/terminal/WaitingNote";
 import { Toaster } from "./components/Toaster";
 import { AppStateProvider, useAppState } from "./state/AppState";
 import { HistoryProvider } from "./state/HistoryState";
+import { useF6 } from "./state/useF6";
 import { applyTheme } from "./theme";
 
 function App() {
@@ -26,6 +27,7 @@ function App() {
         <Shell />
       </HistoryProvider>
       <ThemeSync />
+      <F6Handler />
       <FolderExplainerDialog />
       <CloseWarningDialog />
       <NoteAnnouncer />
@@ -46,6 +48,12 @@ function ThemeSync() {
   useEffect(() => {
     if (theme !== undefined && known) applyTheme(theme);
   }, [theme, known]);
+  return null;
+}
+
+/** Mounts the F6 key that moves the focus between Claude Code and the Builder. */
+function F6Handler() {
+  useF6();
   return null;
 }
 
@@ -104,6 +112,7 @@ function Builder() {
           area, the panes are out of reach. */}
       <div
         data-testid="builder-panes"
+        data-builder-panes
         inert={drawerFills}
         className="min-h-0 flex-1 overflow-y-auto"
       >

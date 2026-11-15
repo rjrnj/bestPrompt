@@ -9,7 +9,7 @@ import { primaryButton, secondaryButton } from "../styles";
 const message = "text-sm text-slate-600 dark:text-slate-400";
 
 const row =
-  "flex w-full min-w-0 flex-col gap-0.5 rounded-md px-3 py-2 text-left hover:bg-slate-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-500 aria-pressed:bg-sky-100 dark:hover:bg-slate-800 dark:aria-pressed:bg-sky-900";
+  "flex w-full min-w-0 flex-col gap-0.5 rounded-md px-3 py-2 text-left hover:bg-slate-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-500 aria-pressed:bg-sky-100 dark:hover:bg-slate-800 dark:aria-pressed:bg-sky-900";
 
 function timeOf(entry: PromptEntry): string {
   return new Date(entry.createdAt).toLocaleTimeString(undefined, {

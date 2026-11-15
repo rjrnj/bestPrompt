@@ -42,7 +42,7 @@ export function PromptPreview({ actions }: Props) {
         <pre
           data-testid="rendered-prompt"
           tabIndex={0}
-          className="min-h-0 flex-1 overflow-auto px-4 pb-4 font-mono text-sm wrap-break-word whitespace-pre-wrap text-slate-900 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-500 dark:text-slate-100"
+          className="min-h-0 flex-1 overflow-auto px-4 pb-4 font-mono text-sm wrap-break-word whitespace-pre-wrap text-slate-900 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-500 dark:text-slate-100"
         >
           {prompt}
         </pre>

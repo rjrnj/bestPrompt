@@ -6,10 +6,10 @@
 // while saving, Create while the project is being created).
 // Padding stays out of the shared part: a later px-0 wouldn't override it.
 const buttonBase =
-  "rounded-md text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 aria-disabled:cursor-not-allowed aria-disabled:opacity-50";
+  "rounded-md text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-500 aria-disabled:cursor-not-allowed aria-disabled:opacity-50";
 const button = `${buttonBase} px-3 py-1`;
 const secondary =
-  "border border-slate-400 bg-white text-slate-900 not-aria-disabled:hover:bg-slate-100 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:not-aria-disabled:hover:bg-slate-700";
+  "border border-slate-500 bg-white text-slate-900 not-aria-disabled:hover:bg-slate-100 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:not-aria-disabled:hover:bg-slate-700";
 // sky-700, red-700 and darker keep white text above 4.5:1 at rest and on
 // hover (about 5.9 and 6.4 to 1); sky-600 would fall below it. The dark
 // theme keeps the same fills, stated so that they are a choice for it too.
@@ -24,15 +24,15 @@ export const fieldLabel =
 export const fieldHelp = "text-xs text-slate-600 dark:text-slate-400";
 export const errorText = "text-xs text-red-700 dark:text-red-400";
 export const linkButton =
-  "rounded text-xs font-medium text-sky-700 underline hover:text-sky-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:text-sky-400 dark:hover:text-sky-200";
+  "rounded text-xs font-medium text-sky-700 underline hover:text-sky-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-500 dark:text-sky-400 dark:hover:text-sky-200";
 export const textInput =
-  "block w-full rounded-md border border-slate-400 bg-white px-3 py-1.5 text-sm text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100";
+  "block w-full rounded-md border border-slate-500 bg-white px-3 py-1.5 text-sm text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-500 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100";
 
 /** The bar under the drawer's header that says a prompt is waiting. */
 export const noteBar =
   "flex items-start gap-2 border-b border-sky-200 bg-sky-50 px-3 py-1 text-sm text-sky-950 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-100";
 export const noteCloseButton =
-  "flex-none rounded p-1 text-sky-900 hover:bg-sky-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:text-sky-100 dark:hover:bg-sky-900";
+  "flex-none rounded p-1 text-sky-900 hover:bg-sky-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-500 dark:text-sky-100 dark:hover:bg-sky-900";
 
 // Dialogs sit below the toasts (z-50), so a failure toasted while a dialog
 // is open is not dimmed by its overlay. Dialogs are portalled outside the
@@ -49,7 +49,7 @@ export const dialogButtons = "flex flex-wrap justify-end gap-2";
 export const selectLabel =
   "text-sm font-medium text-slate-700 dark:text-slate-300";
 export const selectTrigger =
-  "inline-flex min-w-40 items-center justify-between gap-2 rounded-md border border-slate-400 bg-white px-3 py-1.5 text-sm text-slate-900 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700";
+  "inline-flex min-w-40 items-center justify-between gap-2 rounded-md border border-slate-500 bg-white px-3 py-1.5 text-sm text-slate-900 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-500 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700";
 // In popper mode Radix leaves the size to us; without the caps a long list
 // of projects or frameworks, or a long name, would run off the window.
 export const selectContent =
@@ -63,4 +63,4 @@ export const radioLegend =
 export const radioLabel =
   "flex cursor-pointer items-center gap-2 text-sm text-slate-900 dark:text-slate-100";
 export const radioInput =
-  "size-4 accent-sky-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:accent-sky-400";
+  "size-4 accent-sky-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-500 dark:accent-sky-400";

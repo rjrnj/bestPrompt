@@ -41,7 +41,7 @@ export function Toaster() {
           className={`pointer-events-auto flex items-start gap-3 rounded-md border px-4 py-3 text-sm shadow-lg focus-visible:outline-2 focus-visible:outline-offset-2 data-[swipe=move]:translate-x-(--radix-toast-swipe-move-x) ${
             toast.kind === "error"
               ? "border-red-300 bg-red-50 text-red-900 focus-visible:outline-red-500 dark:border-red-800 dark:bg-red-950 dark:text-red-100"
-              : "border-slate-200 bg-white text-slate-900 focus-visible:outline-sky-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              : "border-slate-200 bg-white text-slate-900 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
           }`}
         >
           <Toast.Description className="min-w-0 flex-1 wrap-break-word">
@@ -49,7 +49,7 @@ export function Toaster() {
           </Toast.Description>
           <Toast.Close
             aria-label="Dismiss"
-            className="-m-1 shrink-0 rounded p-1 opacity-70 hover:opacity-100 focus-visible:outline-2 focus-visible:outline-sky-500"
+            className="-m-1 shrink-0 rounded p-1 opacity-70 hover:opacity-100 focus-visible:outline-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-500"
           >
             <Cross />
           </Toast.Close>

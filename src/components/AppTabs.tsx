@@ -17,7 +17,7 @@ type Props = {
 export const VIEWS_TABLIST_ID = "app-views";
 
 const trigger =
-  "rounded px-3 py-1 text-sm font-medium text-slate-600 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 data-[state=active]:bg-sky-100 data-[state=active]:text-sky-900 dark:text-slate-400 dark:hover:text-slate-100 dark:data-[state=active]:bg-sky-900 dark:data-[state=active]:text-sky-100";
+  "rounded px-3 py-1 text-sm font-medium text-slate-600 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-500 data-[state=active]:bg-sky-100 data-[state=active]:text-sky-900 dark:text-slate-400 dark:hover:text-slate-100 dark:data-[state=active]:bg-sky-900 dark:data-[state=active]:text-sky-100";
 
 function isView(value: string): value is State["view"] {
   return value === "builder" || value === "history" || value === "frameworks";
@@ -100,7 +100,7 @@ export function AppTabs({ builderTools, builder, history, frameworks }: Props) {
         </Tabs.Content>
         <Tabs.Content
           value="history"
-          className="h-full focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-500"
+          className="h-full focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-500"
         >
           {history}
         </Tabs.Content>
@@ -108,7 +108,7 @@ export function AppTabs({ builderTools, builder, history, frameworks }: Props) {
             unsaved changes, and each visit starts with nothing selected. */}
         <Tabs.Content
           value="frameworks"
-          className="h-full focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-500"
+          className="h-full focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-500"
         >
           {frameworks}
         </Tabs.Content>
