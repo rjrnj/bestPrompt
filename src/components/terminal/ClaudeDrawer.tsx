@@ -527,7 +527,7 @@ function Body({
     );
   }
   return (
-    <Note text="Claude Code is Anthropic's coding assistant. Start it here in a project's folder, and Send puts your prompt straight into it.">
+    <div className="p-3">
       <ActionButton
         busy={busy}
         onClick={action(() => startSession(sessionKey))}
@@ -535,7 +535,7 @@ function Body({
       >
         Start Claude Code
       </ActionButton>
-    </Note>
+    </div>
   );
 }
 
