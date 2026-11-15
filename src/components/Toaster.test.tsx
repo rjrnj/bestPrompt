@@ -78,6 +78,23 @@ describe("Toaster", () => {
     expect(notifications().getByText("No luck")).toBeInTheDocument();
   });
 
+  it("the_viewport_shows_where_the_focus_is", async () => {
+    renderToaster();
+    await userEvent.click(screen.getByRole("button", { name: "add info" }));
+
+    const viewport = screen
+      .getByRole("region", { name: /notifications/i })
+      .querySelector("ol");
+
+    expect(viewport).toHaveClass(
+      "focus-visible:outline-2",
+      "focus-visible:-outline-offset-2",
+      "focus-visible:outline-sky-600",
+      "dark:focus-visible:outline-sky-500",
+    );
+    expect(viewport).not.toHaveClass("outline-none");
+  });
+
   it("removes a toast from state when its close button is pressed", async () => {
     renderToaster();
     await userEvent.click(screen.getByRole("button", { name: "add info" }));

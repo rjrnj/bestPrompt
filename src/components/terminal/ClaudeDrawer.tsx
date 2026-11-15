@@ -23,7 +23,7 @@ import {
   type Session,
 } from "../../state/reducer";
 import { installCommand } from "../../terminal/install";
-import { currentPlatform } from "../../terminal/keys";
+import { currentPlatform, F6_HINT_ID } from "../../terminal/keys";
 import { VIEWS_TABLIST_ID } from "../AppTabs";
 import { FolderText } from "../FolderText";
 import { SHOW_DRAWER_ID } from "../PromptActions";
@@ -43,7 +43,7 @@ import { SessionTerminal } from "./SessionTerminal";
 import { WaitingNote } from "./WaitingNote";
 
 const smallButton =
-  "rounded-md border border-slate-400 bg-white px-2 py-0.5 text-xs font-medium text-slate-900 not-aria-disabled:hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:not-aria-disabled:hover:bg-slate-700";
+  "rounded-md border border-slate-500 bg-white px-2 py-0.5 text-xs font-medium text-slate-900 not-aria-disabled:hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-500 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:not-aria-disabled:hover:bg-slate-700";
 const message = "text-sm text-slate-600 dark:text-slate-400";
 /** How far the pointer moves on the handle before a press is a drag. */
 const DRAG_THRESHOLD_PX = 3;
@@ -130,6 +130,7 @@ export function ClaudeDrawer({ area }: { area: HTMLElement | null }) {
   return (
     <section
       aria-label="Claude Code"
+      data-claude-drawer
       // A percentage of the Builder area, so it keeps its share as the
       // window resizes; never less than the header and a few rows.
       style={{ height: `${share * 100}%` }}
@@ -138,6 +139,7 @@ export function ClaudeDrawer({ area }: { area: HTMLElement | null }) {
       <ResizeHandle area={area} share={share} areaHeight={areaHeight} />
       <div
         ref={header}
+        data-drawer-header
         className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-3 py-1 dark:border-slate-800"
       >
         <p className="min-w-0 flex-1 truncate font-mono text-xs text-slate-700 dark:text-slate-300">
@@ -149,9 +151,18 @@ export function ClaudeDrawer({ area }: { area: HTMLElement | null }) {
             </>
           )}
         </p>
+        {session !== null && (
+          <p
+            id={F6_HINT_ID}
+            className="text-xs text-slate-600 dark:text-slate-400"
+          >
+            F6: back to the Builder
+          </p>
+        )}
         <button
           type="button"
           className={smallButton}
+          title="F6 moves between Claude Code and the Builder"
           onClick={() => {
             // The drawer goes, and this button with it; the button that
             // brings it back takes the focus, or, when there is none
@@ -170,6 +181,7 @@ export function ClaudeDrawer({ area }: { area: HTMLElement | null }) {
         <button
           type="button"
           className={smallButton}
+          data-drawer-maximize
           onClick={() => dispatch({ type: "drawerMaximizeToggled" })}
         >
           {full ? "Restore" : "Maximize"}
@@ -192,7 +204,11 @@ export function ClaudeDrawer({ area }: { area: HTMLElement | null }) {
         )}
       </div>
       <WaitingNote />
-      <div ref={body} className="min-h-0 flex-1 overflow-hidden">
+      <div
+        ref={body}
+        data-drawer-body
+        className="min-h-0 flex-1 overflow-hidden"
+      >
         <Body
           sessionKey={key}
           session={session}
@@ -309,7 +325,7 @@ function ResizeHandle({
       aria-valuemin={Math.round(minShare(areaHeight) * 100)}
       aria-valuemax={100}
       tabIndex={0}
-      className="h-1.5 flex-none cursor-row-resize touch-none bg-slate-200 hover:bg-sky-300 focus-visible:bg-sky-400 focus-visible:outline-none dark:bg-slate-800 dark:hover:bg-sky-700 dark:focus-visible:bg-sky-500"
+      className="h-1.5 flex-none cursor-row-resize touch-none bg-slate-200 hover:bg-sky-300 focus-visible:bg-sky-600 focus-visible:outline-none dark:bg-slate-800 dark:hover:bg-sky-700 dark:focus-visible:bg-sky-500"
       onPointerDown={(event) => {
         if (event.button !== 0) return;
         event.preventDefault();
@@ -511,7 +527,7 @@ function Body({
     );
   }
   return (
-    <Note text="Claude Code is Anthropic's coding assistant. Start it here in a project's folder, and Send puts your prompt straight into it.">
+    <div className="p-3">
       <ActionButton
         busy={busy}
         onClick={action(() => startSession(sessionKey))}
@@ -519,7 +535,7 @@ function Body({
       >
         Start Claude Code
       </ActionButton>
-    </Note>
+    </div>
   );
 }
 

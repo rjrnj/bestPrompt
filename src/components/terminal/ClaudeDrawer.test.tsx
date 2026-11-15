@@ -139,8 +139,14 @@ async function renderApp(
   return user;
 }
 
-const EMPTY_TEXT =
-  "Claude Code is Anthropic's coding assistant. Start it here in a project's folder, and Send puts your prompt straight into it.";
+/** The empty drawer: nothing but the button that starts a session. */
+function expectOnlyStart() {
+  const body = within(drawer());
+  expect(
+    body.getByRole("button", { name: "Start Claude Code" }),
+  ).toBeInTheDocument();
+  expect(body.queryByText(/coding assistant/)).toBeNull();
+}
 const EXPLAINER = "Choose a folder for Claude Code";
 
 /** The explainer that comes before Claude's folder chooser. */
@@ -246,13 +252,10 @@ describe("ClaudeDrawer", () => {
     );
   });
 
-  it("the_empty_drawer_says_what_claude_code_is", async () => {
+  it("the_empty_drawer_offers_only_start", async () => {
     await renderApp();
 
-    expect(within(drawer()).getByText(EMPTY_TEXT)).toBeInTheDocument();
-    expect(
-      within(drawer()).getByRole("button", { name: "Start Claude Code" }),
-    ).toBeInTheDocument();
+    expectOnlyStart();
   });
 
   it("starting_without_a_folder_explains_before_choosing", async () => {
@@ -463,7 +466,7 @@ describe("ClaudeDrawer", () => {
 
     await selectProject(user, "web");
     expect(within(drawer()).queryByTestId("terminal")).toBeNull();
-    expect(drawer()).toHaveTextContent(EMPTY_TEXT);
+    expectOnlyStart();
     await start(user);
     expect(await within(drawer()).findByTestId("terminal")).toHaveTextContent(
       "s2",
@@ -534,7 +537,7 @@ describe("ClaudeDrawer", () => {
       }),
     );
 
-    await waitFor(() => expect(drawer()).toHaveTextContent(EMPTY_TEXT));
+    await waitFor(() => expectOnlyStart());
     expect(closeSession).toHaveBeenCalledWith("s1");
     expect(disposeTerminal).toHaveBeenCalledWith("s1");
     expect(within(drawer()).queryByTestId("terminal")).toBeNull();
@@ -1079,7 +1082,7 @@ describe("ClaudeDrawer", () => {
     ).toBeInTheDocument();
     await user.click(within(manage).getByRole("button", { name: "Done" }));
 
-    expect(drawer()).toHaveTextContent(EMPTY_TEXT);
+    expectOnlyStart();
     startsWith("s1");
     await start(user);
     expect(await within(drawer()).findByTestId("terminal")).toHaveTextContent(

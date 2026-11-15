@@ -89,6 +89,30 @@ describe.each(["windows", "linux"] as const)("keyAction on %s", (platform) => {
   });
 });
 
+describe("F6", () => {
+  const f6 = {
+    key: "F6",
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    metaKey: false,
+    type: "keydown",
+  };
+
+  it("the_terminal_lets_f6_through", () => {
+    for (const platform of ["windows", "linux"] as const) {
+      expect(keyAction(f6, platform, false)).toBe("leave");
+      expect(keyAction({ ...f6, ctrlKey: true }, platform, false)).toBe("pass");
+      expect(keyAction({ ...f6, shiftKey: true }, platform, false)).toBe(
+        "pass",
+      );
+      expect(keyAction({ ...f6, altKey: true }, platform, false)).toBe("pass");
+      expect(keyAction({ ...f6, metaKey: true }, platform, false)).toBe("pass");
+      expect(keyAction({ ...f6, type: "keyup" }, platform, false)).toBe("pass");
+    }
+  });
+});
+
 describe("currentPlatform", () => {
   it("is linux when the user agent is not Windows", () => {
     // jsdom's user agent names no Windows.

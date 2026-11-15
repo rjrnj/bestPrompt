@@ -283,6 +283,26 @@ describe("EntryDetail", () => {
     await waitFor(() => expect(hint).toHaveFocus());
   });
 
+  it("the_hint_shows_the_focus_it_is_given", async () => {
+    vi.mocked(deletePromptEntry).mockResolvedValue(undefined);
+    const user = await renderDetail();
+    await user.click(within(pane()).getByRole("button", { name: "Delete" }));
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+
+    const hint = await screen.findByText("Select a prompt to read it.");
+    await waitFor(() => expect(hint).toHaveFocus());
+    expect(hint).not.toHaveClass("focus:outline-none");
+    expect(hint).toHaveClass(
+      "focus-visible:outline-2",
+      "focus-visible:outline-sky-600",
+      "dark:focus-visible:outline-sky-500",
+    );
+  });
+
   it("a_second_delete_waits_for_the_first", async () => {
     let finish: () => void = () => {};
     vi.mocked(deletePromptEntry).mockReturnValue(

@@ -10,6 +10,7 @@ import {
 import type { SessionEvent } from "../bindings/SessionEvent";
 import type { StartedSession } from "../bindings/StartedSession";
 import { writeText } from "../clipboard";
+import { F6_HINT_ID } from "./keys";
 import {
   disposeTerminal,
   resizeTerminalSession,
@@ -148,6 +149,35 @@ describe("the terminal registry", () => {
     expect(key.defaultPrevented).toBe(true);
     expect(writeSession).not.toHaveBeenCalled();
     disposeTerminal("s4");
+  });
+
+  it("the_terminal_handler_lets_f6_through", async () => {
+    vi.mocked(startSession).mockResolvedValue(session("s16"));
+    const attach = vi.spyOn(Terminal.prototype, "attachCustomKeyEventHandler");
+    await startTerminalSession("/work", noEvents);
+    const handler = attach.mock.calls[0][0];
+    attach.mockRestore();
+    const key = new KeyboardEvent("keydown", { key: "F6", cancelable: true });
+    const prevent = vi.spyOn(key, "preventDefault");
+    const stop = vi.spyOn(key, "stopPropagation");
+
+    // False: xterm neither handles nor sends it.
+    expect(handler(key)).toBe(false);
+
+    expect(prevent).not.toHaveBeenCalled();
+    expect(stop).not.toHaveBeenCalled();
+    expect(writeSession).not.toHaveBeenCalled();
+    disposeTerminal("s16");
+  });
+
+  it("the_terminal_input_is_described_by_the_f6_hint", async () => {
+    vi.mocked(startSession).mockResolvedValue(session("s17"));
+    await startTerminalSession("/work", noEvents);
+    const terminal = terminalFor("s17")!;
+    terminal.open(document.createElement("div"));
+
+    expect(terminal.textarea).toHaveAttribute("aria-describedby", F6_HINT_ID);
+    disposeTerminal("s17");
   });
 
   it("copying_clears_the_selection_so_the_next_ctrl_c_reaches_claude", async () => {

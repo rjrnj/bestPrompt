@@ -307,7 +307,7 @@ function SectionRow({
         <span
           aria-hidden="true"
           title="Drag to reorder"
-          className="-ml-1 flex shrink-0 cursor-grab touch-none items-start pt-7 text-slate-400 select-none hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+          className="-ml-1 flex shrink-0 cursor-grab touch-none items-start pt-7 text-slate-500 select-none hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
           {...dragHandle}
         >
           <Grip />

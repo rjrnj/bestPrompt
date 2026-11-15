@@ -43,9 +43,9 @@ type Props = {
 };
 
 const toggleItem =
-  "px-3 py-1 text-sm font-medium text-slate-700 first:rounded-l-md last:rounded-r-md not-aria-disabled:hover:bg-slate-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-500 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 data-[state=on]:bg-sky-100 data-[state=on]:text-sky-900 dark:text-slate-300 dark:not-aria-disabled:hover:bg-slate-800 dark:data-[state=on]:bg-sky-900 dark:data-[state=on]:text-sky-100";
+  "px-3 py-1 text-sm font-medium text-slate-700 first:rounded-l-md last:rounded-r-md not-aria-disabled:hover:bg-slate-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-500 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 data-[state=on]:bg-sky-100 data-[state=on]:text-sky-900 dark:text-slate-300 dark:not-aria-disabled:hover:bg-slate-800 dark:data-[state=on]:bg-sky-900 dark:data-[state=on]:text-sky-100";
 const chip =
-  "rounded-full border border-slate-400 bg-white px-2.5 py-0.5 text-xs font-medium text-slate-900 not-aria-disabled:hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:not-aria-disabled:hover:bg-slate-700";
+  "rounded-full border border-slate-500 bg-white px-2.5 py-0.5 text-xs font-medium text-slate-900 not-aria-disabled:hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-500 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:not-aria-disabled:hover:bg-slate-700";
 const subheading = "text-sm font-medium text-slate-900 dark:text-slate-100";
 
 /** The 1-based line of `offset` in `text`. */
@@ -141,7 +141,7 @@ export function TemplateEditor({ editor, dispatch }: Props) {
               dispatch({ type: "modeChanged", automatic: false });
             }
           }}
-          className="flex w-fit rounded-md border border-slate-400 dark:border-slate-500"
+          className="flex w-fit rounded-md border border-slate-500 dark:border-slate-500"
         >
           <ToggleGroup.Item
             value="automatic"

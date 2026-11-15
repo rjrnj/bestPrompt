@@ -1,9 +1,16 @@
 // The small inline icons the pickers and the framework editor use, drawn in
-// the current text colour.
+// the current text colour. Each is hidden from screen readers: it only
+// repeats what a label or the text beside it says.
 
 export function Chevron() {
   return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+    <svg
+      aria-hidden="true"
+      width="12"
+      height="12"
+      viewBox="0 0 12 12"
+      fill="none"
+    >
       <path
         d="M2.5 4.5 6 8l3.5-3.5"
         stroke="currentColor"
@@ -17,7 +24,13 @@ export function Chevron() {
 
 export function Check() {
   return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+    <svg
+      aria-hidden="true"
+      width="12"
+      height="12"
+      viewBox="0 0 12 12"
+      fill="none"
+    >
       <path
         d="M2.5 6.5 5 9l4.5-6"
         stroke="currentColor"
@@ -31,7 +44,13 @@ export function Check() {
 
 export function Lock() {
   return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+    <svg
+      aria-hidden="true"
+      width="12"
+      height="12"
+      viewBox="0 0 12 12"
+      fill="none"
+    >
       <rect
         x="2.5"
         y="5.5"
@@ -52,7 +71,13 @@ export function Lock() {
 
 export function Arrow({ direction }: { direction: "up" | "down" }) {
   return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+    <svg
+      aria-hidden="true"
+      width="12"
+      height="12"
+      viewBox="0 0 12 12"
+      fill="none"
+    >
       <path
         d={
           direction === "up"
@@ -71,7 +96,13 @@ export function Arrow({ direction }: { direction: "up" | "down" }) {
 /** Six dots, the usual mark of something that can be dragged. */
 export function Grip() {
   return (
-    <svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor">
+    <svg
+      aria-hidden="true"
+      width="12"
+      height="16"
+      viewBox="0 0 12 16"
+      fill="currentColor"
+    >
       <circle cx="4" cy="4" r="1.25" />
       <circle cx="8" cy="4" r="1.25" />
       <circle cx="4" cy="8" r="1.25" />

@@ -40,6 +40,7 @@ import {
 } from "../terminal/terminals";
 import { PromptActions } from "./PromptActions";
 import { PromptForm } from "./PromptForm";
+import { PromptPreview } from "./PromptPreview";
 import { FolderExplainerDialog } from "./terminal/FolderExplainerDialog";
 import { Toaster } from "./Toaster";
 
@@ -202,6 +203,30 @@ describe("PromptActions", () => {
     await userEvent.type(role, "a reviewer");
 
     expectOn(copy, save, clear);
+  });
+
+  it("unavailable_buttons_say_why_while_there_is_no_prompt", async () => {
+    vi.mocked(listFrameworks).mockResolvedValue([rtf]);
+    render(
+      <AppStateProvider>
+        <PromptForm />
+        <PromptPreview actions={<PromptActions />} />
+      </AppStateProvider>,
+    );
+    const copy = await screen.findByRole("button", { name: "Copy" });
+    const save = screen.getByRole("button", { name: "Save" });
+    const send = await findSend();
+    const empty = "Fill in a section to see the prompt.";
+
+    for (const button of [copy, save, send]) {
+      expect(button).toHaveAccessibleDescription(empty);
+    }
+
+    await userEvent.type(screen.getByRole("textbox", { name: "Role" }), "a");
+
+    for (const button of [copy, save, send]) {
+      expect(button).not.toHaveAttribute("aria-describedby");
+    }
   });
 
   it("offers only Clear for a draft of whitespace", async () => {

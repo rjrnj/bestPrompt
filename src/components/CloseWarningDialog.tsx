@@ -74,7 +74,12 @@ export function CloseWarningDialog() {
     latest.current = { state, startingKeys };
   });
 
+  // Where the focus was when the dialog opened: it has no trigger to hand
+  // the focus back to as it closes.
+  const opener = useRef<Element | null>(null);
+
   const show = (next: boolean) => {
+    if (next && !shown.current) opener.current = document.activeElement;
     shown.current = next;
     setAsking(next);
   };
@@ -153,7 +158,17 @@ export function CloseWarningDialog() {
     >
       <AlertDialog.Portal>
         <AlertDialog.Overlay className={dialogOverlay} />
-        <AlertDialog.Content className={dialogPanel}>
+        <AlertDialog.Content
+          className={dialogPanel}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            const before = opener.current;
+            opener.current = null;
+            if (before instanceof HTMLElement && before.isConnected) {
+              before.focus();
+            }
+          }}
+        >
           <AlertDialog.Title className={dialogTitle}>
             Quit bestPrompt?
           </AlertDialog.Title>

@@ -50,7 +50,7 @@ export function SectionField({ section, value, onChange, unused }: Props) {
         rows={3}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="mt-1.5 block max-h-80 min-h-[calc(3lh+1rem)] w-full resize-y rounded-md border border-slate-400 bg-white px-3 py-2 text-sm text-slate-900 field-sizing-content focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100"
+        className="mt-1.5 block max-h-80 min-h-[calc(3lh+1rem)] w-full resize-y rounded-md border border-slate-500 bg-white px-3 py-2 text-sm text-slate-900 field-sizing-content focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-500 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100"
       />
       {unused && (
         <p

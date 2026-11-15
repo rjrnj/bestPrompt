@@ -2,20 +2,49 @@ import { useMemo } from "react";
 import type { PromptEntry } from "../../bindings/PromptEntry";
 import { groupByDay } from "../../history/groupByDay";
 import { entryLabel } from "../../history/label";
+import type { HistoryFilters } from "../../state/history";
 import { useAppDispatch, useAppState } from "../../state/AppState";
 import { useHistory } from "../../state/HistoryState";
 import { primaryButton, secondaryButton } from "../styles";
 
 const message = "text-sm text-slate-600 dark:text-slate-400";
+const NO_MATCH = "No prompts match.";
 
 const row =
-  "flex w-full min-w-0 flex-col gap-0.5 rounded-md px-3 py-2 text-left hover:bg-slate-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-500 aria-pressed:bg-sky-100 dark:hover:bg-slate-800 dark:aria-pressed:bg-sky-900";
+  "group flex w-full min-w-0 flex-col gap-0.5 rounded-md px-3 py-2 text-left hover:bg-slate-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-600 dark:focus-visible:outline-sky-500 aria-pressed:bg-sky-100 dark:hover:bg-slate-800 dark:aria-pressed:bg-sky-900";
 
 function timeOf(entry: PromptEntry): string {
   return new Date(entry.createdAt).toLocaleTimeString(undefined, {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function isFiltered(filters: HistoryFilters): boolean {
+  return (
+    filters.search.trim() !== "" ||
+    filters.project.kind !== "any" ||
+    filters.frameworkId !== null
+  );
+}
+
+/**
+ * Tells a screen reader when a search or filter finds nothing. Mounted with
+ * the pane and empty until then: a screen reader reliably reads text put
+ * into a region it already knows. It is also the line the list shows, so
+ * it is said once. Empty, it takes no room of its own.
+ */
+export function NoMatchStatus() {
+  const { state } = useHistory();
+  const noMatch =
+    state.status === "ready" &&
+    state.entries.length === 0 &&
+    isFiltered(state.filters);
+  return (
+    <p role="status" className={`${message} empty:-mb-4`}>
+      {noMatch ? NO_MATCH : ""}
+    </p>
+  );
 }
 
 function LoadError({ text, onRetry }: { text: string; onRetry(): void }) {
@@ -41,10 +70,7 @@ export function HistoryList() {
   const projectItems = projects.status === "ready" ? projects.items : [];
   const groups = useMemo(() => groupByDay(entries, new Date()), [entries]);
 
-  const filtered =
-    filters.search.trim() !== "" ||
-    filters.project.kind !== "any" ||
-    filters.frameworkId !== null;
+  const filtered = isFiltered(filters);
 
   // A failed first page leaves the rows of the previous query or visit,
   // which may not match the filters now shown, so they are not listed.
@@ -78,7 +104,6 @@ export function HistoryList() {
     }
     return (
       <div className="flex flex-col items-start gap-3">
-        <p className={message}>No prompts match.</p>
         <button
           type="button"
           className={secondaryButton}
@@ -119,7 +144,7 @@ export function HistoryList() {
                     <span className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
                       {entryLabel(entry, frameworkItems)}
                     </span>
-                    <span className="truncate text-xs text-slate-600 dark:text-slate-400">
+                    <span className="truncate text-xs text-slate-600 dark:text-slate-400 dark:group-aria-pressed:text-slate-300">
                       {entry.frameworkSnapshot.name} ·{" "}
                       {project?.name ?? "no project"} · {timeOf(entry)}
                     </span>
