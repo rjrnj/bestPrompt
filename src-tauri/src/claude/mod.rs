@@ -131,10 +131,12 @@ pub struct ClaudeState {
 }
 
 impl ClaudeState {
-    /// Starts with the app's own environment and nothing detected. Commands
-    /// that need the result wait until `init` has run.
+    /// Starts with the app's own environment, without an AppImage's setup,
+    /// and nothing detected. Commands that need the result wait until `init`
+    /// has run.
     pub fn new(home: Option<PathBuf>) -> Self {
-        Self::with_detected(None, std::env::vars_os().collect(), home, false)
+        let env = env::outside_own_appimage(std::env::vars_os().collect());
+        Self::with_detected(None, env, home, false)
     }
 
     /// State with everything set up front and no detection, for tests.
@@ -290,7 +292,10 @@ mod tests {
     use std::collections::VecDeque;
     use std::io::Read;
 
-    use super::env::{parse_shell_env, read_to_marker, shell_env_for_sessions};
+    use super::env::{
+        base_env_from, outside_appimage, parse_shell_env, read_to_marker, shell_env_for_sessions,
+        shell_start_env, without_appimage,
+    };
     use super::*;
 
     fn root() -> PathBuf {
@@ -511,6 +516,167 @@ mod tests {
         assert!(started.elapsed() >= std::time::Duration::from_millis(100));
     }
 
+    const APPDIR: &str = "/tmp/.mount_bestPrAbC123";
+
+    fn env_of(pairs: &[(&str, String)]) -> env::Env {
+        pairs
+            .iter()
+            .map(|(k, v)| (OsString::from(k), OsString::from(v)))
+            .collect()
+    }
+
+    fn get<'a>(env: &'a env::Env, name: &str) -> Option<&'a OsString> {
+        env.iter().find(|(k, _)| k == name).map(|(_, v)| v)
+    }
+
+    #[test]
+    fn without_appimage_drops_its_variables() {
+        let names = [
+            "APPDIR",
+            "APPIMAGE",
+            "ARGV0",
+            "OWD",
+            "GTK_DATA_PREFIX",
+            "GTK_THEME",
+            "GSETTINGS_SCHEMA_DIR",
+            "GI_TYPELIB_PATH",
+            "GIO_MODULE_DIR",
+            "GTK_EXE_PREFIX",
+            "GTK_PATH",
+            "GTK_IM_MODULE_FILE",
+            "GDK_PIXBUF_MODULE_FILE",
+            "PYTHONHOME",
+            "PYTHONDONTWRITEBYTECODE",
+        ];
+        let mut pairs: Vec<(&str, String)> = names
+            .iter()
+            .map(|n| (*n, format!("{APPDIR}//usr/x")))
+            .collect();
+        pairs.push(("HOME", "/home/u".into()));
+        pairs.push(("LANG", "en_US.UTF-8".into()));
+        let out = without_appimage(env_of(&pairs), OsStr::new(APPDIR));
+        for name in names {
+            assert!(get(&out, name).is_none(), "{name} should be removed");
+        }
+        assert_eq!(
+            out,
+            env_of(&[("HOME", "/home/u".into()), ("LANG", "en_US.UTF-8".into())])
+        );
+    }
+
+    #[test]
+    fn without_appimage_strips_appdir_entries_from_path_lists() {
+        let a = APPDIR;
+        let env = env_of(&[
+            (
+                "PATH",
+                format!("{a}/usr/bin/:{a}/usr/sbin/:/home/u/.local/bin:/usr/bin"),
+            ),
+            (
+                "LD_LIBRARY_PATH",
+                format!("{a}/usr/lib/:/opt/lib:{a}//lib64/"),
+            ),
+            (
+                "XDG_DATA_DIRS",
+                format!("{a}/usr/share:/usr/share:{a}/usr/share:/usr/local/share"),
+            ),
+            (
+                "GST_PLUGIN_SYSTEM_PATH_1_0",
+                format!("{a}/usr/lib/gstreamer-1.0:/tmp/.mount_bestPrAbC1234/x"),
+            ),
+            ("PERLLIB", a.to_string()),
+        ]);
+        for dir in [a.to_string(), format!("{a}/")] {
+            let out = without_appimage(env.clone(), OsStr::new(&dir));
+            assert_eq!(
+                get(&out, "PATH").unwrap(),
+                "/home/u/.local/bin:/usr/bin",
+                "appdir {dir}"
+            );
+            assert_eq!(get(&out, "LD_LIBRARY_PATH").unwrap(), "/opt/lib");
+            assert_eq!(
+                get(&out, "XDG_DATA_DIRS").unwrap(),
+                "/usr/share:/usr/local/share"
+            );
+            assert_eq!(
+                get(&out, "GST_PLUGIN_SYSTEM_PATH_1_0").unwrap(),
+                "/tmp/.mount_bestPrAbC1234/x"
+            );
+            assert!(get(&out, "PERLLIB").is_none());
+        }
+    }
+
+    #[test]
+    fn without_appimage_drops_empty_entries() {
+        let a = APPDIR;
+        let env = env_of(&[
+            ("PATH", format!("{a}/usr/bin/:/usr/bin:")),
+            ("PYTHONPATH", "/a::/b".to_string()),
+        ]);
+        let out = without_appimage(env, OsStr::new(a));
+        assert_eq!(get(&out, "PATH").unwrap(), "/usr/bin");
+        assert_eq!(get(&out, "PYTHONPATH").unwrap(), "/a:/b");
+    }
+
+    #[test]
+    fn a_list_left_empty_is_dropped() {
+        let a = APPDIR;
+        let env = env_of(&[
+            ("HOME", "/home/u".into()),
+            ("LD_LIBRARY_PATH", format!("{a}/usr/lib/:{a}//lib64/:")),
+        ]);
+        let out = without_appimage(env, OsStr::new(a));
+        assert_eq!(out, env_of(&[("HOME", "/home/u".into())]));
+    }
+
+    #[test]
+    fn nothing_changes_outside_an_appimage() {
+        let env = env_of(&[
+            ("PATH", "/usr/bin::/bin".into()),
+            ("PYTHONHOME", "/usr".into()),
+            ("GTK_THEME", "Adwaita:dark".into()),
+        ]);
+        assert_eq!(outside_appimage(env.clone(), None), env);
+    }
+
+    #[test]
+    fn an_empty_appdir_is_not_an_appimage() {
+        let env = env_of(&[
+            ("PATH", "/usr/bin::/bin".into()),
+            ("PYTHONHOME", "/usr".into()),
+        ]);
+        assert_eq!(env::appimage_dir_from(None, Some(OsString::new())), None);
+        assert_eq!(
+            env::appimage_dir_from(Some(OsString::from("/x.AppImage")), None),
+            None
+        );
+        assert_eq!(
+            env::appimage_dir_from(Some(OsString::from("/x.AppImage")), Some(OsString::new())),
+            None
+        );
+        assert_eq!(
+            env::appimage_dir_from(None, Some(OsString::from(APPDIR))),
+            None
+        );
+        assert_eq!(
+            env::appimage_dir_from(
+                Some(OsString::from("/x.AppImage")),
+                Some(OsString::from(APPDIR))
+            ),
+            Some(OsString::from(APPDIR))
+        );
+        for root in ["/", "//"] {
+            assert_eq!(
+                env::appimage_dir_from(
+                    Some(OsString::from("/x.AppImage")),
+                    Some(OsString::from(root))
+                ),
+                None
+            );
+        }
+        assert_eq!(outside_appimage(env.clone(), None), env);
+    }
+
     #[test]
     fn parse_shell_env_reads_between_markers_ignoring_banners() {
         let out = b"welcome\nMARKA=1\0PATH=/bin:/usr/bin\0EMPTY=\0MARKtrailing";
@@ -520,6 +686,46 @@ mod tests {
         assert_eq!(get("PATH"), Some("/bin:/usr/bin".into()));
         assert_eq!(get("EMPTY"), Some("".into()));
         assert_eq!(env.len(), 3);
+    }
+
+    const BUNDLE: &str = "/tmp/.mount_bestpr";
+
+    fn bundle_env() -> env::Env {
+        env_of(&[
+            ("PYTHONHOME", format!("{BUNDLE}/usr")),
+            ("LD_LIBRARY_PATH", format!("{BUNDLE}/usr/lib:/opt/lib")),
+            ("HOME", "/home/me".to_owned()),
+        ])
+    }
+
+    #[test]
+    fn the_login_shell_starts_without_the_appimage_setup() {
+        let out = shell_start_env(bundle_env(), Some(OsStr::new(BUNDLE)));
+
+        assert!(get(&out, "PYTHONHOME").is_none());
+        assert_eq!(get(&out, "LD_LIBRARY_PATH").unwrap(), "/opt/lib");
+        assert_eq!(get(&out, "HOME").unwrap(), "/home/me");
+    }
+
+    #[test]
+    fn the_fallback_environment_is_cleaned() {
+        let out = base_env_from(None, bundle_env(), Some(OsStr::new(BUNDLE)));
+
+        assert!(get(&out, "PYTHONHOME").is_none());
+        assert_eq!(get(&out, "LD_LIBRARY_PATH").unwrap(), "/opt/lib");
+    }
+
+    #[test]
+    fn the_login_shell_output_is_kept_as_is() {
+        let shell = env_of(&[
+            ("GTK_THEME", "Adwaita:dark".to_owned()),
+            ("PYTHONHOME", "/home/me/py".to_owned()),
+            ("PATH", format!("{BUNDLE}/usr/bin:/bin")),
+        ]);
+
+        let out = base_env_from(Some(shell.clone()), bundle_env(), Some(OsStr::new(BUNDLE)));
+
+        assert_eq!(out, shell);
     }
 
     #[test]

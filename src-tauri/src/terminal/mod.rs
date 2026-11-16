@@ -325,7 +325,7 @@ fn cmd_exe(env: &[(OsString, OsString)]) -> PathBuf {
 /// one or make it ignore the folders the user trusted. An IDE's terminal
 /// sets the second; they would make Claude attach to that IDE, though the
 /// session's terminal is ours.
-const STRIPPED_VARS: [&str; 19] = [
+const STRIPPED_VARS: [&str; 20] = [
     "CLAUDECODE",
     "CLAUDE_CODE_ENTRYPOINT",
     "CLAUDE_CODE_SESSION_ID",
@@ -345,6 +345,8 @@ const STRIPPED_VARS: [&str; 19] = [
     "TERM_PROGRAM_VERSION",
     "TERMINAL_EMULATOR",
     "CURSOR_TRACE_ID",
+    // The folder the app came from, not one the session was in.
+    "OLDPWD",
 ];
 
 /// What a session's process is started with.
@@ -553,6 +555,10 @@ fn command(
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.cwd(folder);
+    // A shell keeps `PWD` in step with the folder it is in; the app's own
+    // is where the app was started. Setting it replaces the inherited one.
+    #[cfg(unix)]
+    cmd.env("PWD", folder);
     Ok(cmd)
 }
 
@@ -789,6 +795,32 @@ mod tests {
         assert!(cmd.get_env("CLAUDE_EFFORT").is_none());
         assert!(cmd.get_env("CLAUDE_CODE_IGNORE_PERSISTED_TRUST").is_none());
         assert!(cmd.get_env("CLAUDE_CODE_USE_BEDROCK").is_some());
+        assert!(cmd.get_env("PATH").is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_session_gets_its_folder_as_pwd() {
+        let env: Vec<(OsString, OsString)> = [("PWD", "/opt/bundle/usr"), ("PATH", "/bin")]
+            .map(|(name, value)| (name.into(), value.into()))
+            .into();
+        let exe = ClaudeExe::Exe(PathBuf::from("claude"));
+
+        let cmd = command(&exe, &env, Path::new("/home/me/work")).unwrap();
+
+        assert_eq!(cmd.get_env("PWD").unwrap(), "/home/me/work");
+    }
+
+    #[test]
+    fn a_session_gets_no_oldpwd() {
+        let env: Vec<(OsString, OsString)> = [("OLDPWD", "/somewhere"), ("PATH", "/bin")]
+            .map(|(name, value)| (name.into(), value.into()))
+            .into();
+        let exe = ClaudeExe::Exe(PathBuf::from("claude"));
+
+        let cmd = command(&exe, &env, Path::new("work")).unwrap();
+
+        assert!(cmd.get_env("OLDPWD").is_none());
         assert!(cmd.get_env("PATH").is_some());
     }
 
