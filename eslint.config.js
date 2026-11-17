@@ -19,7 +19,7 @@ export default defineConfig([
     languageOptions: { globals: globals.browser, sourceType: "script" },
   },
   {
-    files: ["*.{js,ts}"],
+    files: ["*.{js,ts}", "scripts/*.mjs"],
     languageOptions: { globals: globals.node },
   },
   // Must come last: turns off rules that would conflict with Prettier.
