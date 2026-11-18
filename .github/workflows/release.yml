@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # A rehearsal: builds everything and makes a draft release for a test tag.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Two pushes of the same tag queue instead of racing.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      # A rehearsal isn't on a version tag, so there is nothing to compare.
+      - name: Check the tag matches the app version
+        if: github.event_name == 'push'
+        run: node scripts/check-version.mjs "$GITHUB_REF_NAME"
+
+  build:
+    name: build (${{ matrix.os }})
+    needs: check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2025]
+    steps:
+      - uses: actions/checkout@v7
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/linux-deps
+      # No npm or Rust cache: a release is built from a clean slate.
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - run: npm ci
+      - name: Build installers
+        run: npm run tauri build
+      - name: Upload installers
+        uses: actions/upload-artifact@v7
+        with:
+          name: installers-${{ matrix.os }}
+          if-no-files-found: error
+          retention-days: 1
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
+
+  # Creates a draft only; publishing it is a manual step.
+  release:
+    name: release
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: installers-*
+          merge-multiple: true
+          path: installers
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          RUN_ID: ${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          mapfile -t files < <(find installers -type f \( -name '*.msi' -o -name '*.exe' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \))
+          if [ "${#files[@]}" -lt 5 ]; then
+            echo "expected 5 installers, found ${#files[@]}" >&2
+            exit 1
+          fi
+          args=(--draft --notes "")
+          if [ "$EVENT_NAME" = "push" ]; then
+            TAG="$REF_NAME"
+          else
+            # A draft makes no tag until published; delete the draft by hand.
+            TAG="test-$RUN_ID"
+            args+=(--target "$SHA")
+          fi
+          args+=(--title "bestPrompt $TAG")
+          gh release create "$TAG" "${args[@]}" "${files[@]}"
